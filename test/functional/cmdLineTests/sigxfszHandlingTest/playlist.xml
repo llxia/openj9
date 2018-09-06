@@ -33,7 +33,7 @@
 	cd $(REPORTDIR); \
 	ulimit -f 4000 && \
 	ulimit && \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-DEXE='$(JAVA_COMMAND) $(JVM_OPTIONS)' -DRESJAR=$(CMDLINETESTER_RESJAR) -jar $(CMDLINETESTER_JAR) \
 	-config $(Q)$(TEST_RESROOT)$(D)sigxfszHandlingTest.xml$(Q) \
 	-plats all,$(PLATFORM),$(VARIATION) -nonZeroExitWhenError  ; \

@@ -214,7 +214,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -246,7 +246,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -278,7 +278,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx768m -Xsoftmx512m -Xmn1m \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -310,7 +310,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS)  -Xdump:none \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -Xdump:none \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(LIB_DIR)$(D)commons-exec.jar$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
 	-testnames SoftmxRASTest2 \
@@ -341,7 +341,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) -Xdump:none \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -Xdump:none \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(LIB_DIR)$(D)commons-exec.jar$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
 	-testnames SoftmxRASTest1 \
@@ -372,7 +372,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m -Xlp:objectheap:pagesize=4k \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -404,7 +404,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m -Xlp:objectheap:pagesize=64k \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -439,7 +439,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Dremote.server.option="$(JVM_OPTIONS) -Xmx1024m -Xsoftmx512m -Xmn1m -Xdump:none -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false" \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -472,7 +472,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Dremote.server.option="$(JVM_OPTIONS) -Xmx1024m -Xsoftmx512m -Xmn1m -Xdump:none -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false" \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -505,7 +505,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Dremote.server.option="$(JVM_OPTIONS) -Xmx768m -Xsoftmx512m -Xmn1m -Xdump:none -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false" \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -538,7 +538,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Dremote.server.option="$(JVM_OPTIONS) -Xlp:objectheap:pagesize=4k -Xmx1024m -Xsoftmx512m -Xmn1m -Xdump:none -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false" \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -571,7 +571,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Dremote.server.option="$(JVM_OPTIONS) -Xlp:objectheap:pagesize=64k -Xmx1024m -Xsoftmx512m -Xmn1m -Xdump:none -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false" \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -607,7 +607,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m -XX:+DisclaimVirtualMemory \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -639,7 +639,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m -XX:+DisclaimVirtualMemory \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -671,7 +671,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx768m -Xsoftmx512m -Xmn1m -XX:+DisclaimVirtualMemory \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -703,7 +703,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m -XX:+DisclaimVirtualMemory -Xlp:objectheap:pagesize=4k \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -735,7 +735,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m -XX:+DisclaimVirtualMemory -Xlp:objectheap:pagesize=64k \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -770,7 +770,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m -XX:-DisclaimVirtualMemory \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -802,7 +802,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m -XX:-DisclaimVirtualMemory \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -834,7 +834,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx768m -Xsoftmx512m -Xmn1m -XX:-DisclaimVirtualMemory \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -866,7 +866,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xsoftmx512m -Xmx1024m -Xmn1m \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -897,7 +897,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xsoftmx512m -Xmx1024m -Xmn1m \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -929,7 +929,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:none -Xmx1024m -Xsoftmx512m -Xmn1m -XX:+DisclaimVirtualMemory -verbose:gc -Xverbosegclog:$(REPORTDIR)$(D)vgc.log \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -959,7 +959,7 @@
 			<variation>Mode101</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-DRUNLOCAL=true \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -988,7 +988,7 @@
 			<variation>Mode101</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-DRUNLOCAL=false \
 	-Dremote.server.option=$(Q)$(JVM_OPTIONS) -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false$(Q) \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
@@ -1018,7 +1018,7 @@
 			<variation>Mode101</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-DRUNLOCAL=true \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -1044,7 +1044,7 @@
 			<variation>Mode101</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-DRUNLOCAL=true --illegal-access=permit \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -1072,7 +1072,7 @@
 			<variation>Mode101</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-DRUNLOCAL=false \
 	-Dremote.server.option=$(Q)$(JVM_OPTIONS) -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false$(Q) \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
@@ -1099,7 +1099,7 @@
 			<variation>Mode101</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-DRUNLOCAL=false --illegal-access=permit \
 	-Dremote.server.option=$(Q)$(JVM_OPTIONS) -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false$(Q) \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
@@ -1131,7 +1131,7 @@
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
 	$(MKTREE) $(REPORTDIR); \
 	cd $(REPORTDIR); \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:dynamic \
 	-Dremote.server.option=$(Q)$(JVM_OPTIONS) -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false$(Q) \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
@@ -1165,7 +1165,7 @@
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
 	$(MKTREE) $(REPORTDIR); \
 	cd $(REPORTDIR); \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-Xdump:dynamic \
 	-Dremote.server.option=$(Q)$(JVM_OPTIONS) -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false$(Q) \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
@@ -1196,7 +1196,7 @@
 			<variation>Mode101</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-DRUNLOCAL=true \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
@@ -1225,7 +1225,7 @@
 			<variation>Mode101</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-DRUNLOCAL=false \
 	-Dremote.server.option=$(Q)$(JVM_OPTIONS) -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false$(Q) \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
@@ -1311,7 +1311,7 @@
 			<variation>Mode501</variation>
 		</variations>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) -Xmn1m -Xdump:none \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -Xmn1m -Xdump:none \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(LIB_DIR)$(D)commons-exec.jar$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)jlm_tests.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
 	-testnames testSoftMxUserScenario \

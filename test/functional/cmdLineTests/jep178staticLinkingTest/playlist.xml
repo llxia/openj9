@@ -25,7 +25,7 @@
 <playlist xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../TestConfig/playlist.xsd">
 	<test>
 		<testCaseName>cmdLineTester_jep178_staticLinking_SE80</testCaseName>
-		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) $(JAVA_COMMAND) $(JVM_OPTIONS) -Xint \
+		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) $(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -Xint \
 	-DJAVATEST_ROOT="$(JAVATEST_ROOT)" \
 	-DRESJAR=$(CMDLINETESTER_RESJAR) \
 	-DJAVA_EXECUTABLE_DIR="$(JAVA_BIN)" \
@@ -55,7 +55,7 @@
 	</test>
 	<test>
 		<testCaseName>cmdLineTester_jep178_staticLinking</testCaseName>
-		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) $(JAVA_COMMAND) $(JVM_OPTIONS) -Xint \
+		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) $(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -Xint \
 	-DJAVATEST_ROOT="$(JAVATEST_ROOT)" \
 	-DRESJAR=$(CMDLINETESTER_RESJAR) \
 	-DJAVA_EXECUTABLE_DIR="$(JAVA_BIN)" \

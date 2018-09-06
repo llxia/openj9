@@ -31,7 +31,7 @@
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
 	$(MKTREE) $(REPORTDIR); \
 	cd $(REPORTDIR); \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
 	-DEXE='$(JAVA_SHARED_LIBRARIES_DIR)$(D)pltest $(_JVM_OPTIONS)' -jar $(CMDLINETESTER_JAR) -config $(Q)$(TEST_RESROOT)$(D)pltest.xml$(Q) -verbose -explainExcludes \
 	-xids all,$(PLATFORM),$(VARIATION) -plats all,$(PLATFORM),$(VARIATION) -nonZeroExitWhenError; \
 	$(TEST_STATUS)</command>
@@ -57,7 +57,7 @@
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
 	$(MKTREE) $(REPORTDIR); \
 	cd $(REPORTDIR); \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
 	-DEXE='$(JAVA_SHARED_LIBRARIES_DIR)$(D)pltest -exclude:j9process $(_JVM_OPTIONS)' -jar $(CMDLINETESTER_JAR) -config $(Q)$(TEST_RESROOT)$(D)pltest.xml$(Q) -verbose -explainExcludes \
 	-xids all,$(PLATFORM),$(VARIATION) -plats all,$(PLATFORM),$(VARIATION) -nonZeroExitWhenError; \
 	$(TEST_STATUS)</command>
@@ -213,7 +213,7 @@
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
 	$(MKTREE) $(REPORTDIR); \
 	cd $(REPORTDIR); \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
 	-DEXE='execrset -c 1 -e $(JAVA_SHARED_LIBRARIES_DIR)$(D)pltest -include:j9numcpus -boundcpus:1 $(_JVM_OPTIONS)' -jar $(CMDLINETESTER_JAR) \
 	-config $(Q)$(TEST_RESROOT)$(D)pltest_numcpus_bound.xml$(Q) -verbose -explainExcludes \
 	-xids all,$(PLATFORM),$(VARIATION) -plats all,$(PLATFORM),$(VARIATION) -nonZeroExitWhenError; \
@@ -240,7 +240,7 @@
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
 	$(MKTREE) $(REPORTDIR); \
 	cd $(REPORTDIR); \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
 	-DEXE='$(JAVA_SHARED_LIBRARIES_DIR)$(D)pltest -include:j9hypervisor -hypervisor:vmware $(_JVM_OPTIONS)' -jar $(CMDLINETESTER_JAR) \
 	-config $(Q)$(TEST_RESROOT)$(D)pltest.xml$(Q) -verbose -explainExcludes \
 	-xids all,$(PLATFORM),$(VARIATION) -plats all,$(PLATFORM),$(VARIATION) -nonZeroExitWhenError; \
@@ -268,7 +268,7 @@
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
 	$(MKTREE) $(REPORTDIR); \
 	cd $(REPORTDIR); \
-	$(JAVA_COMMAND) $(JVM_OPTIONS) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
+	$(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -DRESOURCES_DIR=$(Q)$(RESOURCES_DIR)$(Q) -DJVM_TEST_ROOT=$(Q)$(JVM_TEST_ROOT)$(Q) \
 	-DEXE='$(JAVA_SHARED_LIBRARIES_DIR)$(D)pltest -include:j9hypervisor -hypervisor:kvm $(_JVM_OPTIONS)' -jar $(CMDLINETESTER_JAR) \
 	-config $(Q)$(TEST_RESROOT)$(D)pltest.xml$(Q) -verbose -explainExcludes \
 	-xids all,$(PLATFORM),$(VARIATION) -plats all,$(PLATFORM),$(VARIATION) -nonZeroExitWhenError; \

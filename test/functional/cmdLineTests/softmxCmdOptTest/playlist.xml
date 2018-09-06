@@ -31,7 +31,7 @@
 			<variation>Mode601</variation>
 			<variation>Mode501</variation>
 		</variations>
-		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) $(JAVA_COMMAND) $(JVM_OPTIONS) -Xint \
+		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) $(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) -Xint \
 	-DTESTDIR=$(Q)$(TEST_RESROOT)$(Q) \
 	-DRESJAR=$(CMDLINETESTER_RESJAR) \
 	-DEXE='$(JAVA_COMMAND) $(JVM_OPTIONS)' \

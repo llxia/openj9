@@ -29,7 +29,7 @@
 			<variation>NoOptions</variation>
 			<variation>Mode604</variation>
 		</variations>
-		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) $(JAVA_COMMAND) $(JVM_OPTIONS) \
+		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) $(JAVA_COMMAND) $(JVM_OPTIONS) $(JAVA_LIB_PATH_OPT) \
 	-agentlib:jvmtitest=test:rc001 \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)SharedCPEntryInvokerTests.jar$(P)$(LIB_DIR)$(D)asm-all.jar$(P)$(LIB_DIR)$(D)commons-cli.jar$(P)$(LIB_DIR)$(D)javassist.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
