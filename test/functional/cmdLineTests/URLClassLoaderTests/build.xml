@@ -66,7 +66,7 @@
 			</fileset>
 		</copy>
 		<javac srcdir="${build.dir}/Sanity/jnurlcldr/shared/sanity" destdir="${build.dir}/Sanity/" 
-			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}"/>
+			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" encoding="ISO-8859-1"/>
 
 		<!-- Sanity/VerifyClasses/jnurlcldr -->
 		<mkdir dir="${build.dir}/Sanity/VerifyClasses"/>
@@ -78,7 +78,7 @@
 			</fileset>
 		</copy>		
 		<javac srcdir="${build.dir}/Sanity/VerifyClasses/jnurlcldr/shared/sanity" destdir="${build.dir}/Sanity/VerifyClasses/" 
-			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}"/>
+			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" encoding="ISO-8859-1"/>
 		
 		<!-- Sanity config, batch, and shell files -->
 		<copy todir="${build.dir}/Sanity">
@@ -106,7 +106,7 @@
 			</fileset>
 		</copy>
 		<javac srcdir="${build.dir}/FindStore/jnurlcldr/shared/findstore" destdir="${build.dir}/FindStore/" 
-			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}"/>
+			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" encoding="ISO-8859-1"/>
 		
 		<!-- Copy M,N,O,P class files into the correct directories -->
 		<mkdir dir="${build.dir}/FindStore/M_Classes"/>
@@ -163,7 +163,7 @@
 			</fileset>
 		</copy>
 		<javac srcdir="${build.dir}/FindStore/VerifyClasses/jnurlcldr/shared/findstore" destdir="${build.dir}/FindStore/VerifyClasses/" 
-				debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}">
+				debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" encoding="ISO-8859-1">
 		</javac>
 		
 		<!--
@@ -186,7 +186,7 @@
 			</fileset>
 		</copy>
 		<javac srcdir="${build.dir}/JarExt/jnurlcldr/shared/jarexttests" destdir="${build.dir}/JarExt/" 
-			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}">
+			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" encoding="ISO-8859-1">
 		</javac>
 		
 		
@@ -200,7 +200,7 @@
 			</fileset>
 		</copy>
 		<javac srcdir="${build.dir}/JarExt/VerifyClasses/jnurlcldr/shared/jarexttests" destdir="${build.dir}/JarExt/VerifyClasses/" 
-			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}">
+			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" encoding="ISO-8859-1">
 		</javac>
 		
 		<!-- Manifests -->
@@ -247,7 +247,7 @@
 			</fileset>
 		</copy>
 		<javac srcdir="${build.dir}/SignedSealed/jnurlcldr/shared/signedsealed:${build.dir}/SignedSealed/jnurlcldr/shared/notsealed" 
-			destdir="${build.dir}/SignedSealed/" debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" >
+			destdir="${build.dir}/SignedSealed/" debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" encoding="ISO-8859-1">
 		</javac>
 
 		<!-- SignedSealed/Manifests -->
@@ -277,7 +277,7 @@
 			</fileset>
 		</copy>		
 		<javac srcdir="${build.dir}/NonExistJar/jnurlcldr/shared/nonexistjar" destdir="${build.dir}/NonExistJar/" 
-			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" >
+			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" encoding="ISO-8859-1">
 		</javac>
 
 		<!-- NonExistJar/Rogue -->
@@ -289,8 +289,10 @@
 			<fileset dir="./NonExistJar/Rogue/jnurlcldr/shared/nonexistjar">
 			</fileset>
 		</copy>
-		<javac srcdir="${build.dir}/NonExistJar/Rogue/jnurlcldr/shared/nonexistjar" destdir="${build.dir}/NonExistJar/Rogue/" 
-			debug="on" debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" >
+		<javac srcdir="${build.dir}/NonExistJar/Rogue/jnurlcldr/shared/nonexistjar" 
+			destdir="${build.dir}/NonExistJar/Rogue/" debug="on" 
+			debuglevel="lines,vars,source" fork="true" executable="${compiler.javac}" 
+			encoding="ISO-8859-1">
 		</javac>
 	</target>
 	
