@@ -28,6 +28,30 @@
 		Build functional tests
 	</description>
 
+	<!-- Set javac encoding to ISO-8859-1 by default using presetdef.
+		Due to open-class-libraries/openj9-openjdk-zos/issues/103, we do not set encoding for 
+		java8+ on zos.
+	-->
+
+	<<if>
+		<equals arg1="${os.name}" arg2="z/OS" />
+		<then>
+			<if>
+				<equals arg1="${JDK_VERSION}" arg2="8"/>
+				<then>
+					<presetdef name="javac">
+						<javac encoding="ISO-8859-1" />
+					</presetdef>
+				</then>
+			</if>
+		</then>
+		<else>
+			<presetdef name="javac">
+				<javac encoding="ISO-8859-1" />
+			</presetdef>
+		</else>
+	</if>
+
 	<!-- set properties for this build -->
 	<property name="DEST_FUNCTIONAL" value="${BUILD_ROOT}/functional" />
 	
