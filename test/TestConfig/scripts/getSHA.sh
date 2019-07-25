@@ -66,7 +66,9 @@ if [ "$REPO_DIR" != "" ] && [ "$OUTPUT_FILE" != "" ]; then
 		echo "touch $OUTPUT_FILE"
 		touch $OUTPUT_FILE
 	fi
-
+	git config --get remote.origin.url
+	echo "git remote -v"
+	git remote -v
 	cd $REPO_DIR
 	# append the info into $OUTPUT_FILE
 	{ echo "================================================"; echo "timestamp: $(timestamp)"; echo "repo dir: $REPO_DIR"; echo "git repo: "; git remote show origin -n | grep "Fetch URL:"; echo "sha:"; git rev-parse HEAD; }  2>&1 | tee -a $OUTPUT_FILE
