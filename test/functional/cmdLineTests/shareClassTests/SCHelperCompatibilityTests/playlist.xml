@@ -30,7 +30,9 @@
 			<variation>Mode110</variation>
 			<variation>Mode610</variation>	
 		</variations>
-		<command>cp $(Q)$(TEST_RESROOT)$(D)HelperCompatibilityTests.jar$(Q) .; \
+		<command>mkidr enjdk14_j9_sanity.functional_x86-64_windows_Nightly_testList_0; \
+		cd enjdk14_j9_sanity.functional_x86-64_windows_Nightly_testList_0; \
+		cp $(Q)$(TEST_RESROOT)$(D)HelperCompatibilityTests.jar$(Q) .; \
 	$(Q)$(TEST_JDK_HOME)$(D)bin$(D)jar.exe$(Q) xf HelperCompatibilityTests.jar; \
 	$(JAVA_COMMAND) $(JVM_OPTIONS) -DJAVA_EXE=$(SQ)$(JAVA_COMMAND) $(JVM_OPTIONS)$(SQ) -DTEST_JDK_HOME=$(Q)$(TEST_JDK_HOME)$(Q) -DCPDL=$(Q)$(P)$(Q) -DPROPS_DIR=$(Q)$(TEST_RESROOT)$(D)props_win$(Q) -DSCMODE=204 \
 	-jar $(CMDLINETESTER_JAR) \
