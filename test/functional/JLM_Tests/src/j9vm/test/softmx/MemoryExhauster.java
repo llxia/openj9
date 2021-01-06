@@ -51,11 +51,11 @@ public class MemoryExhauster {
 	public boolean usePercentageOfHeap( double percentage ) {
 		long original_softmx_value =  ibmMemoryMBean.getMaxHeapSize();
 
-		logger.debug( "	Current max heap size:  " + original_softmx_value + " bytes");
+		logger.info( "	Current max heap size:  " + original_softmx_value + " bytes");
 
 		Object[] myObjects = new Object[MAX_OBJECTS];
 
-		logger.debug("	Starting Object allocation until used memory reaches " + percentage*100 + "% of current max heap size.");
+		logger.info("	Starting Object allocation until used memory reaches " + percentage*100 + "% of current max heap size.");
 
 		int i = 0;
 		try {
@@ -65,17 +65,17 @@ public class MemoryExhauster {
 					i++;
 				} catch (OutOfMemoryError e){
 					// at this point we stop
-					logger.debug("Catch OutOfMemoryError at object allocation:" + i);
-					logger.debug("Catch OutOfMemoryError before reaching " + percentage*100 + "% of current max heap size.");
+					logger.info("Catch OutOfMemoryError at object allocation:" + i);
+					logger.info("Catch OutOfMemoryError before reaching " + percentage*100 + "% of current max heap size.");
 					return false;
 				}
 			}
 		} catch ( OutOfMemoryError e ) {
-			logger.debug("Catch OutOfMemoryError reached in MemoryExhauster");
+			logger.info("Catch OutOfMemoryError reached in MemoryExhauster");
 			return false;
 		}
 
-		logger.debug( "	Now we have used approximately " + percentage*100 + "% of current max heap size: " +  ibmMemoryMBean.getHeapMemoryUsage().getCommitted() + " bytes");
+		logger.info( "	Now we have used approximately " + percentage*100 + "% of current max heap size: " +  ibmMemoryMBean.getHeapMemoryUsage().getCommitted() + " bytes");
 		return true;
 	}
 
