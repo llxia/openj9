@@ -21,6 +21,7 @@ OpenJDK Assembly Exception [2].
 SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0 OR GPL-2.0-only WITH OpenJDK-assembly-exception-1.0
 -->
 <playlist xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../TKG/playlist.xsd">
+	<include>../openj9.mk</include>
 	<include>java8andUpSettings.mk</include>
 	<test>
 		<testCaseName>generalSanityTest</testCaseName>
@@ -2234,6 +2235,8 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 			</disable>
 		</disables>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
+		[ $(Q)$JDK_IMPL$(Q) = $(Q)ibm$(Q) ] &amp;&amp; [ $(Q)$JDK_VERSION$(Q) = $(Q)8$(Q) ] &amp;&amp; echo $(Q)$JVM_OPTIONS$(Q) | grep -q -- '-Xcompressedrefs' &amp;&amp; LIBPATH=$$(echo $(Q)$LIBPATH$(Q) | sed 's/default/compressedrefs/'); \
+	$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
 	$(JAVA_COMMAND) $(JVM_OPTIONS) \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)GeneralTest.jar$(Q) \
 	org.testng.TestNG -d $(REPORTDIR) $(Q)$(TEST_RESROOT)$(D)testng.xml$(Q) \
