@@ -74,7 +74,6 @@ public class DumpAPIBasicTests extends TestCase {
 		/* Count the number of files before and after. Should increase by one. */
 		String[] beforeFileNames = getFilesByPattern(userDir, javaCorePattern);
 		int beforeCount = beforeFileNames.length;
-		
 		com.ibm.jvm.Dump.JavaDump();
 		
 		String[] afterFileNames = getFilesByPattern(userDir, javaCorePattern);

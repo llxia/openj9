@@ -274,7 +274,7 @@ public class DumpAPITriggerTests extends TestCase {
 		/* Count the number of files before and after. Should increase by one. */
 		String[] beforeFileNames = getFilesByPattern(userDir, dumpFilePattern);
 		int beforeCount = beforeFileNames.length;
-		
+		System.out.println("found beforeFileNames:" + Arrays.toString(beforeFileNames));
 		String fileName = null;
 		try {
 			fileName = com.ibm.jvm.Dump.triggerDump(options);
