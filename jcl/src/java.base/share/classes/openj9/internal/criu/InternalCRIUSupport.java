@@ -33,8 +33,10 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+/*[IF JAVA_SPEC_VERSION < 24]*/
 import java.security.AccessController;
 import java.security.PrivilegedAction;
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -64,8 +66,12 @@ import jdk.internal.misc.SharedSecrets;
  * This API enables the use of CRIU capabilities provided by the OS as well as JVM support for facilitating a successful checkpoint
  * and restore in varying environments.
  */
+/*[IF 17 <= JAVA_SPEC_VERSION]*/
+@SuppressWarnings({ "deprecation", "removal" })
+/*[ENDIF] 17 <= JAVA_SPEC_VERSION */
 public final class InternalCRIUSupport {
 	private static final boolean criuSupportEnabled = isCRIUSupportEnabledImpl();
+	private static final boolean timeCompensationEnabled = isTimeCompensationEnabledImpl();
 	private static long checkpointRestoreNanoTimeDelta;
 
 	private static native boolean enableCRIUSecProviderImpl();
@@ -74,12 +80,62 @@ public final class InternalCRIUSupport {
 	private static native long getProcessRestoreStartTimeImpl();
 	private static native boolean isCRIUSupportEnabledImpl();
 	private static native boolean isCheckpointAllowedImpl();
+	private static native boolean isTimeCompensationEnabledImpl();
 /*[IF CRAC_SUPPORT]*/
 	private static final boolean cracSupportEnabled = isCRaCSupportEnabledImpl();
 	private static native boolean isCRaCSupportEnabledImpl();
 	private static String cracCheckpointToDir = "";
 	private static native String getCRaCCheckpointToDirImpl();
 /*[ENDIF] CRAC_SUPPORT */
+
+	/**
+	 * A singleton {@code InternalCRIUSupport} instance.
+	 *
+	 * The default CRIU dump options are:
+	 * <p>
+	 * {@code imageDir} = CWD, current Java process working directory.
+	 * <p>
+	 * {@code leaveRunning} = false
+	 * <p>
+	 * {@code shellJob} = false
+	 * <p>
+	 * {@code extUnixSupport} = false
+	 * <p>
+	 * {@code logLevel} = 2
+	 * <p>
+	 * {@code logFile} = criu.log
+	 * <p>
+	 * {@code fileLocks} = false
+	 * <p>
+	 * {@code ghostFileLimit} = 1 MB
+	 * <p>
+	 * {@code workDir} = imageDir, the directory where the images are to be created.
+	 */
+	private static final InternalCRIUSupport singletonInternalCRIUSupport = new InternalCRIUSupport();
+
+	// no public construtors
+	private InternalCRIUSupport() {
+		/*[IF JAVA_SPEC_VERSION < 24]*/
+		SecurityManager manager = System.getSecurityManager();
+		if (manager != null) {
+			manager.checkPermission(CRIU_DUMP_PERMISSION);
+		}
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
+		// use current working directory
+		setImageDir(java.nio.file.FileSystems.getDefault().getPath("").toAbsolutePath());
+	}
+
+	/**
+	 * Returns the singleton InternalCRIUSupport object.
+	 *
+	 * Most methods of class {@code InternalCRIUSupport} are instance methods and
+	 * must be invoked via this object.
+	 *
+	 * @return the singleton {@code InternalCRIUSupport} object
+	 */
+	public static InternalCRIUSupport getInternalCRIUSupport() {
+		return singletonInternalCRIUSupport;
+	}
 
 	/**
 	 * Retrieve the elapsed time between Checkpoint and Restore.
@@ -197,6 +253,15 @@ public final class InternalCRIUSupport {
 /*[ENDIF] CRAC_SUPPORT */
 
 	/**
+	 * Queries if the time compensation is enabled.
+	 *
+	 * @return true if the time compensation is enabled, false otherwise
+	 */
+	public static boolean isTimeCompensationEnabled() {
+		return timeCompensationEnabled;
+	}
+
+	/**
 	 *
 	 * Executes a runnable in NotCheckpointSafe mode. This means that while the
 	 * runnable frame is on the stack, a checkpoint cannot be taken.
@@ -210,7 +275,9 @@ public final class InternalCRIUSupport {
 
 	@SuppressWarnings("restriction")
 	private static Unsafe unsafe;
+	/*[IF JAVA_SPEC_VERSION < 24]*/
 	private static final CRIUDumpPermission CRIU_DUMP_PERMISSION = new CRIUDumpPermission();
+	/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 	private static boolean nativeLoaded;
 	private static boolean initComplete;
 	private static String errorMsg;
@@ -229,23 +296,33 @@ public final class InternalCRIUSupport {
 			boolean unprivileged,
 			String optionsFile,
 			String envFile,
-			long ghostFileLimit);
+			long ghostFileLimit,
+			boolean tcpClose,
+			boolean tcpSkipInFlight);
 	private static native boolean setupJNIFieldIDsAndCRIUAPI();
 
 	private static native String[] getRestoreSystemProperites();
 
 	private static void initializeUnsafe() {
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 		AccessController.doPrivileged((PrivilegedAction<Void>) () -> {
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 			try {
 				Field f = Unsafe.class.getDeclaredField("theUnsafe"); //$NON-NLS-1$
 				f.setAccessible(true);
 				unsafe = (Unsafe) f.get(null);
-			} catch (NoSuchFieldException | SecurityException | IllegalArgumentException
-					| IllegalAccessException e) {
+			} catch (IllegalAccessException | IllegalArgumentException | NoSuchFieldException
+				/*[IF JAVA_SPEC_VERSION < 24]*/
+				| SecurityException
+				/*[ENDIF] JAVA_SPEC_VERSION < 24 */
+				e
+			) {
 				throw new InternalError(e);
 			}
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 			return null;
 		});
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 	}
 
 	/**
@@ -280,44 +357,6 @@ public final class InternalCRIUSupport {
 			loadNativeLibrary();
 			initComplete = true;
 		}
-	}
-
-	/**
-	 * Constructs a new {@code InternalCRIUSupport}.
-	 *
-	 * The default CRIU dump options are:
-	 * <p>
-	 * {@code imageDir} = imageDir, the directory where the images are to be
-	 * created.
-	 * <p>
-	 * {@code leaveRunning} = false
-	 * <p>
-	 * {@code shellJob} = false
-	 * <p>
-	 * {@code extUnixSupport} = false
-	 * <p>
-	 * {@code logLevel} = 2
-	 * <p>
-	 * {@code logFile} = criu.log
-	 * <p>
-	 * {@code fileLocks} = false
-	 * <p>
-	 * {@code workDir} = imageDir, the directory where the images are to be created.
-	 *
-	 * @param imageDir the directory that will hold the dump files as a
-	 *                 java.nio.file.Path
-	 * @throws NullPointerException     if imageDir is null
-	 * @throws SecurityException        if no permission to access imageDir or no
-	 *                                  CRIU_DUMP_PERMISSION
-	 * @throws IllegalArgumentException if imageDir is not a valid directory
-	 */
-	public InternalCRIUSupport(Path imageDir) {
-		SecurityManager manager = System.getSecurityManager();
-		if (manager != null) {
-			manager.checkPermission(CRIU_DUMP_PERMISSION);
-		}
-
-		setImageDir(imageDir);
 	}
 
 	/**
@@ -405,6 +444,8 @@ public final class InternalCRIUSupport {
 	private Path envFile;
 	private String optionsFile;
 	private long ghostFileLimit = -1;
+	private boolean tcpClose;
+	private boolean tcpSkipInFlight;
 
 	/**
 	 * Set the size limit for ghost files when taking a checkpoint. File limit
@@ -431,7 +472,9 @@ public final class InternalCRIUSupport {
 	 * @param imageDir the directory as a java.nio.file.Path
 	 * @return this
 	 * @throws NullPointerException     if imageDir is null
+	/*[IF JAVA_SPEC_VERSION < 24]
 	 * @throws SecurityException        if no permission to access imageDir
+	/*[ENDIF] JAVA_SPEC_VERSION < 24
 	 * @throws IllegalArgumentException if imageDir is not a valid directory
 	 */
 	public InternalCRIUSupport setImageDir(Path imageDir) {
@@ -441,10 +484,12 @@ public final class InternalCRIUSupport {
 		}
 		String dir = imageDir.toAbsolutePath().toString();
 
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 		SecurityManager manager = System.getSecurityManager();
 		if (manager != null) {
 			manager.checkWrite(dir);
 		}
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 		this.imageDir = dir;
 		return this;
@@ -592,7 +637,9 @@ public final class InternalCRIUSupport {
 	 * @param workDir the directory as a java.nio.file.Path
 	 * @return this
 	 * @throws NullPointerException     if workDir is null
+	/*[IF JAVA_SPEC_VERSION < 24]
 	 * @throws SecurityException        if no permission to access workDir
+	/*[ENDIF] JAVA_SPEC_VERSION < 24
 	 * @throws IllegalArgumentException if workDir is not a valid directory
 	 */
 	public InternalCRIUSupport setWorkDir(Path workDir) {
@@ -602,12 +649,40 @@ public final class InternalCRIUSupport {
 		}
 		String dir = workDir.toAbsolutePath().toString();
 
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 		SecurityManager manager = System.getSecurityManager();
 		if (manager != null) {
 			manager.checkWrite(dir);
 		}
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 		this.workDir = dir;
+		return this;
+	}
+
+	/**
+	 * Controls whether to restore TCP sockets in closed state.
+	 * <p>
+	 * Default: false
+	 *
+	 * @param tcpClose
+	 * @return this
+	 */
+	public InternalCRIUSupport setTCPClose(boolean tcpClose) {
+		this.tcpClose = tcpClose;
+		return this;
+	}
+
+	/**
+	 * Controls whether to skip in-flight TCP connections.
+	 * <p>
+	 * Default: false
+	 *
+	 * @param tcpSkipInFlight
+	 * @return this
+	 */
+	public InternalCRIUSupport setTCPSkipInFlight(boolean tcpSkipInFlight) {
+		this.tcpSkipInFlight = tcpSkipInFlight;
 		return this;
 	}
 
@@ -924,7 +999,17 @@ public final class InternalCRIUSupport {
 	}
 
 	private static void clearInetAddressCache() {
-		Field jniaa = AccessController.doPrivileged((PrivilegedAction<Field>) () -> {
+		Field jniaa;
+		/*[IF JAVA_SPEC_VERSION >= 24]*/
+		try {
+			jniaa = SharedSecrets.class.getDeclaredField("javaNetInetAddressAccess"); //$NON-NLS-1$
+			jniaa.setAccessible(true);
+		} catch (NoSuchFieldException e) {
+			// ignore exceptions
+			jniaa = null;
+		}
+		/*[ELSE] JAVA_SPEC_VERSION >= 24 */
+		jniaa = AccessController.doPrivileged((PrivilegedAction<Field>) () -> {
 			Field jniaaTmp = null;
 			try {
 				jniaaTmp = SharedSecrets.class.getDeclaredField("javaNetInetAddressAccess"); //$NON-NLS-1$
@@ -934,6 +1019,7 @@ public final class InternalCRIUSupport {
 			}
 			return jniaaTmp;
 		});
+		/*[ENDIF] JAVA_SPEC_VERSION >= 24 */
 		try {
 			if ((jniaa != null) && (jniaa.get(null) != null)) {
 				// InetAddress static initializer invokes SharedSecrets.setJavaNetInetAddressAccess().
@@ -943,6 +1029,25 @@ public final class InternalCRIUSupport {
 		} catch (IllegalArgumentException | IllegalAccessException e) {
 			// ignore exceptions
 		}
+	}
+
+	/**
+	 * Set a few default checkpoint parameters for the CRaC and Jcmd CRIU.checkpoint
+	 * and JDK.checkpoint commands.
+	 *
+	 * leaveRunning = false, override any existing value
+	 * shellJob = true
+	 * tcpEstablished = true
+	 * fileLocks = true
+	 *
+	 * @return this
+	 */
+	public InternalCRIUSupport setCheckpointDefaultParams() {
+		this.leaveRunning = false;
+		this.shellJob = true;
+		this.tcpEstablished = true;
+		this.fileLocks = true;
+		return this;
 	}
 
 	/**
@@ -962,22 +1067,91 @@ public final class InternalCRIUSupport {
 	public synchronized void checkpointJVM() {
 		if (isCRaCorCRIUSupportEnabledAndNativeLoaded()) {
 			if (isCheckpointAllowed()) {
+				/* Add option overrides. */
+				Properties props = VM.internalGetProperties();
+
 				/* Add env variables restore hook. */
 				String envFilePath = null;
+				String envFileOpt = props.getProperty("openj9.internal.criu.envFile"); //$NON-NLS-1$
+				if (envFileOpt != null) {
+					Path envFilePathOpt = Path.of(envFileOpt);
+					if (!envFilePathOpt.toFile().exists()) {
+						throw new IllegalArgumentException(envFileOpt + " doesn't exist"); //$NON-NLS-1$
+					}
+					this.envFile = envFilePathOpt;
+				}
 				if (envFile != null) {
 					envFilePath = envFile.toAbsolutePath().toString();
 					registerRestoreEnvVariables();
 				}
 
-				J9InternalCheckpointHookAPI.registerPostRestoreHook(HookMode.SINGLE_THREAD_MODE, RESTORE_CLEAR_INETADDRESS_CACHE_PRIORITY, "Clear InetAddress cache on restore", InternalCRIUSupport::clearInetAddressCache); //$NON-NLS-1$
-				J9InternalCheckpointHookAPI.registerPostRestoreHook(HookMode.SINGLE_THREAD_MODE, RESTORE_ENVIRONMENT_VARIABLES_PRIORITY, "Restore system properties", InternalCRIUSupport::setRestoreJavaProperties); //$NON-NLS-1$
+				J9InternalCheckpointHookAPI.registerPostRestoreHook(HookMode.SINGLE_THREAD_MODE,
+						RESTORE_CLEAR_INETADDRESS_CACHE_PRIORITY, "Clear InetAddress cache on restore", //$NON-NLS-1$
+						InternalCRIUSupport::clearInetAddressCache);
+				J9InternalCheckpointHookAPI.registerPostRestoreHook(HookMode.SINGLE_THREAD_MODE,
+						RESTORE_ENVIRONMENT_VARIABLES_PRIORITY, "Restore system properties", //$NON-NLS-1$
+						InternalCRIUSupport::setRestoreJavaProperties);
 
-				/* Add option overrides. */
-				Properties props = VM.internalGetProperties();
+				String imageDirOpt = props.getProperty("openj9.internal.criu.imageDir"); //$NON-NLS-1$
+				if (imageDirOpt != null) {
+					File file = new File(imageDirOpt);
+					if (!file.isDirectory()) {
+						throw new IllegalArgumentException(imageDirOpt + " is not a valid directory"); //$NON-NLS-1$
+					}
+					this.imageDir = imageDirOpt;
+				}
+
+				String leaveRunningOpt = props.getProperty("openj9.internal.criu.leaveRunning"); //$NON-NLS-1$
+				if (leaveRunningOpt != null) {
+					setLeaveRunning(Boolean.parseBoolean(leaveRunningOpt));
+				}
+
+				String shellJobOpt = props.getProperty("openj9.internal.criu.shellJob"); //$NON-NLS-1$
+				if (shellJobOpt != null) {
+					setShellJob(Boolean.parseBoolean(shellJobOpt));
+				}
+
+				String extUnixSupportOpt = props.getProperty("openj9.internal.criu.extUnixSupport"); //$NON-NLS-1$
+				if (extUnixSupportOpt != null) {
+					setExtUnixSupport(Boolean.parseBoolean(extUnixSupportOpt));
+				}
+
+				String fileLocksOpt = props.getProperty("openj9.internal.criu.fileLocks"); //$NON-NLS-1$
+				if (fileLocksOpt != null) {
+					setFileLocks(Boolean.parseBoolean(fileLocksOpt));
+				}
+
+				String workDirOpt = props.getProperty("openj9.internal.criu.workDir"); //$NON-NLS-1$
+				if (workDirOpt != null) {
+					File file = new File(workDirOpt);
+					if (!file.isDirectory()) {
+						throw new IllegalArgumentException(workDirOpt + " is not a valid directory"); //$NON-NLS-1$
+					}
+					this.workDir = workDirOpt;
+				}
+
+				String autoDedupOpt = props.getProperty("openj9.internal.criu.autoDedup"); //$NON-NLS-1$
+				if (autoDedupOpt != null) {
+					setAutoDedup(Boolean.parseBoolean(autoDedupOpt));
+				}
+
+				String trackMemoryOpt = props.getProperty("openj9.internal.criu.trackMemory"); //$NON-NLS-1$
+				if (trackMemoryOpt != null) {
+					setTrackMemory(Boolean.parseBoolean(trackMemoryOpt));
+				}
+
+				String optionsFileOpt = props.getProperty("openj9.internal.criu.optionsFile"); //$NON-NLS-1$
+				if (optionsFileOpt != null) {
+					File file = new File(optionsFileOpt);
+					if (!file.exists()) {
+						throw new IllegalArgumentException(optionsFileOpt + " doesn't exist"); //$NON-NLS-1$
+					}
+					this.optionsFile = "-Xoptionsfile=" + optionsFileOpt; //$NON-NLS-1$
+				}
 
 				String unprivilegedOpt = props.getProperty("openj9.internal.criu.unprivilegedMode"); //$NON-NLS-1$
 				if (unprivilegedOpt != null) {
-						setUnprivileged(Boolean.parseBoolean(unprivilegedOpt));
+					setUnprivileged(Boolean.parseBoolean(unprivilegedOpt));
 				}
 
 				String tcpEstablishedOpt = props.getProperty("openj9.internal.criu.tcpEstablished"); //$NON-NLS-1$
@@ -990,22 +1164,34 @@ public final class InternalCRIUSupport {
 					try {
 						setGhostFileLimit(Long.parseLong(ghostFileLimitOpt));
 					} catch (NumberFormatException e) {
-						System.err.println("Invalid value specified: `-Dopenj9.internal.criu.ghostFileLimit=" + ghostFileLimitOpt + "`."); //$NON-NLS-1$ //$NON-NLS-2$
+						System.err.println("Invalid value specified: `-Dopenj9.internal.criu.ghostFileLimit=" //$NON-NLS-1$
+								+ ghostFileLimitOpt + "`."); //$NON-NLS-1$
 					}
 				}
 
-				String logLevelOpt =  props.getProperty("openj9.internal.criu.logLevel"); //$NON-NLS-1$
+				String logLevelOpt = props.getProperty("openj9.internal.criu.logLevel"); //$NON-NLS-1$
 				if (logLevelOpt != null) {
 					try {
 						setLogLevel(Integer.parseInt(logLevelOpt));
 					} catch (NumberFormatException e) {
-						System.err.println("Invalid value specified: `-Dopenj9.internal.criu.logLevel=" + logLevelOpt + "` ."); //$NON-NLS-1$ //$NON-NLS-2$
+						System.err.println(
+								"Invalid value specified: `-Dopenj9.internal.criu.logLevel=" + logLevelOpt + "` ."); //$NON-NLS-1$ //$NON-NLS-2$
 					}
 				}
 
-				String logFileOpt =  props.getProperty("openj9.internal.criu.logFile"); //$NON-NLS-1$
+				String logFileOpt = props.getProperty("openj9.internal.criu.logFile"); //$NON-NLS-1$
 				if (logFileOpt != null) {
 					setLogFile(logFileOpt);
+				}
+
+				String tcpCloseOpt = props.getProperty("openj9.internal.criu.tcpClose"); //$NON-NLS-1$
+				if (tcpCloseOpt != null) {
+					setTCPClose(Boolean.parseBoolean(tcpCloseOpt));
+				}
+
+				String tcpSkipInFlightOpt = props.getProperty("openj9.internal.criu.tcpSkipInFlight"); //$NON-NLS-1$
+				if (tcpSkipInFlightOpt != null) {
+					setTCPSkipInFlight(Boolean.parseBoolean(tcpSkipInFlightOpt));
 				}
 
 				/* Add security provider hooks. */
@@ -1015,7 +1201,8 @@ public final class InternalCRIUSupport {
 				J9InternalCheckpointHookAPI.runPreCheckpointHooksConcurrentThread();
 				System.gc();
 				checkpointJVMImpl(imageDir, leaveRunning, shellJob, extUnixSupport, logLevel, logFile, fileLocks,
-						workDir, tcpEstablished, autoDedup, trackMemory, unprivileged, optionsFile, envFilePath, ghostFileLimit);
+						workDir, tcpEstablished, autoDedup, trackMemory, unprivileged, optionsFile, envFilePath,
+						ghostFileLimit, tcpClose, tcpSkipInFlight);
 				J9InternalCheckpointHookAPI.runPostRestoreHooksConcurrentThread();
 			} else {
 				throw new UnsupportedOperationException(

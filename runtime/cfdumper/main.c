@@ -931,15 +931,13 @@ static void dumpAttribute(J9CfrClassFile* classfile, J9CfrAttribute* attrib, U_3
 			break;
 
 #if defined(J9VM_OPT_VALHALLA_VALUE_TYPES)
-		case CFR_ATTRIBUTE_Preload:
-			for(i = 0; i < ((J9CfrAttributePreload*)attrib)->numberOfClasses; i++) {
-				U_16 classIndex = ((J9CfrAttributePreload*)attrib)->classes[i];
-				U_16 nameIndex = classfile->constantPool[classIndex].slot1;
-
-				for(j = 0; j < tabLevel + 1; j++) {
+		case CFR_ATTRIBUTE_LoadableDescriptors:
+			for (i = 0; i < ((J9CfrAttributeLoadableDescriptors *)attrib)->numberOfDescriptors; i++) {
+				U_16 descriptorIndex = ((J9CfrAttributeLoadableDescriptors *)attrib)->descriptors[i];
+				for (j = 0; j < tabLevel + 1; j++) {
 					j9tty_printf(PORTLIB, "  ");
 				}
-				j9tty_printf(PORTLIB, "Preload class index, name: %i, %i -> %s\n", classIndex, nameIndex, classfile->constantPool[nameIndex].bytes);
+				j9tty_printf(PORTLIB, "Loadable descriptor index, name: %i -> %s\n", descriptorIndex, classfile->constantPool[descriptorIndex].bytes);
 			}
 			break;
 #endif /* defined(J9VM_OPT_VALHALLA_VALUE_TYPES) */
@@ -1989,44 +1987,44 @@ static void dumpHelpText( J9PortLibrary *portLib, int argc, char **argv)
 	PORT_ACCESS_FROM_PORT(portLib);
 
 	vmDetailString(portLib, detailString, 1024);
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "\nOpenJ9 Java(TM) Class File Reader, Version " J9JVM_VERSION_STRING);
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "\n" J9_COPYRIGHT_STRING);
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "\nTarget: %s\n", detailString);
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "\nJava and all Java-based marks and logos are trademarks or registered");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "\ntrademarks of Oracle, Inc.\n\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT,  "Usage:\t%s [options] classfile\n\n", argv[0] );
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT,  "[options]\n" );
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -b               show bytecodes\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -bi              show bytecodes with jsrs inlined\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -c               check classfile structure\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -d               dump structure details\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -di              dump structure details with jsrs inlined\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -dr              dump J9 ROM Class physical memory layout\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -dr:<depth>      dump J9 ROM Class physical memory layout with specified nesting depth\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -drx             dump J9 ROM Class physical memory layout (XML)\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -drq:q1[,q2,...] query J9 ROM Class physical memory layout\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "                     Query examples:\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "                       -drq:/romHeader\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "                       -drq:/romHeader,/methods\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "                       -drq:/romHeader/className,/romHeader/romSize\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "                       -drq:/methods/method[3]/name,/methods/method[3]/methodBytecodes\n");	
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -h or -?         print usage\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -j:<jimagefile>  load from JImage file\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -jh:<jimagefile> load JImage file and display header and resources metadata\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -jp:<jimagefile> display the module containing the given package in the JImage file\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -jx:<jimagefile> extract resources from JImage file\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -m               dump multiple classes\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -o:<filename>    write out J9 ROM Class to file (use with -x)\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -oh              write out J9 ROM Class to file under the package hierarchy\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -p               pedantic mode (-Xfuture)\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -q               quiet mode (don't print standard class description)\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -r               recurse subdirectories\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -r:<filename>    read in J9 ROM Class from file\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -sd              strip debug attributes\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -t:<filename>    write out recreated .class data to file\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -x               translate to J9 ROM format\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -xm              translate to J9 ROM format with local, debug and stack maps (print only)\n");
-	j9file_printf( PORTLIB, J9PORT_TTY_OUT, "  -z:<zipfile>     load from ZIP or JAR\n\n");
+	j9file_printf(J9PORT_TTY_OUT, "\nOpenJ9 Java(TM) Class File Reader, Version " J9JVM_VERSION_STRING);
+	j9file_printf(J9PORT_TTY_OUT, "\n" J9_COPYRIGHT_STRING);
+	j9file_printf(J9PORT_TTY_OUT, "\nTarget: %s\n", detailString);
+	j9file_printf(J9PORT_TTY_OUT, "\nJava and all Java-based marks and logos are trademarks or registered");
+	j9file_printf(J9PORT_TTY_OUT, "\ntrademarks of Oracle, Inc.\n\n");
+	j9file_printf(J9PORT_TTY_OUT,  "Usage:\t%s [options] classfile\n\n", argv[0] );
+	j9file_printf(J9PORT_TTY_OUT,  "[options]\n" );
+	j9file_printf(J9PORT_TTY_OUT, "  -b               show bytecodes\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -bi              show bytecodes with jsrs inlined\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -c               check classfile structure\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -d               dump structure details\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -di              dump structure details with jsrs inlined\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -dr              dump J9 ROM Class physical memory layout\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -dr:<depth>      dump J9 ROM Class physical memory layout with specified nesting depth\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -drx             dump J9 ROM Class physical memory layout (XML)\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -drq:q1[,q2,...] query J9 ROM Class physical memory layout\n");
+	j9file_printf(J9PORT_TTY_OUT, "                     Query examples:\n");
+	j9file_printf(J9PORT_TTY_OUT, "                       -drq:/romHeader\n");
+	j9file_printf(J9PORT_TTY_OUT, "                       -drq:/romHeader,/methods\n");
+	j9file_printf(J9PORT_TTY_OUT, "                       -drq:/romHeader/className,/romHeader/romSize\n");
+	j9file_printf(J9PORT_TTY_OUT, "                       -drq:/methods/method[3]/name,/methods/method[3]/methodBytecodes\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -h or -?         print usage\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -j:<jimagefile>  load from JImage file\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -jh:<jimagefile> load JImage file and display header and resources metadata\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -jp:<jimagefile> display the module containing the given package in the JImage file\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -jx:<jimagefile> extract resources from JImage file\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -m               dump multiple classes\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -o:<filename>    write out J9 ROM Class to file (use with -x)\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -oh              write out J9 ROM Class to file under the package hierarchy\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -p               pedantic mode (-Xfuture)\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -q               quiet mode (don't print standard class description)\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -r               recurse subdirectories\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -r:<filename>    read in J9 ROM Class from file\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -sd              strip debug attributes\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -t:<filename>    write out recreated .class data to file\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -x               translate to J9 ROM format\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -xm              translate to J9 ROM format with local, debug and stack maps (print only)\n");
+	j9file_printf(J9PORT_TTY_OUT, "  -z:<zipfile>     load from ZIP or JAR\n\n");
 }
 
 static I_32
@@ -2835,9 +2833,9 @@ processJImageResource(const char *jimageFileName, J9JImage *jimage, J9JImageLoca
 
 		/* skip leading '/' if present */
 		if ('/' == resourceName[0]) {
-			j9str_printf(PORTLIB, tempPath, EsMaxPath, "%s", resourceName + 1);
+			j9str_printf(tempPath, EsMaxPath, "%s", resourceName + 1);
 		} else {
-			j9str_printf(PORTLIB, tempPath, EsMaxPath, "%s", resourceName);
+			j9str_printf(tempPath, EsMaxPath, "%s", resourceName);
 		}
 		current = strchr(tempPath, jimageFileSeparator);
 		while (NULL != current) {
@@ -3222,7 +3220,7 @@ static I_32 processROMClass(J9ROMClass* romClass, char* requestedFile, U_32 flag
 					length = (((length & 0xFF00) >> 8) | (length & 0x00FF) << 8);
 				}
 
-				j9str_printf(PORTLIB, tempPath, EsMaxPath, "%.*s", length, romClassName);
+				j9str_printf(tempPath, EsMaxPath, "%.*s", length, romClassName);
 				current = strchr(tempPath, DIR_SEPARATOR);
 				while (NULL != current) {
 					*current = '\0';

@@ -34,6 +34,8 @@
 #include "JavaObjectAllocationModel.hpp"
 #include "MemorySpace.hpp"
 
+class MM_HeapRegionDescriptorVLHGC;
+
 /**
  * Class definition for the array object allocation model.
  */
@@ -46,6 +48,7 @@ private:
 	const uint32_t _numberOfIndexedFields;
 	const uintptr_t _dataSize;
 	const GC_ArrayletObjectModel::ArrayLayout _layout;
+	const bool _isDataAdjacent;
 	const bool _alignSpineDataSection;
 	const uintptr_t _numberOfArraylets;
 
@@ -58,7 +61,12 @@ public:
 	 */
 private:
 	/**
+
 	 * For contiguous arraylet all data is subsumed into the spine.
+	 *
+	 * @param env thread GC Environment
+	 * @param spine indexable object spine
+	 *
 	 * @return initialized arraylet spine with its arraylet pointers initialized.
 	 */
 	MMINLINE J9IndexableObject *layoutContiguousArraylet(MM_EnvironmentBase *env, J9IndexableObject *spine);
@@ -67,9 +75,27 @@ private:
 	 * For non-contiguous arraylet (i.e. discontiguous and hybrid), perform separate allocations
 	 * for spine and leaf data. The spine and attached leaves may move as each leaf is allocated
 	 * is GC is allowed. The final location of the spine is returned.
+	 *
+	 * @param env thread GC Environment
+	 * @param spine indexable object spine
+	 *
 	 * @return initialized arraylet spine with its arraylet pointers initialized.
 	 */
 	MMINLINE J9IndexableObject *layoutDiscontiguousArraylet(MM_EnvironmentBase *env, J9IndexableObject *spine);
+
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+	/**
+	 * For discontiguous arraylet that will be allocated to sparse heap (off-heap). Even though this arraylet is large enough to be
+	 * discontiguous, its true layout is InlineContiguous. Arraylet leaves still need to be created and initialized,
+	 * even though they won't be used.
+	 *
+	 * @param env thread GC Environment
+	 * @param spine indexable object spine
+	 *
+	 * @return initialized arraylet spine with its arraylet pointers initialized
+	 */
+	MMINLINE J9IndexableObject *getSparseAddressAndDecommitLeaves(MM_EnvironmentBase *env, J9IndexableObject *spine);
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
 
 protected:
 
@@ -85,6 +111,7 @@ public:
 		, _dataSize(env->getExtensions()->indexableObjectModel.getDataSizeInBytes(_class, _numberOfIndexedFields))
 		, _layout(env->getExtensions()->indexableObjectModel.getArrayletLayout(_class, _numberOfIndexedFields,
 				_allocateDescription.getMemorySpace()->getDefaultMemorySubSpace()->largestDesirableArraySpine()))
+		, _isDataAdjacent(env->getExtensions()->indexableObjectModel.shouldDataBeAdjacentToHeader(_dataSize))
 		, _alignSpineDataSection(env->getExtensions()->indexableObjectModel.shouldAlignSpineDataSection(_class))
 		, _numberOfArraylets(env->getExtensions()->indexableObjectModel.numArraylets(_dataSize))
 	{

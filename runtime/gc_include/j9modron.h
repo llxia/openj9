@@ -98,6 +98,8 @@ typedef enum {
 	j9gc_modron_configuration_compressObjectReferences, /* a UDATA (TRUE or FALSE) representing whether or not object references are compressed */
 	j9gc_modron_configuration_heapRegionShift, /* a UDATA representing the shift amount to convert an object pointer to the address of the region */
 	j9gc_modron_configuration_heapRegionStateTable, /* a pointer to the base of the region state table */
+	j9gc_modron_configuration_gcConcurrentThreadCount,  /* a UDATA representing the MAX number of GC threads being used during concurrent GC operations */
+	j9gc_modron_configuration_gcUsesDynamicThreads, /* a UDATA (TRUE or FALSE) representing whether or not dynamic number of GC threads is using */
 	/* Add new values before this comment */
 	j9gc_modron_configuration_count /* Total number of known configuration keys */
 } J9GCConfigurationKey;
@@ -131,6 +133,8 @@ typedef jvmtiIterationControl J9MODRON_REFERENCE_CHAIN_WALKER_CALLBACK(J9Object 
 #define J9GC_ROOT_TYPE_JVMTI_TAG_REF 21
 #define J9GC_ROOT_TYPE_OWNABLE_SYNCHRONIZER_OBJECT 22
 #define J9GC_ROOT_TYPE_CONTINUATION_OBJECT 23
+#define J9GC_ROOT_TYPE_CONTINUATION_MONITOR 24
+#define J9GC_ROOT_TYPE_CONTINUATION_VTHREAD 25
 
 #define J9GC_REFERENCE_TYPE_UNKNOWN -1 /**< reference to an object that fell through a default state in an iterator */
 #define J9GC_REFERENCE_TYPE_FIELD -2	/**< field reference to an object */

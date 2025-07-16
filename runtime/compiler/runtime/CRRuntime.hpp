@@ -69,6 +69,13 @@ class CRRuntime
 
    CRRuntime(J9JITConfig *jitConfig, TR::CompilationInfo *compInfo);
 
+   /**
+    * @brief Cache the status of JVMTI events such as exception throw/catch
+    *        as well as whether method trace and FSD were enabled
+    *        pre-checkpoint.
+    */
+   void cacheEventsStatus();
+
    /* The CR Monitor (Checkpoint/Restore Monitor) must always be acquired with
     * Comp Monitor in hand. If waiting on the CR Monitor, the Comp Monitor
     * should be released. After being notified, the CR Monitor should be
@@ -107,6 +114,9 @@ class CRRuntime
 
    void setVMExceptionEventsHooked(bool trace) { _vmExceptionEventsHooked = trace; }
    bool isVMExceptionEventsHooked()            { return _vmExceptionEventsHooked;  }
+
+   void setFSDEnabled(bool trace) { _fsdEnabled = trace; }
+   bool isFSDEnabled()            { return _fsdEnabled;  }
 
 #if defined(J9VM_OPT_JITSERVER)
    bool canPerformRemoteCompilationInCRIUMode()                   { return _canPerformRemoteCompilationInCRIUMode;       }
@@ -338,6 +348,16 @@ class CRRuntime
    void resetStartTime();
 
    /**
+    * @brief Closes various log files
+    */
+   void closeLogFiles();
+
+   /**
+    * @brief Reopens log files closed at checkpoint
+    */
+   void reopenLogFiles();
+
+   /**
     * @brief Helper method to push a J9Method onto the front of list that is
     *        used to memoize a future compilation of said J9Method. This method
     *        should only be called with the Comp Monitor in hand.
@@ -429,6 +449,7 @@ class CRRuntime
 
    bool _vmMethodTraceEnabled;
    bool _vmExceptionEventsHooked;
+   bool _fsdEnabled;
 
 #if defined(J9VM_OPT_JITSERVER)
    bool _canPerformRemoteCompilationInCRIUMode;

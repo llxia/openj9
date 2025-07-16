@@ -1002,6 +1002,29 @@ gcParseXXgcArguments(J9JavaVM *vm, char *optArg)
 			extensions->concurrentScavengeExhaustiveTermination = false;
 			continue;
 		}
+
+		if (try_scan(&scan_start, "concurrentScavengeAllocAverageBoost=")) {
+			UDATA value = 0;
+			if (!scan_udata_helper(vm, &scan_start, &value, "concurrentScavengeAllocAverageBoost=")) {
+				returnValue = JNI_EINVAL;
+				break;
+			}
+
+			extensions->concurrentScavengerAllocAverageBoost = value / 100.0f;
+			continue;
+		}
+
+		if (try_scan(&scan_start, "concurrentScavengeAllocDeviationBoost=")) {
+			UDATA value = 0;
+			if (!scan_udata_helper(vm, &scan_start, &value, "concurrentScavengeAllocDeviationBoost=")) {
+				returnValue = JNI_EINVAL;
+				break;
+			}
+
+			extensions->concurrentScavengerAllocDeviationBoost = value / 100.0f;
+			continue;
+		}
+
 #endif /* defined(OMR_GC_CONCURRENT_SCAVENGER) */
 
 #endif /* defined(J9VM_GC_MODRON_SCAVENGER) */
@@ -1046,6 +1069,29 @@ gcParseXXgcArguments(J9JavaVM *vm, char *optArg)
 			extensions->doFrequentObjectAllocationSampling = true;
 			continue;
 		}
+
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+		if (try_scan(&scan_start, "enableVirtualLargeObjectHeap")) {
+			extensions->virtualLargeObjectHeap._wasSpecified = true;
+			extensions->virtualLargeObjectHeap._valueSpecified = true;
+			continue;
+		}
+
+		if (try_scan(&scan_start, "disableVirtualLargeObjectHeap")) {
+			extensions->virtualLargeObjectHeap._wasSpecified = true;
+			extensions->virtualLargeObjectHeap._valueSpecified = false;
+			continue;
+		}
+
+		/* Offheap size ratio (relative to max size of main heap). Expressed in percentages (for example, 650 means that offheap is 6.5x larger than main heap) */
+		if (try_scan(&scan_start, "virtualLargeObjectHeapRatio=")) {
+			if (!scan_udata_helper(vm, &scan_start, &extensions->sparseHeapSizeRatio, "virtualLargeObjectHeapRatio=")) {
+				returnValue = JNI_EINVAL;
+				break;
+			}
+			continue;
+		}
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
 
 		if (try_scan(&scan_start, "largeObjectAllocationProfilingThreshold=")) {
 			if (!scan_udata_helper(vm, &scan_start, &extensions->largeObjectAllocationProfilingThreshold, "largeObjectAllocationProfilingThreshold=")) {
@@ -1560,6 +1606,16 @@ gcParseXXgcArguments(J9JavaVM *vm, char *optArg)
 			extensions->forceGPFOnHeapInitializationError = true;
 			continue;
 		}
+
+		if (try_scan(&scan_start, "regionSizeWithOverride=")) {
+			if(!scan_udata_memory_size_helper(vm, &scan_start, &extensions->regionSize, "regionSizeWithOverride=")) {
+				returnValue = JNI_EINVAL;
+				break;
+			}
+			extensions->isRegionSizeWithOverrideSpecified = true;
+			continue;
+		}
+
 
 		/* Couldn't find a match for arguments */
 		j9nls_printf(PORTLIB, J9NLS_ERROR, J9NLS_GC_OPTION_UNKNOWN, error_scan);

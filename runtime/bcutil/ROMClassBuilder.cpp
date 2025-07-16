@@ -283,8 +283,14 @@ ROMClassBuilder::handleAnonClassName(J9CfrClassFile *classfile, ROMClassCreation
 	 * Performance can be much worse (compared to shared cache turned off).
 	 */
 	if (isLambdaFormClassName(originalStringBytes, originalStringLength, NULL/*deterministicPrefixLength*/)) {
-		context->addFindClassFlags(J9_FINDCLASS_FLAG_DO_NOT_SHARE);
 		context->addFindClassFlags(J9_FINDCLASS_FLAG_LAMBDAFORM);
+#if defined(J9VM_OPT_SHARED_CLASSES)
+		if ((NULL != _javaVM) && (NULL != _javaVM->sharedClassConfig)) {
+			if (J9_ARE_NO_BITS_SET(_javaVM->sharedClassConfig->runtimeFlags2, J9SHR_RUNTIMEFLAG2_SHARE_LAMBDAFORM)) {
+				context->addFindClassFlags(J9_FINDCLASS_FLAG_DO_NOT_SHARE);
+			}
+		}
+#endif /* defined(J9VM_OPT_SHARED_CLASSES) */
 	}
 
 #if JAVA_SPEC_VERSION >= 15
@@ -410,12 +416,12 @@ ROMClassBuilder::handleAnonClassName(J9CfrClassFile *classfile, ROMClassCreation
 	}
 	memcpy (constantPool[newUtfCPEntry].bytes + newHostPackageLength, originalStringBytes, originalStringLength);
 	*(U_8*)((UDATA) constantPool[newUtfCPEntry].bytes + newHostPackageLength + originalStringLength) = ANON_CLASSNAME_CHARACTER_SEPARATOR;
-	/* 
+	/*
 	 * 0x<romAddress> will be appended to anon/hidden class name.
 	 * Initialize the 0x<romAddress> part to 0x00000000 or 0x0000000000000000 (depending on the platforms).
 	 */
-	j9str_printf(PORTLIB, buf, ROM_ADDRESS_LENGTH + 1, ROM_ADDRESS_FORMAT, 0);
-	memcpy(constantPool[newUtfCPEntry].bytes + newHostPackageLength + originalStringLength + 1, buf, ROM_ADDRESS_LENGTH + 1);	
+	j9str_printf(buf, ROM_ADDRESS_LENGTH + 1, ROM_ADDRESS_FORMAT, 0);
+	memcpy(constantPool[newUtfCPEntry].bytes + newHostPackageLength + originalStringLength + 1, buf, ROM_ADDRESS_LENGTH + 1);
 
 	/* Mark if the class is a Lambda class. */
 #if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
@@ -593,8 +599,8 @@ ROMClassBuilder::prepareAndLaydown( BufferManager *bufferManager, ClassFileParse
 #if JAVA_SPEC_VERSION < 21
 	U_32 sizeToCompareForLambda = 0;
 	if (context->isLambdaClass()) {
-		/* 
-		 * romSize calculated from getSizeInfo() does not involve StringInternManager. It is only accurate for string intern disabled classes. 
+		/*
+		 * romSize calculated from getSizeInfo() does not involve StringInternManager. It is only accurate for string intern disabled classes.
 		 * Lambda classes in java 15 and up are strong hidden classes (defined with Option.STONG), which has the same lifecycle as its
 		 * defining class loader. It is string intern enabled. So pass classFileSize instead of romSize to sizeToCompareForLambda.
 		 */
@@ -667,7 +673,7 @@ ROMClassBuilder::prepareAndLaydown( BufferManager *bufferManager, ClassFileParse
 		) {
 			/* For redefining/transforming, we still want loadType to be J9SHR_LOADTYPE_REDEFINED/J9SHR_LOADTYPE_RETRANSFORMED,
 			 * so put these checks after the redefining/transforming checks.
-			 */ 
+			 */
 			loadType = J9SHR_LOADTYPE_NOT_FROM_PATH;
 		}
 
@@ -768,10 +774,13 @@ ROMClassBuilder::prepareAndLaydown( BufferManager *bufferManager, ClassFileParse
 			 */
 			if (!sharedStoreClassTransaction.isCacheFull()) {
 				if ( sharedStoreClassTransaction.allocateSharedClass(&sizeRequirements) ){
-					U_8 *romClassBuffer = (U_8*)sharedStoreClassTransaction.getRomClass();
+					J9ROMClass *romClassBuffer = (J9ROMClass*)sharedStoreClassTransaction.getRomClass();
 					/*
 					 * Make note that the laydown is occurring in SharedClasses
 					 */
+
+					extraModifiers |= J9AccClassIsShared;
+
 					romSize = finishPrepareAndLaydown(
 							(U_8*)sharedStoreClassTransaction.getRomClass(),
 							(U_8*)sharedStoreClassTransaction.getLineNumberTable(),
@@ -782,15 +791,15 @@ ROMClassBuilder::prepareAndLaydown( BufferManager *bufferManager, ClassFileParse
 							context, &constantPoolMap
 							);
 
-					fixReturnBytecodes(_portLibrary, (J9ROMClass *)romClassBuffer);
+					fixReturnBytecodes(_portLibrary, romClassBuffer);
 
 					/*
 					 * inform the shared class transaction what the final ROMSize is
 					 */
 					sharedStoreClassTransaction.updateSharedClassSize(romSize);
-					context->recordROMClass((J9ROMClass *)romClassBuffer);
+					context->recordROMClass(romClassBuffer);
 					if ((NULL != _javaVM) && (_javaVM->extendedRuntimeFlags & J9_EXTENDED_RUNTIME_CHECK_DEBUG_INFO_COMPRESSION)) {
-						checkDebugInfoCompression((J9ROMClass *)romClassBuffer, classFileOracle, &srpKeyProducer, &constantPoolMap, &srpOffsetTable);
+						checkDebugInfoCompression(romClassBuffer, classFileOracle, &srpKeyProducer, &constantPoolMap, &srpOffsetTable);
 					}
 					return OK;
 				}
@@ -891,7 +900,7 @@ ROMClassBuilder::prepareAndLaydown( BufferManager *bufferManager, ClassFileParse
 			 * write the name into a buffer first because j9str_printf automatically adds a NULL terminator
 			 * at the end, and J9UTF8 are not NULL terminated
 			 */
-			j9str_printf(PORTLIB, message, ROM_ADDRESS_LENGTH + 1, ROM_ADDRESS_FORMAT, (UDATA)romClassBuffer);
+			j9str_printf(message, ROM_ADDRESS_LENGTH + 1, ROM_ADDRESS_FORMAT, (UDATA)romClassBuffer);
 			nameString = (char*) message;
 		}
 		memcpy((char*) (classNameBytes + classNameRealLenghth), nameString, ROM_ADDRESS_LENGTH);
@@ -1216,7 +1225,7 @@ ROMClassBuilder::finishPrepareAndLaydown(
  *                                    + UNUSED
  *
  *                                  + UNUSED
- *                                 + UNUSED
+ *                                 + J9AccClassIsShared
  *                                + J9AccClassIsValueBased
  *                               + J9AccClassHiddenOptionNestmate
  *
@@ -1265,7 +1274,7 @@ ROMClassBuilder::computeExtraModifiers(ClassFileOracle *classFileOracle, ROMClas
 	if ( context->isClassAnon() ) {
 		modifiers |= J9AccClassAnonClass;
 	}
-	
+
 	if (context->isClassHidden()) {
 		modifiers |= J9AccClassHidden;
 		if (context->isHiddenClassOptNestmateSet()) {
@@ -1299,7 +1308,7 @@ ROMClassBuilder::computeExtraModifiers(ClassFileOracle *classFileOracle, ROMClas
 	if ( classFileOracle->isClassUnmodifiable() ) {
 		modifiers |= J9AccClassIsUnmodifiable;
 	}
-	
+
 	if (classFileOracle->isValueBased()) {
 		modifiers |= J9AccClassIsValueBased;
 	}
@@ -1426,8 +1435,8 @@ ROMClassBuilder::computeOptionalFlags(ClassFileOracle *classFileOracle, ROMClass
 	if (_interfaceInjectionInfo.numOfInterfaces > 0) {
 		optionalFlags |= J9_ROMCLASS_OPTINFO_INJECTED_INTERFACE_INFO;
 	}
-	if (classFileOracle->hasPreloadClasses()) {
-		optionalFlags |= J9_ROMCLASS_OPTINFO_PRELOAD_ATTRIBUTE;
+	if (classFileOracle->hasLoadableDescriptors()) {
+		optionalFlags |= J9_ROMCLASS_OPTINFO_LOADABLEDESCRIPTORS_ATTRIBUTE;
 	}
 #endif /* J9VM_OPT_VALHALLA_VALUE_TYPES */
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
@@ -1486,6 +1495,10 @@ ROMClassBuilder::compareROMClassForEquality(
 {
 	bool ret = false;
 
+	if (romClassIsShared) {
+		extraModifiers |= J9AccClassIsShared;
+	}
+
 #if JAVA_SPEC_VERSION < 21
 	if (context->isLambdaClass()) {
 		/*
@@ -1495,7 +1508,7 @@ ROMClassBuilder::compareROMClassForEquality(
 		 * between the number of digits of the index number. The same lambda class might have a
 		 * different index number from run to run and when the number of digits of the index number
 		 * increases by 1, classFileSize also increases by 1. The indexNumber is the counter for the number of
-		 * lambda classes defined so far. It is an int in the JCL side. So the it cannot vary more than max
+		 * lambda classes defined so far. It is an int in the JCL side. So the int cannot vary more than max
 		 * integer vs 0, which is maxVariance (9 bytes). This check is different than the romSize check because
 		 * when the number of digits of the index number increases by 1, classFileSize also increases by 1 but
 		 * romSize increases by 2.

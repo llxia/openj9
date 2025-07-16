@@ -22,11 +22,15 @@
  */
 package java.lang.ref;
 
-/*[IF JAVA_SPEC_VERSION >= 9]
-import jdk.internal.ref.Cleaner;
-/*[ELSE] JAVA_SPEC_VERSION >= 9 */
+/*[IF JAVA_SPEC_VERSION < 9]*/
 import sun.misc.Cleaner;
-/*[ENDIF] JAVA_SPEC_VERSION >= 9 */
+/*[ELSEIF JAVA_SPEC_VERSION < 26]*/
+import jdk.internal.ref.Cleaner;
+/*[ENDIF] JAVA_SPEC_VERSION < 9 */
+
+/*[IF JAVA_SPEC_VERSION >= 24]*/
+import jdk.internal.vm.Continuation;
+/*[ENDIF] JAVA_SPEC_VERSION >= 24*/
 
 /*[IF CRIU_SUPPORT]*/
 import openj9.internal.criu.NotCheckpointSafe;
@@ -34,13 +38,13 @@ import openj9.internal.criu.NotCheckpointSafe;
 
 /**
  * ReferenceQueue is the container on which reference objects
- * are enqueued when their reachability type is detected for 
+ * are enqueued when their reachability type is detected for
  * the referent.
  *
  * @author		OTI
  * @version		initial
  * @since		1.2
- */	
+ */
 
 public class ReferenceQueue<T> extends Object {
 	private Reference[] references;
@@ -54,19 +58,21 @@ public class ReferenceQueue<T> extends Object {
 	private static final Class classNameLockRefClass;
 
 	static {
+		/*[IF JAVA_SPEC_VERSION < 26]
 		/*[PR CMVC 114480] deadlock loading sun.misc.Cleaner */
 		// cause sun.misc.Cleaner to be loaded
-		Class cl = Cleaner.class;
+		Class<?> cl = Cleaner.class;
+		/*[ENDIF] JAVA_SPEC_VERSION < 26 */
 		/*[PR 125873] Improve reflection cache */
-		Class tmpClass = null;
+		Class<?> tmpClass = null;
 		try {
 			tmpClass = Class.forName("java.lang.Class$ReflectRef"); //$NON-NLS-1$
 		} catch (ClassNotFoundException e) {}
 		reflectRefClass = tmpClass;
-		
-		Class tmpClass2 = null;
+
+		Class<?> tmpClass2 = null;
 		try {
-			tmpClass2 = Class.forName("java.lang.ClassLoader$ClassNameLockRef"); //$NON-NLS-1$	
+			tmpClass2 = Class.forName("java.lang.ClassLoader$ClassNameLockRef"); //$NON-NLS-1$
 		} catch (ClassNotFoundException e) {}
 		classNameLockRefClass = tmpClass2;
 	}
@@ -78,23 +84,31 @@ public class ReferenceQueue<T> extends Object {
  *
  * @return		Reference
  *					next available Reference or NULL.
- */	
+ */
 /*[IF CRIU_SUPPORT]*/
 @NotCheckpointSafe
 /*[ENDIF] CRIU_SUPPORT */
-public Reference<? extends T> poll () {	
+public Reference<? extends T> poll () {
 	Reference ref;
-	
+
 	/* Optimization to return immediately and not synchronize if there is nothing in the queue */
 	if(empty) {
 		return null;
 	}
+
+	/*[IF JAVA_SPEC_VERSION >= 24]*/
+	boolean isVirtual = false;
+	if (Thread.currentThread().isVirtual()) {
+		isVirtual = true;
+		Continuation.pin();
+	}
+	/*[ENDIF] JAVA_SPEC_VERSION >= 24*/
 	synchronized(this) {
 		if(empty) {
 			return null;
 		}
 		ref = references[head];
-		/*[PR 115652] null References when removed */ 
+		/*[PR 115652] null References when removed */
 		references[head++] = null;
 		ref.dequeue();
 		if(head == references.length) {
@@ -104,11 +118,16 @@ public Reference<? extends T> poll () {
 			empty = true;
 		}
 	}
+	/*[IF JAVA_SPEC_VERSION >= 24]*/
+	if (isVirtual) {
+		Continuation.unpin();
+	}
+	/*[ENDIF] JAVA_SPEC_VERSION >= 24*/
 	return ref;
 }
 
 /**
- * Return the next available enqueued reference on the queue, blocking 
+ * Return the next available enqueued reference on the queue, blocking
  * indefinitely until one is available.
  *
  * @author		OTI
@@ -119,13 +138,13 @@ public Reference<? extends T> poll () {
  *                  null otherwise.
  * @exception	InterruptedException
  *					to interrupt the wait.
- */	
+ */
 public Reference<? extends T> remove() throws InterruptedException {
 	return remove(0L);
 }
 
 /**
- * Return the next available enqueued reference on the queue, blocking 
+ * Return the next available enqueued reference on the queue, blocking
  * up to the time given until one is available.  Return null if no
  * reference became available.
  *
@@ -142,7 +161,7 @@ public Reference<? extends T> remove() throws InterruptedException {
  *					if the wait period is negative.
  * @exception	InterruptedException
  *					to interrupt the wait.
- */	
+ */
 public Reference<? extends T> remove(long timeout) throws IllegalArgumentException, InterruptedException {
 	if (timeout < 0) throw new IllegalArgumentException();
 
@@ -153,7 +172,7 @@ public Reference<? extends T> remove(long timeout) throws IllegalArgumentExcepti
 			if(empty) return null;
 		}
 		ref = references[head];
-		/*[PR 115652] null References when removed */ 
+		/*[PR 115652] null References when removed */
 		references[head++] = null;
 		ref.dequeue();
 		if(head == references.length) {
@@ -173,37 +192,34 @@ public Reference<? extends T> remove(long timeout) throws IllegalArgumentExcepti
  *
  * @param		reference
  *					reference object to be enqueued.
- * @return		boolean
- *					true if reference is enqueued.
- *					false if reference failed to enqueue.
  */
-boolean enqueue(Reference<? extends T> reference) {
+void enqueue(Reference<? extends T> reference) {
+	/*[IF JAVA_SPEC_VERSION < 26]
 	/*[PR CMVC 96472] deadlock loading sun.misc.Cleaner */
 	/*[PR 102259] call Cleaner.clean(), do not enqueue */
 	if (reference instanceof Cleaner) {
 		reference.dequeue();
 		((Cleaner)reference).clean();
-		return true;
+		return;
 	}
+	/*[ENDIF] JAVA_SPEC_VERSION < 26 */
 	/*[PR 125873] Improve reflection cache */
-	Class refClass = reference.getClass();
-	if (refClass == reflectRefClass
-			||	refClass == classNameLockRefClass
-	) {
+	Class<?> refClass = reference.getClass();
+	if (refClass == reflectRefClass || refClass == classNameLockRefClass) {
 		reference.dequeue();
 		((Runnable)reference).run();
-		return true;
+		return;
 	}
 	synchronized(this) {
 		/*[PR CMVC 181985] Perf: zWAS ftprint regressed 6% Java7 vs 626FP1 -ReferenceQueue */
-		if ( references == null) {
+		if (references == null) {
 			references =  new Reference[DEFAULT_QUEUE_SIZE];
-		} else if(!empty && head == tail) {
+		} else if (!empty && (head == tail)) {
 			/* Queue is full - grow */
 			int newQueueSize = (int)(references.length * 1.10);
 			Reference newQueue[] = new Reference[newQueueSize];
 			System.arraycopy(references, head, newQueue, 0, references.length - head);
-			if(tail > 0) {
+			if (tail > 0) {
 				System.arraycopy(references, 0, newQueue, references.length - head, tail);
 			}
 			head = 0;
@@ -211,43 +227,19 @@ boolean enqueue(Reference<? extends T> reference) {
 			references = newQueue;
 		}
 		references[tail++] = reference;
-		if(tail == references.length) {
+		if (tail == references.length) {
 			tail = 0;
 		}
 		empty = false;
+		reference.setEnqueued();
 		notifyAll();
 	}
-	return true;
 }
 
 void forEach(java.util.function.Consumer<? super Reference<? extends T>> consumer) {
 }
 
 /*[IF JAVA_SPEC_VERSION >= 19]*/
-final boolean headIsNull() {
-	return empty;
-}
-
-final Reference<? extends T> poll0() {
-	return poll();
-}
-
-final Reference<? extends T> remove0(long timeout) throws IllegalArgumentException, InterruptedException {
-	return remove(timeout);
-}
-
-final Reference<? extends T> remove0() throws IllegalArgumentException, InterruptedException {
-	return remove(0L);
-}
-
-final boolean enqueue0(Reference reference) {
-	return enqueue(reference);
-}
-
-void signal() {}
-void await() throws InterruptedException {}
-void await(long timeout) throws InterruptedException {}
-
 ReferenceQueue(int value) {
 	this();
 }
@@ -259,6 +251,6 @@ ReferenceQueue(int value) {
 public ReferenceQueue() {
 	head = 0;
 	tail = 0;
-	empty = true;	
+	empty = true;
 }
 }

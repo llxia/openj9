@@ -656,25 +656,6 @@ javaOffloadSwitchOffWithReason(J9VMThread *currentThread, UDATA reason);
 /* ------------------- jfr.cpp ------------------- */
 
 /**
- * Initialize JFR.
- *
- * @param vm[in] the J9JavaVM
- *
- * @returns JNI_OK on success, JNI error code on failure
- */
-jint
-initializeJFR(J9JavaVM *vm);
-
-/**
- * Take an execution sample of the current thread.
- *
- * @param currentThread[in] the current J9VMThread
- * @param currentThread[in] the thread being walked
- */
-void
-jfrExecutionSample(J9VMThread *currentThread, J9VMThread *sampleThread);
-
-/**
  * Begin event iteration in a JFR buffer.
  *
  * @param buffer[in] pointer to the buffer
@@ -742,6 +723,23 @@ cleanupEnsureHashedConfig(J9JavaVM *jvm);
  */
 UDATA
 parseEnsureHashedConfig(J9JavaVM *jvm, char *options, BOOLEAN isAdd);
+
+#if JAVA_SPEC_VERSION >= 11
+/**
+ * Get Module Name.
+ *
+ * *** The caller must free the memory from this pointer if the return value is NOT the buffer argument. ***
+ *
+ * @param[in] currentThread the current J9VMThread
+ * @param[in] module the module
+ * @param[in] buffer the buffer for the module name
+ * @param[in] bufferLength the buffer length
+ *
+ * @return a char pointer to the module name
+ */
+char *
+getModuleNameUTF(J9VMThread *currentThread, J9Module *module, char *buffer, UDATA bufferLength);
+#endif /* JAVA_SPEC_VERSION >= 11 */
 
 #ifdef __cplusplus
 } /* extern "C" */

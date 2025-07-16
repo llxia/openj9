@@ -126,7 +126,7 @@ static void printStack(TR::Compilation *comp, TR_Stack<TR::Node*> *stack, const 
          {
          TR::Node *node = stack->element(i);
          traceMsg(comp, "\n");
-         sprintf(buf, "   @%-2d", i);
+         snprintf(buf, sizeof(buf), "   @%-2d", i);
          comp->getDebug()->printWithFixedPrefix(comp->getOutFile(), node, 1, false, true, buf);
          if (!nodesAlreadyPrinted.isSet(node->getGlobalIndex()))
             {
@@ -781,7 +781,7 @@ TR_J9ByteCodeIlGenerator::symRefWithArtificialSignature(TR::SymbolReference *ori
    return result;
    }
 
-static int32_t processArtificialSignature(char *result, const char *format, va_list args)
+static int32_t processArtificialSignature(char *result, size_t maxResult, const char *format, va_list args)
    {
    int32_t resultLength = 0;
    char *cur = result;
@@ -869,10 +869,19 @@ static int32_t processArtificialSignature(char *result, const char *format, va_l
       TR_ASSERT(length >= 0, "assertion failure");
       TR_ASSERT(startChar != NULL, "assertion failure");
 
-      resultLength += length;
       if (result)
-         cur += sprintf(cur, "%.*s", length, startChar);
-
+         {
+         int len = snprintf(cur, maxResult - resultLength, "%.*s", length, startChar);
+         if ((0 < len) && ((size_t)len <= (maxResult - resultLength)))
+            {
+            cur += len;
+            resultLength += len;
+            }
+         }
+      else
+         {
+         resultLength += length;
+         }
       }
 
    return resultLength;
@@ -893,13 +902,13 @@ char *TR_J9ByteCodeIlGenerator::vartificialSignature(TR_AllocationKind allocKind
    //
    va_list argsCopy;
    va_copy(argsCopy, args);
-   int32_t resultLength = processArtificialSignature(NULL, format, argsCopy);
+   int32_t resultLength = processArtificialSignature(NULL, 0, format, argsCopy);
    va_copy_end(argsCopy);
 
    // Produce formatted signature
    //
    char *result = (char*)trMemory()->allocateMemory(resultLength+1, allocKind);
-   processArtificialSignature(result, format, args);
+   processArtificialSignature(result, resultLength + 1, format, args);
    return result;
    }
 
@@ -1630,9 +1639,6 @@ TR_J9ByteCodeIlGenerator::stashArgumentsForOSR(TR_J9ByteCode byteCode)
 
    TR::MethodSymbol *symbol = symRef->getSymbol()->castToMethodSymbol();
    int32_t numArgs = symbol->getMethod()->numberOfExplicitParameters() + (symbol->isStatic() ? 0 : 1);
-   // For OpenJDK MH implementation, some args for invokedynamic/invokehandle (details below)
-   // that are already pushed to stack must not be stashed
-   int32_t numArgsToNotStash = 0;
 
 #if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
    // If the transition target is invokehandle/invokedynamic, the arguments to be
@@ -1671,6 +1677,7 @@ TR_J9ByteCodeIlGenerator::stashArgumentsForOSR(TR_J9ByteCode byteCode)
    // Notice that we always generate a resolved call, thus we use unresolvedInCP to tell
    // us whether the side table entry is resolved
    //
+   int32_t numArgsToNotStash = 0;
    if (byteCode == J9BCinvokedynamic ||
        byteCode == J9BCinvokehandle)
       {
@@ -1684,10 +1691,10 @@ TR_J9ByteCodeIlGenerator::stashArgumentsForOSR(TR_J9ByteCode byteCode)
       if (trace())
          traceMsg(comp(), "Original num args for invokedynamic/handle: %d, num args to not stash for OSR: %d, stack size: %d\n", numArgs, numArgsToNotStash, _stack->size());
       }
-#endif
+
    numArgs -= numArgsToNotStash;
-   // For OpenJDK MethodHandle implementation, there may be items on stack that we need to exclude
-   int32_t adjustedStackSize = _stack->size() - numArgsToNotStash;
+#endif
+
    TR_OSRMethodData *osrMethodData =
       comp()->getOSRCompilationData()->findOrCreateOSRMethodData(comp()->getCurrentInlinedSiteIndex(), _methodSymbol);
    osrMethodData->ensureArgInfoAt(_bcIndex, numArgs);
@@ -1696,10 +1703,10 @@ TR_J9ByteCodeIlGenerator::stashArgumentsForOSR(TR_J9ByteCode byteCode)
    // It is necessary to walk the whole stack to determine the slot numbers
    int32_t slot = 0;
    int arg = 0;
-   for (int32_t i = 0; i < adjustedStackSize; ++i)
+   for (int32_t i = 0; i < _stack->size(); ++i)
       {
       TR::Node * n = _stack->element(i);
-      if (adjustedStackSize - numArgs <= i)
+      if (_stack->size() - numArgs <= i)
          {
          TR::SymbolReference * symRef = symRefTab()->findOrCreatePendingPushTemporary(_methodSymbol, slot, getDataType(n));
          osrMethodData->addArgInfo(_bcIndex, arg, symRef->getReferenceNumber());
@@ -2035,7 +2042,7 @@ TR_J9ByteCodeIlGenerator::calculateElementAddressInContiguousArray(int32_t width
       }
    }
 
-#if defined(J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
 void
 TR_J9ByteCodeIlGenerator::calculateElementAddressInContiguousArrayUsingDataAddrField(int32_t width)
    {
@@ -2065,7 +2072,7 @@ TR_J9ByteCodeIlGenerator::calculateElementAddressInContiguousArrayUsingDataAddrF
    // stack is now ...,firstArrayElement,shift/index<===
    genBinary(TR::aladd);
    }
-#endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
 
 // Helper to calculate the index of the array element in a contiguous array
 // Stack: ..., offset for array element index
@@ -2150,7 +2157,7 @@ TR_J9ByteCodeIlGenerator::calculateArrayElementAddress(TR::DataType dataType, bo
    }
 
    // Stack is now ...,aryRef,index<===
-#if defined(J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
    if (fej9()->isOffHeapAllocationEnabled())
       {
       // stack is now ...,aryRef,index<===
@@ -2161,7 +2168,7 @@ TR_J9ByteCodeIlGenerator::calculateArrayElementAddress(TR::DataType dataType, bo
    else if (comp()->generateArraylets())
 #else
    if (comp()->generateArraylets())
-#endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
       {
       // shift the index on the current stack to get index into array spine
       loadConstant(TR::iconst, fej9()->getArraySpineShift(width));
@@ -3189,23 +3196,50 @@ static char *suffixedName(char *baseName, char typeSuffix, char *buf, int32_t bu
    int32_t methodNameLength = strlen(baseName) + 2;
    if (methodNameLength >= bufSize)
       methodName = (char*)comp->trMemory()->allocateStackMemory(methodNameLength+1, TR_MemoryBase::IlGenerator);
-   sprintf(methodName, "%s%c", baseName, typeSuffix);
+   snprintf(methodName, methodNameLength + 1, "%s%c", baseName, typeSuffix);
    return methodName;
+   }
+
+/**
+ * \brief
+ *    Helper to count the number of parameters in a Java CP method signature.
+ *    Used when we cannot rely on fetching the number of parameters from the symbol reference for the method
+ * \param sig the signature of the method
+ */
+static int32_t countParams(unsigned char *sig)
+   {
+   sig++; // skip opening brace
+   int32_t count = 0;
+   while (*sig != ')')
+      {
+      while (*sig == '[')
+         {
+         sig++;
+         }
+      if (*sig == 'L')
+         {
+         while (*sig != ';')
+            {
+            sig++;
+            }
+         }
+      count++;
+      sig++;
+      }
+   return count;
    }
 
 void
 TR_J9ByteCodeIlGenerator::genInvokeDynamic(int32_t callSiteIndex)
    {
-   if (comp()->compileRelocatableCode())
-      {
-      comp()->failCompilation<J9::AOTHasInvokeHandle>("COMPILATION_AOT_HAS_INVOKEHANDLE 0");
-      }
-
    if (comp()->getOption(TR_FullSpeedDebug) && !isPeekingMethod())
       comp()->failCompilation<J9::FSDHasInvokeHandle>("FSD_HAS_INVOKEHANDLE 0");
 #if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
-
-   // Call generated when call site table entry is resolved:
+   if (comp()->compileRelocatableCode() && (!comp()->getOption(TR_EnableMHRelocatableCompile) || !comp()->getOption(TR_UseSymbolValidationManager)))
+      {
+      comp()->failCompilation<J9::AOTHasInvokeHandle>("COMPILATION_AOT_HAS_INVOKEHANDLE 0");
+      }
+   // Call generated when call site table entry is resolved and appendix object is non-null:
    // -----------------------------------------------------
    // call <target method obtained from memberName object>
    //    arg0
@@ -3256,9 +3290,39 @@ TR_J9ByteCodeIlGenerator::genInvokeDynamic(int32_t callSiteIndex)
    if (comp()->getOption(TR_TraceILGen))
       printStack(comp(), _stack, "(Stack after load from callsite table)");
 
-   TR::Node* callNode = genInvokeDirect(targetMethodSymRef);
+   /* We need to get the expected number of parameters from the signature. There is a case where findOrCreateDynamicMethodSymbol()
+    * returns an error-throwing MethodHandle that takes 0 arguments (occurs when an error is caught during resolveInvokeDynamic()). We cannot use
+    * TR::Method::numberOfExplicitParameters() since that fetches the number of parameters of targetMethodSymRefs (the MH actually returned)
+    * instead of what's expected for the invokedynamic call. This can be a problem since the expected number of args are already on the stack and won't be
+    * popped properly.
+    */
+   int32_t paramCount = 0;
+   if (isUnresolved)
+      {
+      // we need both appendix and membername objects ==> we have at least 2 args
+      paramCount = 2;
+      }
+   else
+      {
+      // we only need to account for the appendix object if it is non-null
+      paramCount = (isInvokeCacheAppendixNull ? 0 : 1);
+      }
+
+   TR_ResolvedJ9Method* ownerMethod = static_cast<TR_ResolvedJ9Method *>(_methodSymbol->getResolvedMethod());
+   J9ROMClass *ownerROMMethod = ownerMethod->romClassPtr();
+   J9SRP *callSiteData = (J9SRP *) J9ROMCLASS_CALLSITEDATA(ownerROMMethod);
+   J9ROMNameAndSignature *nameAndSig = SRP_PTR_GET(callSiteData + callSiteIndex, J9ROMNameAndSignature*);
+   J9UTF8* sig = J9ROMNAMEANDSIGNATURE_SIGNATURE(nameAndSig);
+   // count params gets the number of explicit parameters and does not include the appendix and/or membername objects
+   paramCount += countParams(J9UTF8_DATA(sig));
+
+   TR::Node* callNode = genInvokeDirect(targetMethodSymRef, paramCount);
 
 #else
+   if (comp()->compileRelocatableCode())
+      {
+      comp()->failCompilation<J9::AOTHasInvokeHandle>("COMPILATION_AOT_HAS_INVOKEHANDLE 0");
+      }
 
    TR::SymbolReference *symRef = symRefTab()->findOrCreateDynamicMethodSymbol(_methodSymbol, callSiteIndex);
 
@@ -3292,14 +3356,13 @@ TR_J9ByteCodeIlGenerator::genInvokeDynamic(int32_t callSiteIndex)
 TR::Node *
 TR_J9ByteCodeIlGenerator::genInvokeHandle(int32_t cpIndex)
    {
-   if (comp()->compileRelocatableCode())
-      {
-      comp()->failCompilation<J9::AOTHasInvokeHandle>("COMPILATION_AOT_HAS_INVOKEHANDLE 1");
-      }
-
    if (comp()->getOption(TR_FullSpeedDebug) && !isPeekingMethod())
       comp()->failCompilation<J9::FSDHasInvokeHandle>("FSD_HAS_INVOKEHANDLE 1");
 #if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+   if (comp()->compileRelocatableCode() && (!comp()->getOption(TR_EnableMHRelocatableCompile) || !comp()->getOption(TR_UseSymbolValidationManager)))
+      {
+      comp()->failCompilation<J9::AOTHasInvokeHandle>("COMPILATION_AOT_HAS_INVOKEHANDLE 1");
+      }
    // Call generated when methodType table entry is resolved:
    // -----------------------------------------------------
    // call <target method obtained from memberName object>
@@ -3342,8 +3405,6 @@ TR_J9ByteCodeIlGenerator::genInvokeHandle(int32_t cpIndex)
    bool isUnresolved = false;
    bool isInvokeCacheAppendixNull = false;
    TR::SymbolReference * targetMethodSymRef = symRefTab()->findOrCreateHandleMethodSymbol(_methodSymbol, cpIndex, &isUnresolved, &isInvokeCacheAppendixNull);
-   if (isUnresolved)
-      targetMethodSymRef->getSymbol()->setDummyResolvedMethod(); // linkToStatic is a dummy TR_ResolvedMethod
    TR::SymbolReference *methodTypeTableEntrySymRef = symRefTab()->findOrCreateMethodTypeTableEntrySymbol(_methodSymbol, cpIndex);
    TR_ResolvedJ9Method* owningMethod = static_cast<TR_ResolvedJ9Method *>(_methodSymbol->getResolvedMethod());
    uintptr_t * invokeCacheArray = (uintptr_t *) owningMethod->methodTypeTableEntryAddress(cpIndex);
@@ -3357,6 +3418,10 @@ TR_J9ByteCodeIlGenerator::genInvokeHandle(int32_t cpIndex)
    TR::Node* callNode = genInvokeDirect(targetMethodSymRef);
 
 #else
+   if (comp()->compileRelocatableCode())
+      {
+      comp()->failCompilation<J9::AOTHasInvokeHandle>("COMPILATION_AOT_HAS_INVOKEHANDLE 1");
+      }
 
    TR::SymbolReference * invokeExactSymRef = symRefTab()->findOrCreateHandleMethodSymbol(_methodSymbol, cpIndex);
 
@@ -3649,11 +3714,11 @@ static TR::SymbolReference * getPrimitiveValueFieldSymbolReference(TR_J9ByteCode
    }
 
 TR::Node*
-TR_J9ByteCodeIlGenerator::genInvoke(TR::SymbolReference * symRef, TR::Node *indirectCallFirstChild, TR::Node *invokedynamicReceiver)
+TR_J9ByteCodeIlGenerator::genInvoke(TR::SymbolReference * symRef, TR::Node *indirectCallFirstChild, TR::Node *invokedynamicReceiver, int32_t numExpectedArgs)
    {
    TR::KnownObjectTable::Index requiredKoi;
    TR::Node *callNode = genInvokeInner(
-      symRef, indirectCallFirstChild, invokedynamicReceiver, &requiredKoi);
+      symRef, indirectCallFirstChild, invokedynamicReceiver, &requiredKoi, numExpectedArgs);
 
    if (requiredKoi == TR::KnownObjectTable::UNKNOWN)
       return callNode;
@@ -3672,7 +3737,8 @@ TR_J9ByteCodeIlGenerator::genInvokeInner(
    TR::SymbolReference * symRef,
    TR::Node *indirectCallFirstChild,
    TR::Node *invokedynamicReceiver,
-   TR::KnownObjectTable::Index *requiredKoi)
+   TR::KnownObjectTable::Index *requiredKoi,
+   int32_t numExpectedArgs)
    {
    TR::MethodSymbol * symbol = symRef->getSymbol()->castToMethodSymbol();
    bool isStatic     = symbol->isStatic();
@@ -3680,6 +3746,10 @@ TR_J9ByteCodeIlGenerator::genInvokeInner(
 
    TR::Method * calledMethod = symbol->getMethod();
    int32_t numArgs = calledMethod->numberOfExplicitParameters() + (isStatic ? 0 : 1);
+
+   // need to track stack size at beginning and end of ILGeneration for invokeDynamic for the case
+   // where we get the special error throwing MethodHandle
+   int32_t startingStackSize = _stack->size();
 
    if (pushRequiredConst(requiredKoi))
       {
@@ -3927,165 +3997,6 @@ TR_J9ByteCodeIlGenerator::genInvokeInner(
       }
 #endif
 
-   if (symbol->getRecognizedMethod() == TR::com_ibm_Compiler_Internal__TR_Prefetch)
-      {
-      TR::Node *node = NULL;
-
-      if ((comp()->getOptLevel() < hot))
-        {
-        int i = 0;
-        for (i=0; i<numArgs; i++)
-           genTreeTop(pop());
-        return node;
-        }
-
-      // Get the type of prefetch
-      PrefetchType prefetchType = NoPrefetch;
-      TR::Method *method = symbol->castToMethodSymbol()->getMethod();
-      if (method->nameLength() == 15 && !strncmp(method->nameChars(), "_TR_Release_All", 15))
-         {
-         prefetchType = ReleaseAll;
-         }
-      else if (method->nameLength() == 17 && !strncmp(method->nameChars(), "_TR_Prefetch_Load", 17))
-         {
-         prefetchType = PrefetchLoad;
-         }
-      else if (method->nameLength() == 18 && !strncmp(method->nameChars(), "_TR_Prefetch_Store", 18))
-         {
-         prefetchType = PrefetchStore;
-         }
-      else if (method->nameLength() == 20)
-         {
-         if (!strncmp(method->nameChars(), "_TR_Prefetch_LoadNTA", 20))
-            prefetchType = PrefetchLoadNonTemporal;
-         else if (!strncmp(method->nameChars(), "_TR_Prefetch_Load_L1", 20))
-            prefetchType = PrefetchLoadL1;
-         else if (!strncmp(method->nameChars(), "_TR_Prefetch_Load_L2", 20))
-            prefetchType = PrefetchLoadL2;
-         else if (!strncmp(method->nameChars(), "_TR_Prefetch_Load_L3", 20))
-            prefetchType = PrefetchLoadL3;
-         }
-      else if (method->nameLength() == 21)
-         {
-         if (!strncmp(method->nameChars(), "_TR_Prefetch_StoreNTA", 21))
-            prefetchType = PrefetchStoreNonTemporal;
-         else if (!strncmp(method->nameChars(), "_TR_Release_StoreOnly", 21))
-            prefetchType = ReleaseStore;
-         }
-      else if (method->nameLength() == 29 && !strncmp(method->nameChars(), "_TR_Prefetch_StoreConditional", 29))
-         {
-         prefetchType = PrefetchStoreConditional;
-         }
-
-      TR::Node *n2 = pop();
-      if (2 == numArgs  && n2->getOpCode().isInt())
-         {
-         node = TR::Node::createWithSymRef(TR::Prefetch, 4, symRef);
-         TR::Node *addrNode = pop();
-
-         // For constant 2nd arguments, we'll add it to the offset.
-         if  (n2->getOpCode().isLoadConst())
-            {
-            // TR::Prefetch 1st child: address
-            node->setAndIncChild(0, addrNode);
-            // TR::Prefetch 2nd child: offset
-            node->setAndIncChild(1, n2);
-            }
-         else
-            {
-            // TR::Prefetch 1st child: address
-            //    aiadd
-            //       addrNode
-            //       offsetNode
-            TR::Node * aiaddNode = TR::Node::create(TR::aiadd, 2, addrNode, n2);
-            node->setAndIncChild(0, aiaddNode);
-
-            // TR::Prefetch 2nd child: Set offset to be zero.
-            TR::Node * offsetNode = TR::Node::create(TR::iconst, 0, 0);
-            node->setAndIncChild(1, offsetNode);
-            }
-
-         // TR::Prefetch 3rd child : size
-         TR::Node * size = TR::Node::create(TR::iconst, 0, 1);
-         node->setAndIncChild(2, size);
-
-         // TR::Prefetch 4th child : type
-         TR::Node * type = TR::Node::create(TR::iconst, 0, (int32_t)prefetchType);
-         node->setAndIncChild(3, type);
-
-         genTreeTop(node);
-         }
-      else if (3 == numArgs || 2 == numArgs)
-         {
-         TR::Node * n3 = n2;   // it's already popped above
-         TR::Node * n2 = pop();
-         TR::Node * n1 = (numArgs == 3) ? pop() : NULL;
-
-         if (n3->getSymbolReference() &&
-             n3->getSymbolReference()->getSymbol()->isStatic() &&
-             n3->getSymbolReference()->getSymbol()->castToStaticSymbol()->isConstString() &&
-             n2->getSymbolReference() &&
-             n2->getSymbolReference()->getSymbol()->isStatic() &&
-             n2->getSymbolReference()->getSymbol()->castToStaticSymbol()->isConstString())
-            {
-             uintptr_t offset = fej9()->getFieldOffset(comp(), n2->getSymbolReference(), n3->getSymbolReference() );
-             if (offset)
-               {
-               TR::Node * n ;
-               if (comp()->target().is32Bit() ||
-                   (int32_t)(((uint32_t)((uint64_t)offset >> 32)) & 0xffffffff) == (uint32_t)0)
-                  {
-                  n = TR::Node::create(TR::iconst, 0, offset);
-                  }
-                  else
-                  {
-                  n = TR::Node::create(TR::lconst, 0, 0);
-                  n->setLongInt(offset);
-                  }
-               if (numArgs == 3)
-                  {
-                  node = TR::Node::createWithSymRef(TR::Prefetch, 4, symRef);
-                  node->setAndIncChild(1, n);
-                  node->setAndIncChild(0, n1);
-                  }
-               else
-                  {
-                  node = TR::Node::createWithSymRef(TR::Prefetch, 4, symRef);
-                  node->setAndIncChild(0, n);
-                  TR::Node * offsetNode = TR::Node::create(TR::iconst, 0, 0);
-                  node->setAndIncChild(1, offsetNode);
-                  }
-
-               // TR::Prefetch 3rd child : size
-               TR::Node * size = TR::Node::create(TR::iconst, 0, 1);
-               node->setAndIncChild(2, size);
-
-               // TR::Prefetch 4th child : type
-               TR::Node * type = TR::Node::create(TR::iconst, 0, (int32_t)prefetchType);
-               node->setAndIncChild(3, type);
-
-               genTreeTop(node);
-               }
-             else
-               {
-               // Generate treetops to retain proper reference count.
-               genTreeTop(n2);
-               genTreeTop(n3);
-               if (n1)
-                  genTreeTop(n1);
-
-               traceMsg(comp(),"Prefetch: Unable to resolve offset.\n");
-               }
-            }
-         }
-      else
-         {
-         TR_ASSERT(0, "TR::Prefetch does not have two or three children");
-         }
-
-      return node;
-      }
-
 #define DAA_PRINT(a) \
 case a: \
    if(trace()) \
@@ -4179,6 +4090,8 @@ break
       DAA_PRINT(TR::com_ibm_dataaccess_PackedDecimal_shiftLeftPackedDecimal);
       DAA_PRINT(TR::com_ibm_dataaccess_PackedDecimal_shiftRightPackedDecimal);
       DAA_PRINT(TR::com_ibm_dataaccess_PackedDecimal_movePackedDecimal);
+
+      DAA_PRINT(TR::com_ibm_dataaccess_ExternalDecimal_checkExternalDecimal);
 
       default:
          break;
@@ -4748,6 +4661,22 @@ break
    else
       resultNode = callNode;
 
+   /* There is a case where findOrCreateDynamicMethodSymbol() returns an error-throwing MethodHandle that
+    * takes 0 arguments (occurs when an error is thrown during resolveInvokeDynamic()). In that case, we will not have
+    * popped all the arguments off the stack, so we need to pop the expected number.
+    */
+   int32_t numPopped = startingStackSize - _stack->size();
+   if ((numExpectedArgs > 0) && (numPopped < numExpectedArgs))
+      {
+      if (comp()->getOption(TR_TraceILGen))
+         traceMsg(comp(), "InvokeDynamic received error throwing MethodHandle. Popping extra args.\n");
+      while (numPopped < numExpectedArgs)
+         {
+         pop();
+         numPopped++;
+         }
+      }
+
    TR::DataType returnType = calledMethod->returnType();
    if (returnType != TR::NoType)
       {
@@ -4926,7 +4855,7 @@ TR_J9ByteCodeIlGenerator::runMacro(TR::SymbolReference * symRef)
                push(array);
                loadConstant(TR::iconst, i);
                push(arg);
-               storeArrayElement(arg->getDataType()); // TODO:JSR292: use isstore for char arguments
+               storeArrayElement(arg->getDataType()); // TODO:JSR292: use sstorei for char arguments
                }
             argShepherd->removeAllChildren();
             push(array);
@@ -5058,7 +4987,8 @@ TR_J9ByteCodeIlGenerator::runMacro(TR::SymbolReference * symRef)
             char *secondArgType = nextSignatureArgument(arrayElementType);
             int arrayElementTypeLength = secondArgType - arrayElementType;
 
-            char *expandedArgsSignature = (char*)comp()->trMemory()->allocateStackMemory(numElements * arrayElementTypeLength + 1);
+            size_t argsLen = (numElements * arrayElementTypeLength) + 1;
+            char *expandedArgsSignature = (char*)comp()->trMemory()->allocateStackMemory(argsLen);
 
             TR::DataType arrayElementDataType = TR::NoType;
             TR::ILOpCodes convertOp = TR::BadILOp;
@@ -5108,7 +5038,16 @@ TR_J9ByteCodeIlGenerator::runMacro(TR::SymbolReference * symRef)
                loadArrayElement(arrayElementDataType);
                if (convertOp != TR::BadILOp)
                   genUnary(convertOp);
-               cursor += sprintf(cursor, "%.*s", arrayElementTypeLength, arrayElementType);
+               int len = snprintf(cursor, argsLen, "%.*s", arrayElementTypeLength, arrayElementType);
+               if ((0 < len) && ((size_t)len <= argsLen))
+                  {
+                  cursor += len;
+                  argsLen -= len;
+                  }
+               else
+                  {
+                  argsLen = 0;
+                  }
                }
 
             // Create placeholder with signature that reflects the expansion of arguments.
@@ -5599,7 +5538,7 @@ TR_J9ByteCodeIlGenerator::loadStatic(int32_t cpIndex)
    TR::Node * treeTopNode = 0;
    if (symRef->isUnresolved())
       treeTopNode = genResolveCheck(load);
-   else if (symbol->isVolatile() || _generateReadBarriersForFieldWatch)
+   else if (!symbol->isTransparent() || _generateReadBarriersForFieldWatch)
       treeTopNode = load;
 
    if (treeTopNode)
@@ -6184,11 +6123,31 @@ TR_J9ByteCodeIlGenerator::genMonitorEnter()
       }
    */
 
-   node = TR::Node::createWithSymRef(TR::monent, 1, 1, node, monitorEnterSymbolRef);
-   if (isStatic)
-      node->setStaticMonitor(true);
+   static const bool disableMonentIdentityException = (feGetEnv("TR_disableMonentIdentityException") != NULL);
 
-   genTreeTop(genNullCheck(node));
+   if (disableMonentIdentityException || !TR::Compiler->om.areValueTypesEnabled())
+      {
+      node = TR::Node::createWithSymRef(TR::monent, 1, 1, node, monitorEnterSymbolRef);
+      if (isStatic)
+         node->setStaticMonitor(true);
+
+      genTreeTop(genNullCheck(node));
+      }
+   else
+      {
+      genTreeTop(genNullCheck(TR::Node::create(TR::PassThrough, 1, node)));
+
+      TR::SymbolReference *isIdentitySymRef = comp()->getSymRefTab()->findOrCreateIsIdentityObjectNonHelperSymbolRef();
+      TR::Node *isIdentityObjectTestNode = TR::Node::createWithSymRef(TR::icall, 1, 1, node, isIdentitySymRef);
+      TR::SymbolReference *identityExceptionSymRef = comp()->getSymRefTab()->findOrCreateIdentityExceptionSymbolRef(_methodSymbol);
+      genTreeTop(TR::Node::createWithSymRef(TR::ZEROCHK, 1, 1, isIdentityObjectTestNode, identityExceptionSymRef));
+
+      node = TR::Node::createWithSymRef(TR::monent, 1, 1, node, monitorEnterSymbolRef);
+      if (isStatic)
+         node->setStaticMonitor(true);
+
+      genTreeTop(node);
+      }
 
    if (!comp()->getOption(TR_DisableLiveMonitorMetadata))
       {

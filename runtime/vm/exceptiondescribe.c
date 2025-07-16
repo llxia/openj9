@@ -35,7 +35,7 @@
 #include "jvminit.h"
 #include "SCQueryFunctions.h"
 
-typedef UDATA (*callback_func_t) (J9VMThread * vmThread, void * userData, UDATA bytecodeOffset, J9ROMClass * romClass, J9ROMMethod * romMethod, J9UTF8 * fileName, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass);
+typedef UDATA (*callback_func_t) (J9VMThread * vmThread, void * userData, UDATA bytecodeOffset, J9ROMClass * romClass, J9ROMMethod * romMethod, J9UTF8 * fileName, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass, UDATA frameType);
 
 static void printExceptionInThread (J9VMThread* vmThread);
 static UDATA isSubclassOfThreadDeath (J9VMThread *vmThread, j9object_t exception);
@@ -59,8 +59,8 @@ printExceptionInThread(J9VMThread* vmThread)
 
 	name = getOMRVMThreadName(vmThread->omrVMThread);
 
-	j9tty_err_printf(PORTLIB, format, name);
-	j9tty_err_printf(PORTLIB, " ");
+	j9tty_err_printf(format, name);
+	j9tty_err_printf(" ");
 
 	releaseOMRVMThreadName(vmThread->omrVMThread);
 }
@@ -87,7 +87,7 @@ printExceptionMessage(J9VMThread* vmThread, j9object_t exception) {
 		}
 	}
 
-	j9tty_err_printf(PORTLIB, "%.*s%s%.*s\n",
+	j9tty_err_printf("%.*s%s%.*s\n",
 		(UDATA)J9UTF8_LENGTH(exceptionClassName),
 		J9UTF8_DATA(exceptionClassName),
 		separator,
@@ -102,7 +102,7 @@ printExceptionMessage(J9VMThread* vmThread, j9object_t exception) {
 
 /* assumes VM access */
 static UDATA
-printStackTraceEntry(J9VMThread * vmThread, void * voidUserData, UDATA bytecodeOffset, J9ROMClass *romClass, J9ROMMethod * romMethod, J9UTF8 * sourceFile, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass) {
+printStackTraceEntry(J9VMThread * vmThread, void * voidUserData, UDATA bytecodeOffset, J9ROMClass *romClass, J9ROMMethod * romMethod, J9UTF8 * sourceFile, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass, UDATA frameType) {
 	const char* format = NULL;
 	J9JavaVM *vm = vmThread->javaVM;
 	J9InternalVMFunctions * vmFuncs = vm->internalVMFunctions;
@@ -113,7 +113,7 @@ printStackTraceEntry(J9VMThread * vmThread, void * voidUserData, UDATA bytecodeO
 			J9NLS_INFO | J9NLS_DO_NOT_PRINT_MESSAGE_TAG,
 			J9NLS_VM_STACK_TRACE_UNKNOWN,
 			NULL);
-		j9tty_err_printf(PORTLIB, (char*)format);
+		j9tty_err_printf(format);
 	} else {
 		J9UTF8* className = J9ROMCLASS_CLASSNAME(romClass);
 		J9UTF8* methodName = J9ROMMETHOD_NAME(romMethod);
@@ -121,9 +121,7 @@ printStackTraceEntry(J9VMThread * vmThread, void * voidUserData, UDATA bytecodeO
 		UDATA sourceFileNameLen = 0;
 		char *moduleNameUTF = NULL;
 		char *moduleVersionUTF = NULL;
-		char nameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
 		char versionBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-		BOOLEAN freeModuleName = FALSE;
 		BOOLEAN freeModuleVersion = FALSE;
 
 		if (JAVA_SPEC_VERSION >= 11) {
@@ -138,10 +136,9 @@ printStackTraceEntry(J9VMThread * vmThread, void * voidUserData, UDATA bytecodeO
 
 				if (NULL != module) {
 					if (module != vm->javaBaseModule) {
-						moduleNameUTF = copyStringToUTF8WithMemAlloc(
-							vmThread, module->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, nameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-						if (nameBuf != moduleNameUTF) {
-							freeModuleName = TRUE;
+						J9UTF8 *moduleName = module->moduleName;
+						if (NULL != moduleName) {
+							moduleNameUTF = (char *)J9UTF8_DATA(moduleName);
 						}
 					} else {
 						moduleNameUTF = JAVA_BASE_MODULE;
@@ -185,7 +182,7 @@ printStackTraceEntry(J9VMThread * vmThread, void * voidUserData, UDATA bytecodeO
 					J9NLS_VM_STACK_TRACE_WITH_MODULE_VERSION,
 					"\tat %.*s.%.*s (%s@%s/%.*s)\n");
 			}
-			j9tty_err_printf(PORTLIB, (char*)format,
+			j9tty_err_printf(format,
 				(UDATA)J9UTF8_LENGTH(className), J9UTF8_DATA(className),
 				(UDATA)J9UTF8_LENGTH(methodName), J9UTF8_DATA(methodName),
 				moduleNameUTF, moduleVersionUTF,
@@ -203,7 +200,7 @@ printStackTraceEntry(J9VMThread * vmThread, void * voidUserData, UDATA bytecodeO
 					J9NLS_VM_STACK_TRACE,
 					"\tat %.*s.%.*s (%.*s)\n");
 			}
-			j9tty_err_printf(PORTLIB, (char*)format,
+			j9tty_err_printf(format,
 				(UDATA)J9UTF8_LENGTH(className), J9UTF8_DATA(className),
 				(UDATA)J9UTF8_LENGTH(methodName), J9UTF8_DATA(methodName),
 				sourceFileNameLen, sourceFileName,
@@ -211,9 +208,6 @@ printStackTraceEntry(J9VMThread * vmThread, void * voidUserData, UDATA bytecodeO
 		}
 		if (freeModuleVersion) {
 			j9mem_free_memory(moduleVersionUTF);
-		}
-		if (freeModuleName) {
-			j9mem_free_memory(moduleNameUTF);
 		}
 	}
 
@@ -229,17 +223,39 @@ printStackTraceEntry(J9VMThread * vmThread, void * voidUserData, UDATA bytecodeO
 *
 * @return The J9class, or NULL on failure.
 */
-static J9Class*
+static J9Class *
 findJ9ClassForROMClass(J9VMThread *vmThread, J9ROMClass *romClass, J9ClassLoader **resultClassLoader)
 {
 	J9UTF8 const *utfClassName = J9ROMCLASS_CLASSNAME(romClass);
 	J9JavaVM *vm = vmThread->javaVM;
-	J9Class* ret = NULL;
-	if (j9shr_Query_IsAddressInCache(vm, romClass, romClass->romSize)) {
+	J9SharedClassConfig *config = vm->sharedClassConfig;
+	J9Class *ret = NULL;
+
+	if (_J9ROMCLASS_J9MODIFIER_IS_SET(romClass, J9AccClassAnonClass)) {
+		/* Anonymous classes are not allowed in any class loader hash table. */
+		return NULL;
+	}
+
+	if (j9shr_Query_IsAddressInCache(vm, romClass, romClass->romSize)
+		&& (NULL != config->romToRamHashTable)
+	) {
 		J9ClassLoaderWalkState walkState;
-		J9ClassLoader* classLoader = NULL;
+		J9ClassLoader *classLoader = NULL;
 		BOOLEAN fastMode = J9_ARE_ALL_BITS_SET(vm->extendedRuntimeFlags, J9_EXTENDED_RUNTIME_FAST_CLASS_HASH_TABLE);
-		J9Class* ramClass = NULL;
+		J9Class *ramClass = NULL;
+		RomToRamEntry *resultEntry = NULL;
+		RomToRamQueryEntry searchEntry;
+		searchEntry.romClass = (J9ROMClass *)((UDATA)romClass | ROM_TO_RAM_QUERY_TAG);
+
+		omrthread_rwmutex_enter_read(config->romToRamHashTableMutex);
+		resultEntry = hashTableFind(config->romToRamHashTable, &searchEntry);
+		omrthread_rwmutex_exit_read(config->romToRamHashTableMutex);
+		if (NULL != resultEntry) {
+			ret = resultEntry->ramClass;
+			*resultClassLoader = ret->classLoader;
+			goto done;
+		}
+
 		if (!fastMode) {
 			omrthread_monitor_enter(vm->classTableMutex);
 		}
@@ -251,7 +267,7 @@ findJ9ClassForROMClass(J9VMThread *vmThread, J9ROMClass *romClass, J9ClassLoader
 		 * All ROMClasses from the SCC are owned by the bootstrap class loader. To minimize the chances to iterate all class loaders, probe
 		 * the booststrap loader, extensionClassLoader and application loader first to determine if they have the J9Class for the current class.
 		 */
-		ramClass = hashClassTableAt(*resultClassLoader, J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
+		ramClass = hashClassTableAt(*resultClassLoader, (U_8 *)J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
 		if ((NULL != ramClass)
 			&& (romClass == ramClass->romClass)
 		) {
@@ -259,10 +275,10 @@ findJ9ClassForROMClass(J9VMThread *vmThread, J9ROMClass *romClass, J9ClassLoader
 			if (!fastMode) {
 				omrthread_monitor_exit(vm->classTableMutex);
 			}
-			goto done;
+			goto cacheresult;
 		}
 
-		ramClass = hashClassTableAt(vm->extensionClassLoader, J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
+		ramClass = hashClassTableAt(vm->extensionClassLoader, (U_8 *)J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
 		if ((NULL != ramClass)
 			&& (romClass == ramClass->romClass)
 		) {
@@ -271,10 +287,10 @@ findJ9ClassForROMClass(J9VMThread *vmThread, J9ROMClass *romClass, J9ClassLoader
 			if (!fastMode) {
 				omrthread_monitor_exit(vm->classTableMutex);
 			}
-			goto done;
+			goto cacheresult;
 		}
 
-		ramClass = hashClassTableAt(vm->applicationClassLoader, J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
+		ramClass = hashClassTableAt(vm->applicationClassLoader, (U_8 *)J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
 		if ((NULL != ramClass)
 			&& (romClass == ramClass->romClass)
 		) {
@@ -283,7 +299,7 @@ findJ9ClassForROMClass(J9VMThread *vmThread, J9ROMClass *romClass, J9ClassLoader
 			if (!fastMode) {
 				omrthread_monitor_exit(vm->classTableMutex);
 			}
-			goto done;
+			goto cacheresult;
 		}
 
 		classLoader = vm->internalVMFunctions->allClassLoadersStartDo(&walkState, vm, 0);
@@ -292,7 +308,7 @@ findJ9ClassForROMClass(J9VMThread *vmThread, J9ROMClass *romClass, J9ClassLoader
 				&& (classLoader != vm->extensionClassLoader)
 				&& (classLoader != vm->applicationClassLoader)
 			) {
-				ramClass = hashClassTableAt(classLoader, J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
+				ramClass = hashClassTableAt(classLoader, (U_8 *)J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
 				if ((NULL != ramClass)
 					&& (romClass == ramClass->romClass)
 				) {
@@ -307,8 +323,16 @@ findJ9ClassForROMClass(J9VMThread *vmThread, J9ROMClass *romClass, J9ClassLoader
 		if (!fastMode) {
 			omrthread_monitor_exit(vm->classTableMutex);
 		}
+cacheresult:
+		if (NULL != ret) {
+			RomToRamEntry newEntry;
+			newEntry.ramClass = ret;
+			omrthread_rwmutex_enter_write(config->romToRamHashTableMutex);
+			hashTableAdd(config->romToRamHashTable, &newEntry);
+			omrthread_rwmutex_exit_write(config->romToRamHashTableMutex);
+		}
 	} else {
-		ret = peekClassHashTable(vmThread, *resultClassLoader, J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
+		ret = peekClassHashTable(vmThread, *resultClassLoader, (U_8 *)J9UTF8_DATA(utfClassName), J9UTF8_LENGTH(utfClassName));
 	}
 done:
 	return ret;
@@ -377,6 +401,7 @@ iterateStackTraceImpl(J9VMThread * vmThread, j9object_t* exception, callback_fun
 			J9UTF8 * fileName = NULL;
 			J9ClassLoader *classLoader = NULL;
 			J9Class *ramClass = NULL;
+			UDATA frameType = J9VM_STACK_FRAME_INTERPRETER;
 #ifdef J9VM_INTERP_NATIVE_SUPPORT
 			J9JITExceptionTable * metaData = NULL;
 			UDATA inlineDepth = 0;
@@ -426,9 +451,11 @@ inlinedEntry:
 							methodPC = jitConfig->getCurrentByteCodeIndexAndIsSameReceiver(metaData, inlineMap, NULL, &isSameReceiver);
 						}
 						ramMethod = metaData->ramMethod;
+						frameType = J9VM_STACK_FRAME_JIT;
 					} else {
 						methodPC = jitConfig->getCurrentByteCodeIndexAndIsSameReceiver(metaData, inlineMap , inlinedCallSite, &isSameReceiver);
 						ramMethod = jitConfig->getInlinedMethod(inlinedCallSite);
+						frameType = J9VM_STACK_FRAME_JIT_INLINE;
 					}
 					if (pruneConstructors) {
 						if (isSameReceiver) {
@@ -492,6 +519,9 @@ foundROMMethod: ;
 				}
 #ifdef J9VM_OPT_DEBUG_INFO_SERVER
 				if (romMethod != NULL) {
+					if (J9_ARE_ALL_BITS_SET(romMethod->modifiers, J9AccNative)) {
+						frameType = J9VM_STACK_FRAME_NATIVE;
+					}
 					lineNumber = getLineNumberForROMClassFromROMMethod(vm, romMethod, romClass, classLoader, methodPC);
 					fileName = getSourceFileNameForROMClass(vm, classLoader, romClass);
 				}
@@ -501,7 +531,7 @@ foundROMMethod: ;
 
 				if (callback != NULL) {
 					/* The methodPC is the bytecode offset within the romMethod. */
-					callbackResult = callback(vmThread, userData, methodPC, romClass, romMethod, fileName, lineNumber, classLoader, ramClass);
+					callbackResult = callback(vmThread, userData, methodPC, romClass, romMethod, fileName, lineNumber, classLoader, ramClass, frameType);
 				}
 
 #ifdef J9VM_OPT_DEBUG_INFO_SERVER

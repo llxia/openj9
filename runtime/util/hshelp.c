@@ -46,6 +46,7 @@
 #include "j2sever.h"
 #include "vrfytbl.h"
 #include "bytecodewalk.h"
+#include "../shared_common/include/SCQueryFunctions.h"
 
 /* Static J9ITable used as a non-NULL iTable cache value by classes that don't implement any interfaces */
 const J9ITable invalidITable = { (J9Class *) (UDATA) 0xDEADBEEF, 0, (J9ITable *) NULL };
@@ -517,7 +518,7 @@ iterateToNextArgument(U_32 sigIndex, U_32 sigLength, U_8* sigData)
 	if (sigIndex >= sigLength) return sigIndex;
 
 	/* check for object */
-	if (IS_REF_OR_VAL_SIGNATURE(sigData[sigIndex])) {
+	if (IS_CLASS_SIGNATURE(sigData[sigIndex])) {
 		while ((sigIndex < sigLength) && (';' != sigData[sigIndex])) {
 			sigIndex += 1;
 		}
@@ -1820,7 +1821,7 @@ fixMemberNames(J9VMThread *currentThread, j9object_t *memberNamesToFix)
 jlong
 vmindexValueForMethodMemberName(J9JNIMethodID *methodID, J9Class *clazz, jint flags)
 {
-	jint refKind = (flags >> MN_REFERENCE_KIND_SHIFT) & MN_REFERENCE_KIND_MASK;
+	jint refKind = MN_GET_REFERENCE_KIND(flags);
 	jlong result = (jlong)-2; /* Invalid result (must be replaced). */
 
 	Assert_hshelp_true(J9_ARE_ANY_BITS_SET(flags, MN_IS_METHOD | MN_IS_CONSTRUCTOR));
@@ -2573,13 +2574,15 @@ swapClassesForFastHCR(J9Class *originalClass, J9Class *obsoleteClass)
 	SWAP_MEMBER(specialSplitMethodTable, J9Method **, originalClass, obsoleteClass);
 	/* Force invokedynamics to be re-resolved as we can't map from the old callsite index to the new one */
 	SWAP_MEMBER(callSites, j9object_t*, originalClass, obsoleteClass);
-	/* Force varhanles to be re-resolved as we can't map from the old varhandle MTs index to the new one */
-	SWAP_MEMBER(varHandleMethodTypes, j9object_t*, originalClass, obsoleteClass);
 	/* Force methodTypes to be re-resolved as indexes are assigned in CP order, no mapping from old to new. */
 #if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
 	SWAP_MEMBER(invokeCache, j9object_t*, originalClass, obsoleteClass);
 #else /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 	SWAP_MEMBER(methodTypes, j9object_t*, originalClass, obsoleteClass);
+	/* Force varhandles to be re-resolved because we cannot map from the old varhandle
+	 * MTs index to the new one.
+	 */
+	SWAP_MEMBER(varHandleMethodTypes, j9object_t*, originalClass, obsoleteClass);
 #endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 
 	J9CLASS_EXTENDED_FLAGS_SET(obsoleteClass, J9ClassReusedStatics);
@@ -2641,6 +2644,13 @@ recreateRAMClasses(J9VMThread * currentThread, J9HashTable * classHashTable, J9H
 		/* Delete original class from defining loader's class table */
 		if (!fastHCR) {
 			vmFuncs->hashClassTableDelete(classLoader, J9UTF8_DATA(className), J9UTF8_LENGTH(className));
+			if ((NULL != vm->sharedClassConfig) && (NULL != vm->sharedClassConfig->romToRamHashTable)) {
+				RomToRamEntry entry;
+				entry.ramClass = originalRAMClass;
+				omrthread_rwmutex_enter_write(vm->sharedClassConfig->romToRamHashTableMutex);
+				hashTableRemove(vm->sharedClassConfig->romToRamHashTable, &entry);
+				omrthread_rwmutex_exit_write(vm->sharedClassConfig->romToRamHashTableMutex);
+			}
 		}
 
 		/* Create new RAM class */
@@ -3897,13 +3907,16 @@ notifyGCOfClassReplacement(J9VMThread * currentThread, J9HashTable * classPairs,
 {
 	J9JavaVM *vm = currentThread->javaVM;
 	J9MemoryManagerFunctions *mmFunctions = vm->memoryManagerFunctions;
+	J9InternalVMFunctions *vmFunctions = vm->internalVMFunctions;
 	J9JVMTIClassPair *classPair = NULL;
 	J9HashTableState hashTableState = {0};
 
 	classPair = hashTableStartDo(classPairs, &hashTableState);
 	while (classPair != NULL) {
 		if (J9_ARE_ALL_BITS_SET(classPair->flags, J9JVMTI_CLASS_PAIR_FLAG_REDEFINED)) {
-			mmFunctions->j9gc_notifyGCOfClassReplacement(currentThread, classPair->originalRAMClass, classPair->replacementClass.ramClass, isFastHCR);
+			J9Class *originalRAMClass = classPair->originalRAMClass;
+			vmFunctions->freeMapCaches(originalRAMClass->classLoader);
+			mmFunctions->j9gc_notifyGCOfClassReplacement(currentThread, originalRAMClass, classPair->replacementClass.ramClass, isFastHCR);
 		}
 		classPair = hashTableNextDo(&hashTableState);
 	}

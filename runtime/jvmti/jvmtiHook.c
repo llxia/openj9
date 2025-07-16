@@ -155,6 +155,22 @@ static BOOLEAN shouldPostEvent(J9VMThread *currentThread, J9Method *method);
 #if defined(J9VM_OPT_CRIU_SUPPORT)
 static void jvmtiHookVMCheckpoint(J9HookInterface **hook, UDATA eventNum, void *eventData, void *userData);
 static void jvmtiHookVMRestore(J9HookInterface **hook, UDATA eventNum, void *eventData, void *userData);
+static void hookDisableHelper(J9JavaVM *vm, J9HookInterface **vmHook, UDATA eventNum, J9HookFunction function, BOOLEAN unreserve, void *userData);
+
+static void
+hookDisableHelper(J9JavaVM *vm, J9HookInterface **vmHook, UDATA eventNum, J9HookFunction function, BOOLEAN unreserve, void *userData)
+{
+	if (NULL == userData) {
+		(*vmHook)->J9HookUnregister(vmHook, eventNum, function, vm->checkpointState.jvmtienv);
+	} else {
+		(*vmHook)->J9HookUnregister(vmHook, eventNum, function, userData);
+	}
+	if (unreserve) {
+		/* for actual hookRegister calls */
+		(*vmHook)->J9HookUnreserve(vmHook, eventNum);
+	}
+	(*vmHook)->J9HookDisable(vmHook, eventNum);
+}
 #endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
 
 static void
@@ -562,6 +578,89 @@ jvmtiHookVMRestore(J9HookInterface **hook, UDATA eventNum, void *eventData, void
 
 	TRACE_JVMTI_EVENT_RETURN(jvmtiHookVMRestore);
 }
+
+void
+criuDisableHooks(J9JVMTIData *jvmtiData, J9JVMTIEnv *j9env)
+{
+	J9JavaVM *vm = jvmtiData->vm;
+	jvmtiEnv *jvmti_env = vm->checkpointState.jvmtienv;
+	J9HookInterface **vmHook = vm->internalVMFunctions->getVMHookInterface(vm);
+
+	Assert_JVMTI_true(J9_ARE_NO_BITS_SET(vm->checkpointState.flags, J9VM_CRIU_IS_JDWP_ENABLED));
+
+	/* can_access_local_variables, can_get_source_file_name, can_get_line_numbers, can_get_source_debug_extension
+	 * can_maintain_original_method_order, can_generate_single_step_events
+	 */
+	hookDisableHelper(vm, vmHook, J9HOOK_VM_REQUIRED_DEBUG_ATTRIBUTES, jvmtiHookRequiredDebugAttributes, FALSE, NULL);
+	vm->requiredDebugAttributes &= ~J9VM_DEBUG_ATTRIBUTE_CAN_ACCESS_LOCALS;
+	vm->requiredDebugAttributes &= ~J9VM_DEBUG_ATTRIBUTE_MAINTAIN_ORIGINAL_METHOD_ORDER;
+	vm->requiredDebugAttributes &= ~J9VM_DEBUG_ATTRIBUTE_SOURCE_DEBUG_EXTENSION;
+	if (NULL != vm->jitConfig) {
+		vm->requiredDebugAttributes &= ~J9VM_DEBUG_ATTRIBUTE_LINE_NUMBER_TABLE;
+		vm->requiredDebugAttributes &= ~J9VM_DEBUG_ATTRIBUTE_LOCAL_VARIABLE_TABLE;
+		vm->requiredDebugAttributes &= ~J9VM_DEBUG_ATTRIBUTE_SOURCE_FILE;
+	}
+
+	if (NULL != vm->jitConfig) {
+		J9VMHookInterface vmhookInterface = vm->hookInterface;
+
+		/* can_tag_objects */
+		hookDisableHelper(vm, vmHook, J9HOOK_MM_OMR_GLOBAL_GC_END, jvmtiHookGCEnd, FALSE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_MM_OMR_LOCAL_GC_END, jvmtiHookGCEnd, FALSE, NULL);
+
+		/* can_generate_single_step_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_SINGLE_STEP, jvmtiHookSingleStep, FALSE, NULL);
+
+		/* can_generate_exception_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_EXCEPTION_THROW, jvmtiHookExceptionThrow, TRUE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_EXCEPTION_CATCH, jvmtiHookExceptionCatch, TRUE, NULL);
+
+		/* can_generate_frame_pop_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_FRAME_POP, jvmtiHookFramePop, FALSE, NULL);
+
+		/* can_generate_breakpoint_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_BREAKPOINT, jvmtiHookBreakpoint, TRUE, NULL);
+
+		/* can_generate_method_entry_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_METHOD_ENTER, jvmtiHookMethodEnter, TRUE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_NATIVE_METHOD_ENTER, jvmtiHookMethodEnter, TRUE, NULL);
+
+		/* can_generate_method_exit_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_METHOD_RETURN, jvmtiHookMethodExit, TRUE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_NATIVE_METHOD_RETURN, jvmtiHookMethodExit, TRUE, NULL);
+
+		/* can_generate_monitor_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_MONITOR_CONTENDED_ENTER, jvmtiHookMonitorContendedEnter, FALSE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_MONITOR_CONTENDED_ENTERED, jvmtiHookMonitorContendedEntered, FALSE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_MONITOR_WAIT, jvmtiHookMonitorWait, FALSE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_MONITOR_WAITED, jvmtiHookMonitorWaited, FALSE, NULL);
+
+		/* can_generate_garbage_collection_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_MM_OMR_GLOBAL_GC_START, jvmtiHookGCStart, FALSE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_MM_OMR_LOCAL_GC_START, jvmtiHookGCStart, FALSE, NULL);
+
+#if JAVA_SPEC_VERSION >= 21
+		/* can_support_virtual_threads */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_VIRTUAL_THREAD_STARTED, jvmtiHookVirtualThreadStarted, FALSE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_VIRTUAL_THREAD_END, jvmtiHookVirtualThreadEnd, FALSE, NULL);
+#endif /* JAVA_SPEC_VERSION >= 21 */
+
+		/* can_generate_field_modification_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_PUT_FIELD, jvmtiHookFieldModification, FALSE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_PUT_STATIC_FIELD, jvmtiHookFieldModification, FALSE, NULL);
+
+		/* can_generate_field_access_events */
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_GET_FIELD, jvmtiHookFieldAccess, FALSE, NULL);
+		hookDisableHelper(vm, vmHook, J9HOOK_VM_GET_STATIC_FIELD, jvmtiHookFieldAccess, FALSE, NULL);
+
+		/* can_pop_frame & can_force_early_return */
+		if (J9_EVENT_IS_HOOKED_OR_RESERVED(vmhookInterface, J9HOOK_VM_POP_FRAMES_INTERRUPT)) {
+			hookDisableHelper(vm, vmHook, J9HOOK_VM_POP_FRAMES_INTERRUPT, jvmtiHookPopFramesInterrupt, TRUE, J9JVMTI_DATA_FROM_VM(vm));
+		}
+	}
+
+	(*jvmti_env)->RelinquishCapabilities(jvmti_env, &vm->checkpointState.requiredCapabilities);
+}
 #endif /* defined(J9VM_OPT_CRIU_SUPPORT)*/
 
 static IDATA
@@ -943,6 +1042,21 @@ jvmtiHookClassLoad(J9HookInterface** hook, UDATA eventNum, void* eventData, void
 UDATA
 isEventHookable(J9JVMTIEnv * j9env, jvmtiEvent event)
 {
+#if defined(J9VM_OPT_CRIU_SUPPORT)
+	J9JavaVM *vm = j9env->vm;
+	if (vm->internalVMFunctions->isDebugAgentDisabled(vm)) {
+		switch(event) {
+			case JVMTI_EVENT_FRAME_POP: /* fall through */
+			case JVMTI_EVENT_FIELD_ACCESS: /* fall through */
+			case JVMTI_EVENT_FIELD_MODIFICATION: /* fall through */
+			case JVMTI_EVENT_SINGLE_STEP: /* fall through */
+			case JVMTI_EVENT_BREAKPOINT:
+				return FALSE;
+			default:
+				break;
+		}
+	}
+#endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
 	return processEvent(j9env, event, hookIsDisabled) == 0;
 }
 
@@ -1003,6 +1117,18 @@ hookNonEventCapabilities(J9JVMTIEnv * j9env, jvmtiCapabilities * capabilities)
 	J9JVMTIHookInterfaceWithID * vmHook = &j9env->vmHook;
 	J9JVMTIHookInterfaceWithID * gcOmrHook = &j9env->gcOmrHook;
 	J9JVMTIData * jvmtiData = J9JVMTI_DATA_FROM_VM(vm);
+
+#if defined(J9VM_OPT_CRIU_SUPPORT)
+	if (vm->internalVMFunctions->isDebugAgentDisabled(vm)) {
+		if (capabilities->can_pop_frame
+			|| capabilities->can_force_early_return
+			|| capabilities->can_access_local_variables
+			|| capabilities->can_generate_breakpoint_events
+		) {
+			return 1;
+		}
+	}
+#endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
 
 	if (capabilities->can_generate_breakpoint_events) {
 		if (hookRegister(vmHook, J9HOOK_VM_BREAKPOINT, jvmtiHookBreakpoint, OMR_GET_CALLSITE(), j9env)) {
@@ -1951,7 +2077,6 @@ unhookGlobalEvents(J9JVMTIData * jvmtiData)
 	(*vmHook)->J9HookUnregister(vmHook, J9HOOK_VM_STARTED, jvmtiHookVMStartedFirst, NULL);
 	(*vmHook)->J9HookUnregister(vmHook, J9HOOK_VM_SHUTTING_DOWN, jvmtiHookVMShutdownLast, NULL);
 }
-
 
 static void
 jvmtiHookMonitorContendedEnter(J9HookInterface** hook, UDATA eventNum, void* eventData, void* userData)
@@ -3707,11 +3832,11 @@ jvmtiHookVmDumpEnd(J9HookInterface** hook, UDATA eventNum, void* eventData, void
 }
 
 /**
- * Check if a JVMTI event should be dispatched by checking the flag set by
- * notifyJvmtiHideFrames() and the presence of the JvmtiMountTransition
- * annotation.
+ * Check if a JVMTI event should be dispatched by checking the flag set
+ * by VM_VMHelpers::virtualThreadHideFrames() and the presence of the
+ * JvmtiMountTransition annotation.
  *
- * Note that the method should only be checked for Method Entry and Method Exit event.
+ * Note that the method should only be checked for Method Entry and Method Exit events.
  *
  * @param currentThread the current thread to be checked
  * @param method the method to be checked

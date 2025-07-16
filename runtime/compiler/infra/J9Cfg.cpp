@@ -30,9 +30,6 @@
 #include "control/Options_inlines.hpp"
 #include "control/Recompilation.hpp"
 #include "control/RecompilationInfo.hpp"
-#include "cs2/arrayof.h"
-#include "cs2/bitvectr.h"
-#include "cs2/listof.h"
 #include "env/TRMemory.hpp"
 #include "env/PersistentInfo.hpp"
 #include "env/VMJ9.h"
@@ -890,9 +887,6 @@ J9::CFG::setBlockFrequenciesBasedOnInterpreterProfiler()
 
       if (temp->asBlock()->getEntry() && initialCallScanFreq < 0)
          {
-         int32_t methodScanFreq = scanForFrequencyOnSimpleMethod(temp->asBlock()->getEntry(), temp->asBlock()->getExit());
-         if (methodScanFreq > 0)
-            initialCallScanFreq = methodScanFreq;
          inlinedSiteIndex = temp->asBlock()->getEntry()->getNode()->getInlinedSiteIndex();
          methodScanEntry = temp->asBlock()->getEntry();
          }
@@ -1313,9 +1307,6 @@ J9::CFG::computeInitialBlockFrequencyBasedOnExternalProfiler(TR::Compilation *co
 
       if (temp->asBlock()->getEntry() && initialCallScanFreq < 0)
          {
-         int32_t methodScanFreq = scanForFrequencyOnSimpleMethod(temp->asBlock()->getEntry(), temp->asBlock()->getExit());
-         if (methodScanFreq > 0)
-            initialCallScanFreq = methodScanFreq;
          inlinedSiteIndex = temp->asBlock()->getEntry()->getNode()->getInlinedSiteIndex();
          methodScanEntry = temp->asBlock()->getEntry();
          }
@@ -1373,37 +1364,6 @@ J9::CFG::computeInitialBlockFrequencyBasedOnExternalProfiler(TR::Compilation *co
    _initialBlockFrequency = startFrequency;
    }
 
-
-static int32_t
-getParentCallCount(TR::CFG *cfg, TR::Node *node)
-   {
-   if (node->getByteCodeInfo().getCallerIndex() >=-1)
-      {
-      int32_t parentSiteIndex = node->getInlinedSiteIndex();
-
-      if (parentSiteIndex >= 0)
-         {
-         TR_InlinedCallSite & site = cfg->comp()->getInlinedCallSite(parentSiteIndex);
-         int32_t callCount = cfg->comp()->fej9()->getIProfilerCallCount(site._byteCodeInfo, cfg->comp());
-
-         if (callCount != 0)
-            return callCount;
-         }
-      }
-   else
-      { // It's a dummy block in estimate code size
-        // The called frequency is set by estimate code size because at that time
-        // we don't have the final caller information.
-      int32_t callCount = cfg->_calledFrequency;
-
-      if (callCount != 0)
-         return callCount;
-      }
-
-   return 0;
-   }
-
-
 void
 J9::CFG::getInterpreterProfilerBranchCountersOnDoubleton(TR::CFGNode *cfgNode, int32_t *taken, int32_t *nottaken)
    {
@@ -1449,29 +1409,6 @@ J9::CFG::getInterpreterProfilerBranchCountersOnDoubleton(TR::CFGNode *cfgNode, i
       else
          *nottaken = LOW_FREQ;
 
-      /*int32_t sumFreq = summarizeFrequencyFromPredecessors(cfgNode, this);
-
-      if (sumFreq>0)
-         {
-         *nottaken = sumFreq>>1;
-         *taken = *nottaken;
-         }
-      else
-         {
-         if (node->getByteCodeIndex()==0)
-            {
-            int32_t callCount = getParentCallCount(this, node);
-
-            // we don't know what the call count is, assign some
-            // moderate frequency
-            if (callCount<=0)
-               callCount = AVG_FREQ;
-
-            *taken = 0;
-            *nottaken = callCount;
-            }
-         }
-      */
       if (comp()->getOption(TR_TraceBFGeneration))
          dumpOptDetails(comp(),"If with no profiling information on node %p has low branch counts: taken=%d, not taken=%d\n", node, *taken, *nottaken);
       }
@@ -1595,49 +1532,6 @@ J9::CFG::setBlockFrequency(TR::CFGNode *node, int32_t frequency, bool addFrequen
       }
    return;
    }
-
-
-// We currently don't handle well straight line methods without branches
-// when using interpreter profiler. If there are no branches or calls
-// we don't have a frequency to set. The function below tries to find any
-// possible interpreter profiling information to continue on.
-int32_t
-J9::CFG::scanForFrequencyOnSimpleMethod(TR::TreeTop *tt, TR::TreeTop *endTT)
-   {
-   if (comp()->getOption(TR_TraceBFGeneration))
-      traceMsg(comp(), "Starting method scan...\n");
-   for (; tt && tt!=endTT; tt = tt->getNextTreeTop())
-      {
-      if (!tt->getNode()) continue;
-
-      TR::Node *node = tt->getNode();
-
-      if (node->getOpCode().isTreeTop() && node->getNumChildren()>0 && node->getFirstChild()->getOpCode().isCall())
-         node = node->getFirstChild();
-
-      if (comp()->getOption(TR_TraceBFGeneration))
-         traceMsg(comp(), "Scanning node %p, isBranch = %d, isCall = %d, isVirtualCall =%d\n",
-            node, node->getOpCode().isBranch(),
-            node->getOpCode().isCall(), node->getOpCode().isCallIndirect());
-
-      if (node->getOpCode().isBranch()) return -1;
-
-      if (node->getOpCode().isCallIndirect())
-         {
-         int32_t newFrequency = comp()->fej9()->getIProfilerCallCount(node->getByteCodeInfo(), comp());
-
-         if (newFrequency >0)
-            {
-            if (comp()->getOption(TR_TraceBFGeneration))
-               traceMsg(comp(), "Method scan found frequency %d\n", newFrequency);
-            return newFrequency;
-            }
-         }
-      }
-
-   return -1;
-   }
-
 
 void
 J9::CFG::getBranchCountersFromProfilingData(TR::Node *node, TR::Block *block, int32_t *taken, int32_t *notTaken)

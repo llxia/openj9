@@ -35,7 +35,6 @@ import java.lang.StringConcatHelper;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Executable;
 import java.lang.reflect.Method;
-import java.security.AccessControlContext;
 import java.util.Map;
 
 import com.ibm.oti.reflect.AnnotationParser;
@@ -85,9 +84,11 @@ import sun.reflect.ConstantPool;
 /*[ENDIF] JAVA_SPEC_VERSION >= 9 */
 import sun.nio.ch.Interruptible;
 import sun.reflect.annotation.AnnotationType;
-/*[IF (JAVA_SPEC_VERSION >= 24) & !INLINE-TYPES]*/
+/*[IF JAVA_SPEC_VERSION >= 24]*/
+import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
 import jdk.internal.loader.NativeLibraries;
-/*[ENDIF] (JAVA_SPEC_VERSION >= 24) & !INLINE-TYPES */
+/*[ENDIF] JAVA_SPEC_VERSION >= 24 */
 
 /**
  * Helper class to allow privileged access to classes
@@ -168,11 +169,13 @@ final class Access implements JavaLangAccess {
 		return arg0.getInternalStackTrace()[arg1];
 	}
 
+/*[IF JAVA_SPEC_VERSION < 24]*/
 	/*[PR CMVC 199693] Prevent trusted method chain attack. */
 	@SuppressWarnings("removal")
-	public Thread newThreadWithAcc(Runnable runnable, AccessControlContext acc) {
+	public Thread newThreadWithAcc(Runnable runnable, java.security.AccessControlContext acc) {
 		return new Thread(runnable, acc);
 	}
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 	/**
 	 * Returns a directly present annotation instance of annotationClass type from clazz.
@@ -289,14 +292,12 @@ final class Access implements JavaLangAccess {
 		return classLoader.createOrGetClassLoaderValueMap();
 	}
 
+/*[IF (JAVA_SPEC_VERSION >= 11) & (JAVA_SPEC_VERSION < 24)]*/
 	@SuppressWarnings("removal")
 	public void invalidatePackageAccessCache() {
-/*[IF JAVA_SPEC_VERSION >= 10]*/
-		java.lang.SecurityManager.invalidatePackageAccessCache();
-/*[ELSE] JAVA_SPEC_VERSION >= 10 */
-		return;
-/*[ENDIF] JAVA_SPEC_VERSION >= 10 */
+		SecurityManager.invalidatePackageAccessCache();
 	}
+/*[ENDIF] (JAVA_SPEC_VERSION >= 11) & (JAVA_SPEC_VERSION < 24) */
 
 	public Class<?> defineClass(ClassLoader classLoader, String className, byte[] classRep, ProtectionDomain protectionDomain, String str) {
 		ClassLoader targetClassLoader = (null == classLoader) ? ClassLoader.bootstrapClassLoader : classLoader;
@@ -351,24 +352,26 @@ final class Access implements JavaLangAccess {
 		return ml.getServicesCatalog();
 	}
 
+/*[IF JAVA_SPEC_VERSION < 24]*/
 	@SuppressWarnings("removal")
 	public void addNonExportedPackages(ModuleLayer ml) {
 		SecurityManager.addNonExportedPackages(ml);
 	}
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 	public List<Method> getDeclaredPublicMethods(Class<?> clz, String name, Class<?>... types) {
 		return clz.getDeclaredPublicMethods(name, types);
 	}
 
-	/*[IF JAVA_SPEC_VERSION >= 15]*/
-	public void addOpensToAllUnnamed(Module fromModule, Set<String> concealedPackages, Set<String> exportedPackages) {
-		fromModule.implAddOpensToAllUnnamed(concealedPackages, exportedPackages);
-	}
-	/*[ELSE] JAVA_SPEC_VERSION >= 15 */
+	/*[IF JAVA_SPEC_VERSION < 15]*/
 	public void addOpensToAllUnnamed(Module fromModule, Iterator<String> packages) {
 		fromModule.implAddOpensToAllUnnamed(packages);
 	}
-	/*[ENDIF] JAVA_SPEC_VERSION >= 15 */
+	/*[ELSEIF (JAVA_SPEC_VERSION < 25) | INLINE-TYPES]*/
+	public void addOpensToAllUnnamed(Module fromModule, Set<String> concealedPackages, Set<String> exportedPackages) {
+		fromModule.implAddOpensToAllUnnamed(concealedPackages, exportedPackages);
+	}
+	/*[ENDIF] JAVA_SPEC_VERSION < 15 */
 
 	public boolean isReflectivelyOpened(Module fromModule, String pkg, Module toModule) {
 		return fromModule.isReflectivelyOpened(pkg, toModule);
@@ -408,14 +411,24 @@ final class Access implements JavaLangAccess {
 		Thread.blockedOn(interruptible);
 		/*[ENDIF] JAVA_SPEC_VERSION >= 23 */
 	}
+
+	/*[IF (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES]*/
+	public byte[] uncheckedGetBytesNoRepl(String str, Charset charset) throws CharacterCodingException {
+	/*[ELSE] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 	public byte[] getBytesNoRepl(String str, Charset charset) throws CharacterCodingException {
+	/*[ENDIF] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 		/*[IF JAVA_SPEC_VERSION < 17]*/
 		return StringCoding.getBytesNoRepl(str, charset);
 		/*[ELSE] JAVA_SPEC_VERSION < 17 */
 		return String.getBytesNoRepl(str, charset);
 		/*[ENDIF] JAVA_SPEC_VERSION < 17 */
 	}
+
+	/*[IF (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES]*/
+	public String uncheckedNewStringNoRepl(byte[] bytes, Charset charset) throws CharacterCodingException {
+	/*[ELSE] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 	public String newStringNoRepl(byte[] bytes, Charset charset) throws CharacterCodingException {
+	/*[ENDIF] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 		/*[IF JAVA_SPEC_VERSION < 17]*/
 		return StringCoding.newStringNoRepl(bytes, charset);
 		/*[ELSE] JAVA_SPEC_VERSION < 17 */
@@ -481,11 +494,19 @@ final class Access implements JavaLangAccess {
 /*[ENDIF] JAVA_SPEC_VERSION >= 16 */
 
 /*[IF JAVA_SPEC_VERSION >= 17]*/
+	/*[IF (JAVA_SPEC_VERSION == 25) & !INLINE-TYPES]*/
+	public int uncheckedDecodeASCII(byte[] srcBytes, int srcPos, char[] dstChars, int dstPos, int length) {
+	/*[ELSE] (JAVA_SPEC_VERSION == 25) & !INLINE-TYPES */
 	public int decodeASCII(byte[] srcBytes, int srcPos, char[] dstChars, int dstPos, int length) {
+	/*[ENDIF] (JAVA_SPEC_VERSION == 25) & !INLINE-TYPES */
 		return String.decodeASCII(srcBytes, srcPos, dstChars, dstPos, length);
 	}
 
+	/*[IF (JAVA_SPEC_VERSION == 25) & !INLINE-TYPES]*/
+	public void uncheckedInflateBytesToChars(byte[] srcBytes, int srcOffset, char[] dstChars, int dstOffset, int length) {
+	/*[ELSE] (JAVA_SPEC_VERSION == 25) & !INLINE-TYPES */
 	public void inflateBytesToChars(byte[] srcBytes, int srcOffset, char[] dstChars, int dstOffset, int length) {
+	/*[ENDIF] (JAVA_SPEC_VERSION == 25) & !INLINE-TYPES */
 		StringLatin1.inflate(srcBytes, srcOffset, dstChars, dstOffset, length);
 	}
 
@@ -534,17 +555,20 @@ final class Access implements JavaLangAccess {
 		return mod.implAddEnableNativeAccess();
 	}
 
+/*[IF (21 <= JAVA_SPEC_VERSION) & (JAVA_SPEC_VERSION < 24)]*/
+	@Override
+	public boolean allowSecurityManager() {
+		return System.allowSecurityManager();
+	}
+/*[ENDIF] (21 <= JAVA_SPEC_VERSION) & (JAVA_SPEC_VERSION < 24) */
+
 /*[IF JAVA_SPEC_VERSION >= 23]*/
 	@Override
 	public boolean addEnableNativeAccess(ModuleLayer moduleLayer, String moduleName) {
 		return moduleLayer.addEnableNativeAccess(moduleName);
 	}
 
-	@Override
-	public boolean allowSecurityManager() {
-		return System.allowSecurityManager();
-	}
-
+	/*[IF JAVA_SPEC_VERSION < 25]*/
 	@Override
 	public int getCharsLatin1(long i, int index, byte[] buf) {
 		return StringLatin1.getChars(i, index, buf);
@@ -554,9 +578,14 @@ final class Access implements JavaLangAccess {
 	public int getCharsUTF16(long i, int index, byte[] buf) {
 		return StringUTF16.getChars(i, index, buf);
 	}
+	/*[ENDIF] JAVA_SPEC_VERSION < 25 */
 
 	@Override
+	/*[IF (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES]*/
+	public void uncheckedPutCharUTF16(byte[] val, int index, int c) {
+	/*[ELSE] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 	public void putCharUTF16(byte[] val, int index, int c) {
+	/*[ENDIF] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 		StringUTF16.putChar(val, index, c);
 	}
 
@@ -577,24 +606,28 @@ final class Access implements JavaLangAccess {
 		return StringConcatHelper.mix(lengthCoder, value);
 	}
 
-	/*[IF !INLINE-TYPES]*/
 	@Override
-	/*[ENDIF] !INLINE-TYPES */
 	public PrintStream initialSystemErr() {
 		return System.initialErr;
 	}
 /*[ENDIF] JAVA_SPEC_VERSION >= 23 */
 
 	public long findNative(ClassLoader loader, String entryName) {
-		return ClassLoader.findNative(loader, entryName);
+		return ClassLoader.findNative0(loader, entryName);
 	}
 
+	/*[IF (JAVA_SPEC_VERSION < 25) | INLINE-TYPES]*/
 	@Override
 	public void exit(int status) {
 		Shutdown.exit(status);
 	}
+	/*[ENDIF] (JAVA_SPEC_VERSION < 25) | INLINE-TYPES */
 
+	/*[IF (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES]*/
+	public int uncheckedEncodeASCII(char[] sa, int sp, byte[] da, int dp, int len) {
+	/*[ELSE] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 	public int encodeASCII(char[] sa, int sp, byte[] da, int dp, int len) {
+	/*[ENDIF] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 		return StringCoding.implEncodeAsciiArray(sa, sp, da, dp, len);
 	}
 /*[ENDIF] JAVA_SPEC_VERSION >= 17 */
@@ -661,11 +694,19 @@ final class Access implements JavaLangAccess {
 	}
 
 /*[IF JAVA_SPEC_VERSION >= 21]*/
+	/*[IF (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES]*/
+	public char uncheckedGetUTF16Char(byte[] val, int index) {
+	/*[ELSE] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 	public char getUTF16Char(byte[] val, int index) {
+	/*[ENDIF] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 		return StringUTF16.getChar(val, index);
 	}
 
+	/*[IF (JAVA_SPEC_VERSION == 25) & !INLINE-TYPES]*/
+	public int uncheckedCountPositives(byte[] ba, int off, int len) {
+	/*[ELSE] (JAVA_SPEC_VERSION == 25) & !INLINE-TYPES */
 	public int countPositives(byte[] ba, int off, int len) {
+	/*[ENDIF] (JAVA_SPEC_VERSION == 25) & !INLINE-TYPES */
 		return StringCoding.countPositives(ba, off, len);
 	}
 
@@ -761,9 +802,11 @@ final class Access implements JavaLangAccess {
 		return local;
 	}
 
+	/*[IF (JAVA_SPEC_VERSION < 25) | INLINE-TYPES]*/
 	public boolean isCarrierThreadLocalPresent(CarrierThreadLocal<?> carrierThreadlocal) {
 		return asThreadLocal(carrierThreadlocal).isCarrierThreadLocalPresent();
 	}
+	/*[ENDIF] (JAVA_SPEC_VERSION < 25) | INLINE-TYPES */
 
 	public <T> T getCarrierThreadLocal(CarrierThreadLocal<T> carrierThreadlocal) {
 		return asThreadLocal(carrierThreadlocal).getCarrierThreadLocal();
@@ -828,11 +871,14 @@ final class Access implements JavaLangAccess {
 
 /*[IF JAVA_SPEC_VERSION >= 24]*/
 	@Override
+	/*[IF (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES]*/
+	public Object uncheckedStringConcat1(String[] constants) {
+	/*[ELSE] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 	public Object stringConcat1(String[] constants) {
+	/*[ENDIF] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 		return new StringConcatHelper.Concat1(constants);
 	}
 
-/*[IF !INLINE-TYPES]*/
 	@Override
 	public String concat(String prefix, Object value, String suffix) {
 		return StringConcatHelper.concat(prefix, value, suffix);
@@ -849,11 +895,34 @@ final class Access implements JavaLangAccess {
 	}
 
 	@Override
+	public byte stringCoder(String string) {
+		return string.coder();
+	}
+
+	@Override
 	public byte stringInitCoder() {
 		return String.COMPACT_STRINGS ? String.LATIN1 : String.UTF16;
 	}
-/*[ENDIF] !INLINE-TYPES */
+
+	@Override
+	public Executor virtualThreadDefaultScheduler() {
+		return VirtualThread.defaultScheduler();
+	}
+
+	/*[IF (JAVA_SPEC_VERSION < 25) | INLINE-TYPES]*/
+	@Override
+	public Stream<ScheduledExecutorService> virtualThreadDelayedTaskSchedulers() {
+		return VirtualThread.delayedTaskSchedulers();
+	}
+	/*[ENDIF] (JAVA_SPEC_VERSION < 25) | INLINE-TYPES */
 /*[ENDIF] JAVA_SPEC_VERSION >= 24 */
 
 /*[ENDIF] JAVA_SPEC_VERSION >= 9 */
+
+/*[IF (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES]*/
+	@Override
+	public int classFileVersion(Class<?> clazz) {
+		return clazz.getClassFileVersion();
+	}
+/*[ENDIF] (JAVA_SPEC_VERSION >= 25) & !INLINE-TYPES */
 }

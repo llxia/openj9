@@ -23,6 +23,9 @@
 #include <stdlib.h>
 #include "j9.h"
 #include "j9consts.h"
+#if defined(J9VM_OPT_SNAPSHOTS)
+#include "j9port_generated.h"
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
 #include "j9protos.h"
 #include "vm_internal.h"
 #include "ut_j9vm.h"
@@ -33,7 +36,6 @@
 
 #define ROUNDING_GRANULARITY    4
 #define ROUNDED_BYTE_AMOUNT(number)  (((number) + (ROUNDING_GRANULARITY - 1)) & ~(UDATA)(ROUNDING_GRANULARITY - 1))
-
 
 typedef union KeyHashTableClassEntry {
 	UDATA tag;
@@ -123,15 +125,15 @@ classHashEqualFn(void *tableNode, void *queryNode, void *userData)
 	char buf[ROM_ADDRESS_LENGTH + 1] = {0};
 	UDATA tableNodeType = classHashGetName(tableNode, &tableNodeName, &tableNodeLength);
 	UDATA queryNodeType = classHashGetName(queryNode, &queryNodeName, &queryNodeLength);
-	UDATA tableNodeTag = ((KeyHashTableClassEntry*)tableNode)->tag;
+	UDATA tableNodeTag = ((KeyHashTableClassEntry *)tableNode)->tag;
 	BOOLEAN isTableNodeHiddenClass = (TYPE_CLASS == tableNodeType)
-									&& (TAG_RAM_CLASS == (tableNodeTag & MASK_RAM_CLASS))
-									&& J9ROMCLASS_IS_HIDDEN(((KeyHashTableClassEntry*)tableNode)->ramClass->romClass);
+					&& (TAG_RAM_CLASS == (tableNodeTag & MASK_RAM_CLASS))
+					&& J9ROMCLASS_IS_HIDDEN(((KeyHashTableClassEntry *)tableNode)->ramClass->romClass);
 
 	if (isTableNodeHiddenClass) {
 		/* Hidden class is keyed on its rom address, not on its name. */
 		PORT_ACCESS_FROM_JAVAVM(javaVM);
-		j9str_printf(PORTLIB, (char*)buf, ROM_ADDRESS_LENGTH + 1, ROM_ADDRESS_FORMAT, (UDATA)((KeyHashTableClassEntry*)tableNode)->ramClass->romClass);
+		j9str_printf(buf, ROM_ADDRESS_LENGTH + 1, ROM_ADDRESS_FORMAT, (UDATA)((KeyHashTableClassEntry *)tableNode)->ramClass->romClass);
 		tableNodeName = (const U_8 *)buf;
 		tableNodeLength = ROM_ADDRESS_LENGTH;
 	}
@@ -163,19 +165,16 @@ classHashEqualFn(void *tableNode, void *queryNode, void *userData)
 				c = *(tableNodeName++);
 				if ((c & 0x80) == 0x00) {
 					/* one byte encoding */
-
 					utf = (U_16)c;
 					tableNodeLength -= 1;
 				} else if ((c & 0xE0) == 0xC0) {
 					/* two byte encoding */
-
 					utf = ((U_16)c & 0x1F) << 6;
 					c = *(tableNodeName++);
 					utf += (U_16)c & 0x3F;
 					tableNodeLength -= 2;
 				} else {
 					/* three byte encoding */
-
 					utf = ((U_16)c & 0x0F) << 12;
 					c = *(tableNodeName++);
 					utf += ((U_16)c & 0x3F) << 6;
@@ -224,16 +223,16 @@ classHashFn(void *key, void *userData)
 	const U_8 *name = NULL;
 	U_32 hash = 0;
 	UDATA type = classHashGetName(key, &name, &length);
-	UDATA keyTag = ((KeyHashTableClassEntry*)key)->tag;
+	UDATA keyTag = ((KeyHashTableClassEntry *)key)->tag;
 	char buf[ROM_ADDRESS_LENGTH + 1] = {0};
 	BOOLEAN isTableNodeHiddenClass = (TYPE_CLASS == type)
-									&& (TAG_RAM_CLASS == (keyTag & MASK_RAM_CLASS))
-									&& J9ROMCLASS_IS_HIDDEN(((KeyHashTableClassEntry*)key)->ramClass->romClass);
+					&& (TAG_RAM_CLASS == (keyTag & MASK_RAM_CLASS))
+					&& J9ROMCLASS_IS_HIDDEN(((KeyHashTableClassEntry *)key)->ramClass->romClass);
 
 	if (isTableNodeHiddenClass) {
 		/* for hidden class, do not key on its name, key on its rom address */
 		PORT_ACCESS_FROM_JAVAVM(javaVM);
-		j9str_printf(PORTLIB, (char*)buf, ROM_ADDRESS_LENGTH + 1, ROM_ADDRESS_FORMAT, (UDATA)((KeyHashTableClassEntry*)key)->ramClass->romClass);
+		j9str_printf(buf, ROM_ADDRESS_LENGTH + 1, ROM_ADDRESS_FORMAT, (UDATA)((KeyHashTableClassEntry *)key)->ramClass->romClass);
 		name = (const U_8 *)buf;
 		length = ROM_ADDRESS_LENGTH;
 	}
@@ -269,19 +268,16 @@ classHashFn(void *key, void *userData)
 
 			if ((c & 0x80) == 0x00) {
 				/* one byte encoding */
-
 				unicodeChar = (U_16)c;
 				length -= 1;
 			} else if ((c & 0xE0) == 0xC0) {
 				/* two byte encoding */
-
 				unicodeChar = ((U_16)c & 0x1F) << 6;
 				c = *(name++);
 				unicodeChar += (U_16)c & 0x3F;
 				length -= 2;
 			} else {
 				/* three byte encoding */
-
 				unicodeChar = ((U_16)c & 0x0F) << 12;
 				c = *(name++);
 				unicodeChar += ((U_16)c & 0x3F) << 6;
@@ -291,7 +287,6 @@ classHashFn(void *key, void *userData)
 			}
 
 			/* Make the String and internal representations of the class name consistent */
-
 			if ('/' == unicodeChar) {
 				unicodeChar = '.';
 			}
@@ -310,13 +305,31 @@ J9HashTable *
 hashClassTableNew(J9JavaVM *javaVM, U_32 initialSize)
 {
 	U_32 flags = J9HASH_TABLE_ALLOW_SIZE_OPTIMIZATION;
+	OMRPORT_ACCESS_FROM_J9PORT(javaVM->portLibrary);
 
 	/* If -XX:+FastClassHashTable is enabled, do not allow hash tables to grow automatically */
 	if (J9_ARE_ALL_BITS_SET(javaVM->extendedRuntimeFlags, J9_EXTENDED_RUNTIME_FAST_CLASS_HASH_TABLE)) {
 		flags |= J9HASH_TABLE_DO_NOT_GROW;
 	}
 
-	return hashTableNew(OMRPORT_FROM_J9PORT(javaVM->portLibrary), J9_GET_CALLSITE(), initialSize, sizeof(KeyHashTableClassEntry), sizeof(char *), flags, J9MEM_CATEGORY_CLASSES, classHashFn, classHashEqualFn, NULL, javaVM);
+#if defined(J9VM_OPT_SNAPSHOTS)
+	if (IS_SNAPSHOTTING_ENABLED(javaVM)) {
+		OMRPORTLIB = VMSNAPSHOTIMPL_OMRPORT_FROM_JAVAVM(javaVM);
+	}
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+
+	return hashTableNew(
+			OMRPORTLIB,
+			J9_GET_CALLSITE(),
+			initialSize,
+			sizeof(KeyHashTableClassEntry),
+			sizeof(char *),
+			flags,
+			J9MEM_CATEGORY_CLASSES,
+			classHashFn,
+			classHashEqualFn,
+			NULL,
+			javaVM);
 }
 
 J9Class *
@@ -381,7 +394,18 @@ growClassHashTable(J9JavaVM *vm, J9ClassLoader *classLoader, KeyHashTableClassEn
 	/* If -XX:+FastClassHashTable is enabled, attempt to allocate a new, larger hash table, otherwise return failure */
 	if (J9_ARE_ALL_BITS_SET(vm->extendedRuntimeFlags, J9_EXTENDED_RUNTIME_FAST_CLASS_HASH_TABLE)) {
 		J9HashTable *oldTable = classLoader->classHashTable;
-		J9HashTable *newTable = hashTableNew(oldTable->portLibrary, J9_GET_CALLSITE(), oldTable->tableSize + 1, sizeof(KeyHashTableClassEntry), sizeof(char *), J9HASH_TABLE_DO_NOT_GROW | J9HASH_TABLE_ALLOW_SIZE_OPTIMIZATION, J9MEM_CATEGORY_CLASSES, classHashFn, classHashEqualFn, NULL, vm);
+		J9HashTable *newTable = hashTableNew(
+					oldTable->portLibrary,
+					J9_GET_CALLSITE(),
+					oldTable->tableSize + 1,
+					sizeof(KeyHashTableClassEntry),
+					sizeof(char *),
+					J9HASH_TABLE_DO_NOT_GROW | J9HASH_TABLE_ALLOW_SIZE_OPTIMIZATION,
+					J9MEM_CATEGORY_CLASSES,
+					classHashFn,
+					classHashEqualFn,
+					NULL,
+					vm);
 		if (NULL != newTable) {
 			J9HashTableState walkState;
 			/* Copy all of the data from the old hash table into the new one */
@@ -442,7 +466,7 @@ hashClassTableDelete(J9ClassLoader *classLoader, U_8 *className, UDATA className
 }
 
 UDATA
-hashClassTablePackageDelete(J9VMThread *vmThread, J9ClassLoader* classLoader, J9ROMClass* romClass)
+hashClassTablePackageDelete(J9VMThread *vmThread, J9ClassLoader *classLoader, J9ROMClass *romClass)
 {
 	if (isMHProxyPackage(romClass)) {
 		/* This generated package only exists for one hidden class and should be
@@ -454,7 +478,7 @@ hashClassTablePackageDelete(J9VMThread *vmThread, J9ClassLoader* classLoader, J9
 		key.tag = (UDATA)romClass | TAG_ROM_CLASS;
 		omrthread_monitor_enter(vmThread->javaVM->classTableMutex);
 		result = hashTableRemove(classLoader->classHashTable, &key);
-		J9UTF8* className = J9ROMCLASS_CLASSNAME(romClass);
+		J9UTF8 *className = J9ROMCLASS_CLASSNAME(romClass);
 		Trc_VM_hashClassTablePackageDelete(vmThread, romClass, J9UTF8_LENGTH(className), J9UTF8_DATA(className));
 		omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
 		return result;
@@ -487,12 +511,18 @@ hashClassTableStartDo(J9ClassLoader *classLoader, J9HashTableState *walkState, U
 	BOOLEAN continueToNext = FALSE;
 	KeyHashTableClassEntry *first = hashTableStartDo(classLoader->classHashTable, walkState);
 
-	if (NULL != first) {	
+	if (NULL != first) {
 		if (TAG_RAM_CLASS != (first->tag & MASK_RAM_CLASS)) {
 			/* only report RAM classes */
 			continueToNext = TRUE;
 		} else {
-			if (skipHidden && J9ROMCLASS_IS_HIDDEN(first->ramClass->romClass)) {
+			J9Class *clazz = first->ramClass;
+
+			if ((skipHidden && J9ROMCLASS_IS_HIDDEN(clazz->romClass))
+#if defined(J9VM_OPT_SNAPSHOTS)
+				|| J9_ARE_ANY_BITS_SET(clazz->classFlags, J9ClassIsFrozen)
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+			) {
 				continueToNext = TRUE;
 			} else {
 				continueToNext = FALSE;
@@ -502,15 +532,20 @@ hashClassTableStartDo(J9ClassLoader *classLoader, J9HashTableState *walkState, U
 		continueToNext = FALSE;
 	}
 
-	
 	while (continueToNext) {
 		first = hashTableNextDo(walkState);
-		if (NULL != first) {	
+		if (NULL != first) {
 			if (TAG_RAM_CLASS != (first->tag & MASK_RAM_CLASS)) {
 				/* only report RAM classes */
 				continueToNext = TRUE;
 			} else {
-				if (skipHidden && J9ROMCLASS_IS_HIDDEN(first->ramClass->romClass)) {
+				J9Class *clazz = first->ramClass;
+
+				if ((skipHidden && J9ROMCLASS_IS_HIDDEN(clazz->romClass))
+#if defined(J9VM_OPT_SNAPSHOTS)
+					|| J9_ARE_ANY_BITS_SET(clazz->classFlags, J9ClassIsFrozen)
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+				) {
 					continueToNext = TRUE;
 				} else {
 					continueToNext = FALSE;
@@ -531,12 +566,18 @@ hashClassTableNextDo(J9HashTableState *walkState)
 	BOOLEAN continueToNext = FALSE;
 	KeyHashTableClassEntry *next = hashTableNextDo(walkState);
 
-	if (NULL != next) {	
+	if (NULL != next) {
 		if (TAG_RAM_CLASS != (next->tag & MASK_RAM_CLASS)) {
 			/* only report RAM classes */
 			continueToNext = TRUE;
 		} else {
-			if (skipHidden && J9ROMCLASS_IS_HIDDEN(next->ramClass->romClass)) {
+			J9Class *clazz = next->ramClass;
+
+			if ((skipHidden && J9ROMCLASS_IS_HIDDEN(clazz->romClass))
+#if defined(J9VM_OPT_SNAPSHOTS)
+				|| J9_ARE_ANY_BITS_SET(clazz->classFlags, J9ClassIsFrozen)
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+			) {
 				continueToNext = TRUE;
 			} else {
 				continueToNext = FALSE;
@@ -548,12 +589,18 @@ hashClassTableNextDo(J9HashTableState *walkState)
 	/* only report RAM classes */
 	while (continueToNext) {
 		next = hashTableNextDo(walkState);
-		if (NULL != next) {	
+		if (NULL != next) {
 			if (TAG_RAM_CLASS != (next->tag & MASK_RAM_CLASS)) {
 				/* only report RAM classes */
 				continueToNext = TRUE;
 			} else {
-				if (skipHidden && J9ROMCLASS_IS_HIDDEN(next->ramClass->romClass)) {
+				J9Class *clazz = next->ramClass;
+
+				if ((skipHidden && J9ROMCLASS_IS_HIDDEN(clazz->romClass))
+#if defined(J9VM_OPT_SNAPSHOTS)
+					|| J9_ARE_ANY_BITS_SET(clazz->classFlags, J9ClassIsFrozen)
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+				) {
 					continueToNext = TRUE;
 				} else {
 					continueToNext = FALSE;
@@ -569,12 +616,12 @@ hashClassTableNextDo(J9HashTableState *walkState)
 
 static BOOLEAN
 isMHProxyPackage(J9ROMClass *romClass) {
-	const char* mhproxy = "jdk/MHProxy";
+	const char *mhproxy = "jdk/MHProxy";
 	/* Classes that are not strongly tied to the classloader will have
 	 * J9AccClassAnonClass set. See java.lang.invoke.MethodHandles
 	 */
-	return _J9ROMCLASS_J9MODIFIER_IS_SET(romClass, J9AccClassAnonClass) &&
-		J9UTF8_LITERAL_EQUALS(J9UTF8_DATA(J9ROMCLASS_CLASSNAME(romClass)), sizeof(mhproxy) - 1, mhproxy);
+	return _J9ROMCLASS_J9MODIFIER_IS_SET(romClass, J9AccClassAnonClass)
+			&& J9UTF8_LITERAL_EQUALS(J9UTF8_DATA(J9ROMCLASS_CLASSNAME(romClass)), sizeof(mhproxy) - 1, mhproxy);
 }
 
 UDATA
@@ -710,8 +757,26 @@ J9HashTable *
 hashClassLocationTableNew(J9JavaVM *javaVM, U_32 initialSize)
 {
 	U_32 flags = J9HASH_TABLE_ALLOW_SIZE_OPTIMIZATION;
+	OMRPORT_ACCESS_FROM_J9PORT(javaVM->portLibrary);
 
-	return hashTableNew(OMRPORT_FROM_J9PORT(javaVM->portLibrary), J9_GET_CALLSITE(), initialSize, sizeof(J9ClassLocation), sizeof(char *), flags, J9MEM_CATEGORY_CLASSES, classLocationHashFn, classLocationHashEqualFn, NULL, javaVM);
+#if defined(J9VM_OPT_SNAPSHOTS)
+	if (IS_SNAPSHOTTING_ENABLED(javaVM)) {
+		OMRPORTLIB = VMSNAPSHOTIMPL_OMRPORT_FROM_JAVAVM(javaVM);
+	}
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+
+	return hashTableNew(
+			OMRPORTLIB,
+			J9_GET_CALLSITE(),
+			initialSize,
+			sizeof(J9ClassLocation),
+			sizeof(char *),
+			flags,
+			J9MEM_CATEGORY_CLASSES,
+			classLocationHashFn,
+			classLocationHashEqualFn,
+			NULL,
+			javaVM);
 }
 
 static UDATA
@@ -809,4 +874,103 @@ findClassLocationForClass(J9VMThread *currentThread, J9Class *clazz)
 	targetPtr = hashTableFind(clazz->classLoader->classLocationHashTable, (void *)&classLocation);
 
 	return targetPtr;
+}
+
+static UDATA
+classLoaderPtrHashFn(void *entry, void *userData)
+{
+	return (UDATA)*(J9ClassLoader **)entry;
+}
+
+static UDATA
+classLoaderPtrHashEqualFn(void *a, void *b, void *userData)
+{
+	return *(J9ClassLoader **)a == *(J9ClassLoader **)b;
+}
+
+static J9HashTable *
+outlivingLoadersTableNew(J9JavaVM *javaVM, U_32 initialSize)
+{
+	return hashTableNew(
+			OMRPORT_FROM_J9PORT(javaVM->portLibrary),
+			J9_GET_CALLSITE(),
+			initialSize,
+			sizeof(J9ClassLoader *),
+			sizeof(J9ClassLoader *),
+			0,
+			J9MEM_CATEGORY_CLASSES,
+			classLoaderPtrHashFn,
+			classLoaderPtrHashEqualFn,
+			NULL,
+			NULL);
+}
+
+void
+addOutlivingLoader(J9VMThread *currentThread, J9ClassLoader *classLoader, J9ClassLoader *outlivingLoader)
+{
+	J9JavaVM *vm = currentThread->javaVM;
+
+	Assert_VM_false(outlivingLoader == classLoader);
+	Assert_VM_mustOwnMonitor(vm->classTableMutex);
+
+	if (J9CLASSLOADER_OUTLIVING_LOADERS_PERMANENT == outlivingLoader->outlivingLoaders) {
+		/* Nothing to do. */
+	} else if (J9CLASSLOADER_OUTLIVING_LOADERS_PERMANENT == classLoader->outlivingLoaders) {
+		markLoaderPermanent(currentThread, outlivingLoader);
+	} else if (NULL == classLoader->outlivingLoaders) {
+		classLoader->outlivingLoaders = (void *)((UDATA)outlivingLoader | J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG);
+	} else if (J9_ARE_ANY_BITS_SET((UDATA)classLoader->outlivingLoaders, J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG)) {
+		J9ClassLoader *existing = (J9ClassLoader *)((UDATA)classLoader->outlivingLoaders & ~(UDATA)J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG);
+		if (existing != outlivingLoader) {
+			J9HashTable *table = outlivingLoadersTableNew(vm, 2);
+			if (NULL != table) {
+				J9ClassLoader **entry0 = (J9ClassLoader **)hashTableAdd(table, &existing);
+				J9ClassLoader **entry1 = (J9ClassLoader **)hashTableAdd(table, &outlivingLoader);
+				if ((NULL != entry0) && (NULL != entry1)) {
+					classLoader->outlivingLoaders = table;
+				} else {
+					hashTableFree(table);
+				}
+			}
+		}
+	} else {
+		hashTableAdd((J9HashTable *)classLoader->outlivingLoaders, &outlivingLoader);
+	}
+}
+
+void
+markLoaderPermanent(J9VMThread *currentThread, J9ClassLoader *classLoader)
+{
+	J9JavaVM *vm = currentThread->javaVM;
+	void *outlivingLoaders = NULL;
+
+	Assert_VM_mustOwnMonitor(vm->classTableMutex);
+
+	outlivingLoaders = classLoader->outlivingLoaders;
+	if (J9CLASSLOADER_OUTLIVING_LOADERS_PERMANENT != outlivingLoaders) {
+		/* Update now to ensure that recursion terminates in the presence of cycles. */
+		classLoader->outlivingLoaders = J9CLASSLOADER_OUTLIVING_LOADERS_PERMANENT;
+
+		if (NULL != vm->jitConfig) {
+			vm->jitConfig->jitAddPermanentLoader(currentThread, classLoader);
+		}
+
+		/* Any loader previously known to outlive classLoader is also permanent. */
+		if (NULL != outlivingLoaders) {
+			if (J9_ARE_ANY_BITS_SET((UDATA)outlivingLoaders, J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG)) {
+				J9ClassLoader *outlivingLoader = (J9ClassLoader *)((UDATA)outlivingLoaders & ~(UDATA)J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG);
+				markLoaderPermanent(currentThread, outlivingLoader);
+			} else {
+				J9HashTable *table = (J9HashTable *)outlivingLoaders;
+				J9HashTableState state;
+				J9ClassLoader **entry = (J9ClassLoader **)hashTableStartDo(table, &state);
+				while (NULL != entry) {
+					markLoaderPermanent(currentThread, *entry);
+					entry = (J9ClassLoader **)hashTableNextDo(&state);
+				}
+
+				hashTableFree(table);
+			}
+		}
+	}
 }

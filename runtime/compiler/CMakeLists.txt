@@ -165,9 +165,9 @@ endif()
 set(REMOVED_OMR_FILES
 	${omr_SOURCE_DIR}/compiler/codegen/CCData.cpp
 	${omr_SOURCE_DIR}/compiler/control/CompileMethod.cpp
-	${omr_SOURCE_DIR}/compiler/env/FEBase.cpp
 	${omr_SOURCE_DIR}/compiler/optimizer/FEInliner.cpp
-	${omr_SOURCE_DIR}/compiler/env/JitConfig.cpp
+	${omr_SOURCE_DIR}/compiler/env/OMRJitConfig.cpp
+	${omr_SOURCE_DIR}/compiler/env/OMRFrontEnd.cpp
 	${omr_SOURCE_DIR}/compiler/env/PersistentAllocator.cpp
 	${omr_SOURCE_DIR}/compiler/env/SystemSegmentProvider.cpp
 	${omr_SOURCE_DIR}/compiler/infra/OMRMonitor.cpp
@@ -263,6 +263,10 @@ if(OMR_OS_LINUX OR OMR_OS_OSX)
 		-fno-threadsafe-statics
 		-Wno-invalid-offsetof
 	)
+	if(OMR_ENV_DATA32)
+		# avoid memset warnings, for warnings as errors
+		list(APPEND J9_CXXFLAGS -Wno-stringop-overflow)
+	endif()
 	if(NOT J9VM_OPT_JITSERVER)
 		list(APPEND J9_CXXFLAGS -fno-rtti)
 	endif()
@@ -284,7 +288,11 @@ elseif(OMR_OS_AIX)
 		-DSUPPORTS_THREAD_LOCAL
 	)
 	if(OMR_ENV_DATA64)
-		list(APPEND J9_SHAREDFLAGS -q64)
+		if(CMAKE_C_COMPILER_IS_OPENXL)
+			list(APPEND J9_SHAREDFLAGS -m64)
+		else()
+			list(APPEND J9_SHAREDFLAGS -q64)
+		endif()
 		if(OMR_TOOLCONFIG STREQUAL "xlc")
 			# Modify the arch tuning value we inherit from OMR.
 			list(REMOVE_ITEM TR_COMPILE_OPTIONS "-qarch=pwr7")
@@ -334,7 +342,7 @@ omr_stringify(J9_CXXFLAGS_STR ${J9_SHAREDFLAGS} ${J9_CXXFLAGS})
 set(CMAKE_CXX_FLAGS "${J9_CXXFLAGS_STR}")
 set(CMAKE_C_FLAGS "${J9_CFLAGS_STR}")
 
-if(OMR_ARCH_X86 OR OMR_ARCH_S390 OR OMR_ARCH_AARCH64)
+if(OMR_ARCH_AARCH64 OR (OMR_ARCH_POWER AND NOT OMR_TOOLCONFIG STREQUAL "xlc") OR OMR_ARCH_S390 OR OMR_ARCH_X86)
 	set(OMR_WARNINGS_AS_ERRORS ON)
 	set(OMR_ENHANCED_WARNINGS OFF)
 else()
@@ -354,6 +362,10 @@ create_omr_compiler_library(NAME j9jit
 if(OMR_OS_ZOS)
 	# Workaround a compile problem on z/OS by appending "-O" (to override "-O3").
 	set_property(SOURCE "optimizer/VectorAPIExpansion.cpp" APPEND PROPERTY COMPILE_FLAGS "-O")
+	if(OMR_TOOLCONFIG STREQUAL "openxl")
+		# Workaround a Open XL compile problem on z/OS by appending "-O0" (to override "-O3").
+		set_property(SOURCE "runtime/codertinit.cpp" APPEND PROPERTY COMPILE_FLAGS "-O0")
+	endif()
 endif()
 
 add_dependencies(j9jit

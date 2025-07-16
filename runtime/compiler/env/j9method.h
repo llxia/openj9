@@ -120,14 +120,16 @@ public:
    static bool                     isUnsafeGetPutBoolean(TR::RecognizedMethod rm);
    static bool                     isUnsafePut(TR::RecognizedMethod rm);
    static bool                     isVolatileUnsafe(TR::RecognizedMethod rm);
+   static bool                     isAcquireReleaseUnsafe(TR::RecognizedMethod rm);
+   static bool                     isOpaqueUnsafe(TR::RecognizedMethod rm);
    static TR::DataType             unsafeDataTypeForArray(TR::RecognizedMethod rm);
    static TR::DataType             unsafeDataTypeForObject(TR::RecognizedMethod rm);
    static bool                     isVarHandleOperationMethod(TR::RecognizedMethod rm);
-   virtual bool                    isVarHandleAccessMethod(TR::Compilation * = NULL);
-   virtual bool                    isSignaturePolymorphicMethod(TR::Compilation * = NULL);
+   virtual bool                    isVarHandleAccessMethod();
+   virtual bool                    isSignaturePolymorphicMethod();
 
-   virtual bool                    isUnsafeWithObjectArg( TR::Compilation * comp = NULL);
-   virtual bool                    isUnsafeCAS(TR::Compilation * = NULL);
+   virtual bool                    isUnsafeWithObjectArg();
+   virtual bool                    isUnsafeCAS();
    virtual uint32_t                numberOfExplicitParameters();
    virtual TR::DataType            parmType(uint32_t parmNumber); // returns the type of the parmNumber'th parameter (0-based)
 
@@ -302,7 +304,6 @@ public:
    virtual bool                    isProtected();
    virtual bool                    isPublic();
    virtual bool                    isFinal();
-   virtual bool                    isStrictFP();
    virtual bool                    isInterpreted();
    virtual bool                    isInterpretedForHeuristics();
    virtual bool                    hasBackwardBranches();
@@ -321,7 +322,7 @@ public:
    virtual bool                    getCallerWeight(TR_ResolvedJ9Method *caller, uint32_t *weight, uint32_t pcIndex=~0);
 
 
-   virtual intptr_t               getInvocationCount();
+   virtual intptr_t                getInvocationCount();
    virtual bool                    setInvocationCount(intptr_t oldCount, intptr_t newCount);
    virtual bool                    isSameMethod(TR_ResolvedMethod *);
 
@@ -412,6 +413,7 @@ public:
    virtual void *                  callSiteTableEntryAddress(int32_t callSiteIndex);
    virtual bool                    isUnresolvedMethodTypeTableEntry(int32_t cpIndex);
    virtual void *                  methodTypeTableEntryAddress(int32_t cpIndex);
+   virtual bool                    isStable(int32_t cpIndex, TR::Compilation *comp);
 #if defined(J9VM_OPT_METHOD_HANDLE)
    virtual bool                    isUnresolvedVarHandleMethodTypeTableEntry(int32_t cpIndex);
    virtual void *                  varHandleMethodTypeTableEntryAddress(int32_t cpIndex);
@@ -457,6 +459,8 @@ public:
    virtual TR_ResolvedMethod *     getResolvedPossiblyPrivateVirtualMethod( TR::Compilation *, int32_t cpIndex, bool ignoreRtResolve, bool * unresolvedInCP);
    virtual TR_OpaqueClassBlock *   getResolvedInterfaceMethod(int32_t cpIndex, uintptr_t * pITableIndex);
 
+   virtual TR_OpaqueMethodBlock *  getTargetMethodFromMemberName(uintptr_t * invokeCacheArray, bool * isInvokeCacheAppendixNull);
+
    virtual TR_ResolvedMethod *     getResolvedDynamicMethod( TR::Compilation *, int32_t cpIndex, bool * unresolvedInCP, bool * isInvokeCacheAppendixNull = 0);
    virtual TR_ResolvedMethod *     getResolvedHandleMethod( TR::Compilation *, int32_t cpIndex, bool * unresolvedInCP, bool * isInvokeCacheAppendixNull = 0);
    virtual TR_ResolvedMethod *     getResolvedHandleMethodWithSignature( TR::Compilation *, int32_t cpIndex, char *signature);
@@ -465,6 +469,15 @@ public:
    virtual TR_ResolvedMethod *     getResolvedImproperInterfaceMethod(TR::Compilation * comp, I_32 cpIndex);
    virtual TR_ResolvedMethod *     getResolvedInterfaceMethod( TR::Compilation *, TR_OpaqueClassBlock * classObject, int32_t cpIndex);
    virtual TR_ResolvedMethod *     getResolvedVirtualMethod( TR::Compilation *, TR_OpaqueClassBlock * classObject, int32_t virtualCallOffset, bool ignoreRtResolve = true);
+
+   bool                            isDAAWrapperMethod();
+   bool                            isDAAMarshallingWrapperMethod();
+   bool                            isDAAPackedDecimalWrapperMethod();
+   bool                            isDAAExternalDecimalWrapperMethod();
+   bool                            isDAAIntrinsicMethod();
+   bool                            isDAAMarshallingIntrinsicMethod();
+   bool                            isDAAPackedDecimalIntrinsicMethod();
+   bool 				                 isDAAExternalDecimalIntrinsicMethod();
 
 protected:
    TR_ResolvedMethod *             aotMaskResolvedPossiblyPrivateVirtualMethod(TR::Compilation *comp, TR_ResolvedMethod *method);
@@ -484,7 +497,7 @@ public:
    virtual bool                    isJITInternalNative();
    virtual bool                    methodIsNotzAAPEligible();
 
-   uintptr_t                      getJNIProperties() { return _jniProperties; }
+   uintptr_t                       getJNIProperties() { return _jniProperties; }
    void *                          getJNITargetAddress() {return _jniTargetAddress; }
 
    virtual TR_OpaqueMethodBlock *  getNonPersistentIdentifier();
@@ -540,7 +553,7 @@ protected:
    virtual TR_J9MethodBase *       asJ9Method(){ return this; }
    TR_ResolvedJ9Method(TR_FrontEnd *, TR_ResolvedMethod * owningMethod = 0);
    virtual void construct();
-   virtual TR_ResolvedMethod *     createResolvedMethodFromJ9Method( TR::Compilation *comp, int32_t cpIndex, uint32_t vTableSlot, J9Method *j9Method, bool * unresolvedInCP, TR_AOTInliningStats *aotStats);
+   virtual TR_ResolvedMethod *     createResolvedMethodFromJ9Method( TR::Compilation *comp, int32_t cpIndex, uint32_t vTableSlot, J9Method *j9Method, TR_AOTInliningStats *aotStats);
    virtual void                    handleUnresolvedStaticMethodInCP(int32_t cpIndex, bool * unresolvedInCP);
    virtual void                    handleUnresolvedSpecialMethodInCP(int32_t cpIndex, bool * unresolvedInCP);
    virtual void                    handleUnresolvedVirtualMethodInCP(int32_t cpIndex, bool * unresolvedInCP);
@@ -573,7 +586,6 @@ public:
    virtual bool                    isProtected();
    virtual bool                    isPublic();
    virtual bool                    isFinal();
-   virtual bool                    isStrictFP();
 
    virtual bool                    isInterpreted();
    virtual bool                    isInterpretedForHeuristics();
@@ -604,6 +616,8 @@ public:
    virtual bool                    isUnresolvedMethodType(int32_t cpIndex);
    virtual void *                  methodHandleConstant(int32_t cpIndex);
    virtual bool                    isUnresolvedMethodHandle(int32_t cpIndex);
+   virtual bool                    isUnresolvedCallSiteTableEntry(int32_t callSiteIndex);
+   virtual bool                    isUnresolvedMethodTypeTableEntry(int32_t cpIndex);
 
    virtual bool                    fieldAttributes ( TR::Compilation *, int32_t cpIndex, uint32_t * fieldOffset, TR::DataType * type, bool * volatileP, bool * isFinal, bool *isPrivate, bool isStore, bool * unresolvedInCP, bool needsAOTValidation);
 
@@ -634,7 +648,7 @@ public:
 
    static void                     setAttributeResult(bool, bool, uintptr_t, int32_t, int32_t, int32_t, TR::DataType *, bool *, bool *, bool *, void ** );
 protected:
-   virtual TR_ResolvedMethod *     createResolvedMethodFromJ9Method(TR::Compilation *comp, int32_t cpIndex, uint32_t vTableSlot, J9Method *j9Method, bool * unresolvedInCP, TR_AOTInliningStats *aotStats);
+   virtual TR_ResolvedMethod *     createResolvedMethodFromJ9Method(TR::Compilation *comp, int32_t cpIndex, uint32_t vTableSlot, J9Method *j9Method, TR_AOTInliningStats *aotStats);
 
    virtual void                    handleUnresolvedStaticMethodInCP(int32_t cpIndex, bool * unresolvedInCP);
    virtual void                    handleUnresolvedSpecialMethodInCP(int32_t cpIndex, bool * unresolvedInCP);

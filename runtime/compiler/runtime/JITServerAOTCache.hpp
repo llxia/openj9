@@ -30,6 +30,8 @@
 #include "env/SystemSegmentProvider.hpp"
 #include "runtime/JITServerAOTSerializationRecords.hpp"
 
+class JITServerSharedProfileCache;
+
 static const uint32_t JITSERVER_AOTCACHE_VERSION = 1;
 static const char JITSERVER_AOTCACHE_EYECATCHER[] = "AOTCACHE";
 // the eye-catcher is not null-terminated in the snapshot files
@@ -371,10 +373,14 @@ public:
    AOTCacheRecord **records() { return (AOTCacheRecord **)_data.end(); }
 
    static const char *getRecordName() { return "cached AOT method"; }
-   static CachedAOTMethod *create(const AOTCacheClassChainRecord *definingClassChainRecord, uint32_t index,
-                                  TR_Hotness optLevel, const AOTCacheAOTHeaderRecord *aotHeaderRecord,
+   static CachedAOTMethod *create(const AOTCacheClassChainRecord *definingClassChainRecord,
+                                  uint32_t index,
+                                  TR_Hotness optLevel,
+                                  const AOTCacheAOTHeaderRecord *aotHeaderRecord,
                                   const Vector<std::pair<const AOTCacheRecord *, uintptr_t>> &records,
-                                  const void *code, size_t codeSize, const void *data, size_t dataSize);
+                                  const void *code, size_t codeSize,
+                                  const void *data, size_t dataSize,
+                                  const char *signature);
 
    CachedAOTMethod *getNextRecord() const { return _nextRecord; }
    void setNextRecord(CachedAOTMethod *record) { _nextRecord = record; }
@@ -387,18 +393,20 @@ private:
    CachedAOTMethod(const AOTCacheClassChainRecord *definingClassChainRecord, uint32_t index,
                    TR_Hotness optLevel, const AOTCacheAOTHeaderRecord *aotHeaderRecord,
                    const Vector<std::pair<const AOTCacheRecord *, uintptr_t>> &records,
-                   const void *code, size_t codeSize, const void *data, size_t dataSize);
+                   const void *code, size_t codeSize, const void *data, size_t dataSize,
+                   const char *signature, size_t signatureSize);
    CachedAOTMethod(const JITServerAOTCacheReadContext &context, const SerializedAOTMethod &header);
 
    SerializedAOTMethod *dataAddr() { return &_data; }
 
-   static size_t size(size_t numRecords, size_t codeSize, size_t dataSize)
+   static size_t size(size_t numRecords, size_t codeSize, size_t dataSize, size_t signatureSize)
       {
-      return offsetof(CachedAOTMethod, _data) + SerializedAOTMethod::size(numRecords, codeSize, dataSize) +
+      return offsetof(CachedAOTMethod, _data) +
+             SerializedAOTMethod::size(numRecords, codeSize, dataSize, signatureSize) +
              numRecords * sizeof(AOTCacheRecord *);
       }
 
-   static size_t size(const SerializedAOTMethod &header) { return size(header.numRecords(), header.codeSize(), header.dataSize()); }
+   static size_t size(const SerializedAOTMethod &header) { return size(header.numRecords(), header.codeSize(), header.dataSize(), header.signatureSize()); }
 
    bool setSubrecordPointers(const JITServerAOTCacheReadContext &context);
 
@@ -418,10 +426,11 @@ class JITServerAOTCache
 public:
    TR_PERSISTENT_ALLOC(TR_Memory::JITServerAOTCache)
 
-   JITServerAOTCache(const std::string &name);
+   JITServerAOTCache(const std::string &name, J9JavaVM *javaVM);
    ~JITServerAOTCache();
 
    const std::string &name() const { return _name; }
+   JITServerSharedProfileCache *sharedProfileCache() const { return _sharedProfileCache; }
 
    // Each get{Type}Record() method except getThunkRecord returns the record for given parameters (which fully identify
    // the unique record), by either looking up the existing record or creating a new one if there is sufficient
@@ -471,6 +480,9 @@ public:
    Vector<const AOTSerializationRecord *>
    getSerializationRecords(const CachedAOTMethod *method, const KnownIdSet &knownIds, TR_Memory &trMemory) const;
 
+   // Pack a vector of serialization records into a linear buffer
+   static void packSerializationRecords(const Vector<const AOTSerializationRecord *> &records, uint8_t *buffer, size_t bufferSize);
+
    void incNumCacheBypasses() { ++_numCacheBypasses; }
    void incNumCacheMisses() { ++_numCacheMisses; }
    size_t getNumDeserializedMethods() const { return _numDeserializedMethods; }
@@ -516,6 +528,19 @@ public:
       @return true if the in-memory cache is better than the one on file, false otherwise
    */
    bool isAOTCacheBetterThanSnapshot(const std::string &cacheFileName, size_t numExtraMethods);
+
+   CachedAOTMethod *getCachedMethodHead() { return _cachedMethodHead; }
+   TR::Monitor *getCachedMethodMonitor() { return _cachedMethodMonitor; }
+
+   //NOTE: Current implementation doesn't support compatible differences in AOT headers.
+   //      A cached method can only be sent to a client with the exact same AOT header.
+   using CachedMethodKey = std::tuple<const AOTCacheClassChainRecord *, uint32_t/*index*/,
+                                      TR_Hotness, const AOTCacheAOTHeaderRecord *>;
+
+   const PersistentUnorderedMap<CachedMethodKey, CachedAOTMethod *>& getCachedMethodMap()
+   {
+      return _cachedMethodMap;
+   }
 
 private:
    static StringKey getRecordKey(const AOTCacheClassLoaderRecord *record)
@@ -577,11 +602,6 @@ private:
    static StringKey getRecordKey(const AOTCacheThunkRecord *record)
       { return { record->data().signature(), record->data().signatureSize() }; }
 
-   //NOTE: Current implementation doesn't support compatible differences in AOT headers.
-   //      A cached method can only be sent to a client with the exact same AOT header.
-   using CachedMethodKey = std::tuple<const AOTCacheClassChainRecord *, uint32_t/*index*/,
-                                      TR_Hotness, const AOTCacheAOTHeaderRecord *>;
-
    // Helper method used in getSerializationRecords()
    void addRecord(const AOTCacheRecord *record, Vector<const AOTSerializationRecord *> &result,
                   UnorderedSet<const AOTCacheRecord *> &newRecords, const KnownIdSet &knownIds) const;
@@ -593,6 +613,7 @@ private:
                            PersistentUnorderedMap<K, V *, H> &map, V *&traversalHead, V *&traversalTail, Vector<V *> &records);
 
    const std::string _name;
+   JITServerSharedProfileCache *const _sharedProfileCache;
 
    // Along with each map we also store pointers to the start and end points of a traversal of all the records.
    // The _nextRecord in each record points to the next record in this traversal.

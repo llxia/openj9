@@ -45,9 +45,7 @@
 #include "HeapRegionDescriptor.hpp"
 #include "HeapRegionIterator.hpp"
 #include "HeapRegionManager.hpp"
-#if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
 #include "HeapRegionIteratorVLHGC.hpp"
-#endif /* J9VM_GC_ENABLE_DOUBLE_MAP */
 #include "MemoryPool.hpp"
 #include "MemorySubSpace.hpp"
 #include "MemorySpace.hpp"
@@ -90,10 +88,8 @@ MM_RootScanner::scanModularityObjects(J9ClassLoader * classLoader)
 		J9Module **modulePtr = (J9Module**)hashTableStartDo(classLoader->moduleHashTable, &moduleWalkState);
 		while (NULL != modulePtr) {
 			J9Module * const module = *modulePtr;
-
-			doSlot(&module->moduleObject);
-			if (NULL != module->moduleName) {
-				doSlot(&module->moduleName);
+			if (NULL != module->moduleObject) {
+				doSlot(&module->moduleObject);
 			}
 			if (NULL != module->version) {
 				doSlot(&module->version);
@@ -102,7 +98,9 @@ MM_RootScanner::scanModularityObjects(J9ClassLoader * classLoader)
 		}
 
 		if (classLoader == _javaVM->systemClassLoader) {
-			doSlot(&_javaVM->unamedModuleForSystemLoader->moduleObject);
+			if (NULL != _javaVM->unnamedModuleForSystemLoader->moduleObject) {
+				doSlot(&_javaVM->unnamedModuleForSystemLoader->moduleObject);
+			}
 		}
 	}
 }
@@ -241,6 +239,14 @@ MM_RootScanner::doStringTableSlot(J9Object **slotPtr, GC_StringTableIterator *st
 	doSlot(slotPtr);
 }
 
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+void
+MM_RootScanner::doObjectInVirtualLargeObjectHeap(J9Object *objectPtr, bool *sparseHeapAllocation)
+{
+	/* No need to call doSlot() here since there's nothing to update */
+}
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+
 #if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
 void
 MM_RootScanner::doDoubleMappedObjectSlot(J9Object *objectPtr, struct J9PortVmemIdentifier *identifier)
@@ -352,6 +358,20 @@ MM_RootScanner::doClassSlot(J9Class *classPtr)
 {
 	/* ignore class slots by default */
 }
+
+#if JAVA_SPEC_VERSION >= 24
+/**
+ * @todo Provide function documentation
+ */
+void
+MM_RootScanner::doContinuationSlot(J9Object **slotPtr, GC_ContinuationSlotIterator *continuationSlotIterator)
+{
+	/* ensure that this isn't a slot pointing into the gap (only matters for split heap VMs) */
+	if (!_extensions->heap->objectIsInGap(*slotPtr)) {
+		doSlot(slotPtr);
+	}
+}
+#endif /* JAVA_SPEC_VERSION >= 24 */
 
 /**
  * @todo Provide function documentation
@@ -549,6 +569,14 @@ MM_RootScanner::scanOneThread(MM_EnvironmentBase *env, J9VMThread *walkThread, v
 		/* At this point we know that a virtual thread is mounted. We previously scanned its stack,
 		 * and now we will scan carrier's stack, that continuation struct is currently pointing to. */
 		GC_VMThreadStackSlotIterator::scanSlots(currentThread, walkThread, walkThread->currentContinuation, localData, stackSlotIterator, isStackFrameClassWalkNeeded(), _trackVisibleStackFrameDepth);
+#if JAVA_SPEC_VERSION >= 24
+		GC_ContinuationSlotIterator continuationSlotIterator(walkThread, walkThread->currentContinuation);
+
+		while (J9Object **slot = continuationSlotIterator.nextSlot()) {
+			/* do current continuation slot (mounted vthread case, the slot for saved carrier thread) */
+			doContinuationSlot(slot, &continuationSlotIterator);
+		}
+#endif /* JAVA_SPEC_VERSION >= 24 */
 	}
 #endif /* JAVA_SPEC_VERSION >= 19 */
 	return false;
@@ -914,8 +942,30 @@ MM_RootScanner::scanJVMTIObjectTagTables(MM_EnvironmentBase *env)
 }
 #endif /* J9VM_OPT_JVMTI */
 
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+void
+MM_RootScanner::scanObjectsInVirtualLargeObjectHeap(MM_EnvironmentBase *env)
+{
+	if (_singleThread || J9MODRON_HANDLE_NEXT_WORK_UNIT(env)) {
+		GC_HeapRegionIteratorVLHGC regionIterator(_extensions->heap->getHeapRegionManager());
+		MM_HeapRegionDescriptorVLHGC *region = NULL;
+		reportScanningStarted(RootScannerEntity_virtualLargeObjectHeapObjects);
+		while (NULL != (region = regionIterator.nextRegion())) {
+			if (region->isArrayletLeaf()) {
+				if (region->_sparseHeapAllocation) {
+					J9Object *spineObject = (J9Object *)region->_allocateData.getSpine();
+					Assert_MM_true(NULL != spineObject);
+					doObjectInVirtualLargeObjectHeap(spineObject, &region->_sparseHeapAllocation);
+				}
+			}
+		}
+		reportScanningEnded(RootScannerEntity_virtualLargeObjectHeapObjects);
+	}
+}
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+
 #if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
-void 
+void
 MM_RootScanner::scanDoubleMappedObjects(MM_EnvironmentBase *env)
 {
 	if (_singleThread || J9MODRON_HANDLE_NEXT_WORK_UNIT(env)) {
@@ -1074,6 +1124,12 @@ MM_RootScanner::scanClearable(MM_EnvironmentBase *env)
 	}
 #endif /* J9VM_OPT_JVMTI */
 
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+	if (_includeVirtualLargeObjectHeap) {
+		scanObjectsInVirtualLargeObjectHeap(env);
+	}
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+
 #if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
 	if (_includeDoubleMap) {
 		scanDoubleMappedObjects(env);
@@ -1127,6 +1183,12 @@ MM_RootScanner::scanAllSlots(MM_EnvironmentBase *env)
 		scanJVMTIObjectTagTables(env);
 	}
 #endif /* J9VM_OPT_JVMTI */
+
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+	if (_includeVirtualLargeObjectHeap) {
+		scanObjectsInVirtualLargeObjectHeap(env);
+	}
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
 
 #if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
         if (_includeDoubleMap) {

@@ -199,7 +199,7 @@ initImpl(J9VMThread *currentThread, j9object_t membernameObject, j9object_t refO
 				offset |= J9_SUN_FINAL_FIELD_OFFSET_TAG;
 			}
 		}
-		vmindex = (jlong)fieldID;
+		vmindex = JLONG_FROM_POINTER(fieldID);
 		target = (jlong)offset;
 
 		flags = fieldID->field->modifiers & CFR_FIELD_ACCESS_MASK;
@@ -210,9 +210,7 @@ initImpl(J9VMThread *currentThread, j9object_t membernameObject, j9object_t refO
 		}
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
 		if (J9ROMFIELD_IS_NULL_RESTRICTED(romField)) {
-			if (vmFuncs->isFlattenableFieldFlattened(fieldID->declaringClass, fieldID->field)) {
-				flags |= MN_FLAT_FIELD;
-			}
+			flags |= MN_NULL_RESTRICTED;
 		}
 #endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 
@@ -222,7 +220,7 @@ initImpl(J9VMThread *currentThread, j9object_t membernameObject, j9object_t refO
 		clazzObject = J9VM_J9CLASS_TO_HEAPCLASS(fieldID->declaringClass);
 	} else if (refClass == J9VMJAVALANGREFLECTMETHOD(vm)) {
 		J9JNIMethodID *methodID = vm->reflectFunctions.idFromMethodObject(currentThread, refObject);
-		target = (jlong)methodID->method;
+		target = JLONG_FROM_POINTER(methodID->method);
 
 		J9ROMMethod *romMethod = J9_ROM_METHOD_FROM_RAM_METHOD(methodID->method);
 
@@ -260,7 +258,7 @@ initImpl(J9VMThread *currentThread, j9object_t membernameObject, j9object_t refO
 	} else if (refClass == J9VMJAVALANGREFLECTCONSTRUCTOR(vm)) {
 		J9JNIMethodID *methodID = vm->reflectFunctions.idFromConstructorObject(currentThread, refObject);
 		vmindex = -1;
-		target = (jlong)methodID->method;
+		target = JLONG_FROM_POINTER(methodID->method);
 
 		J9ROMMethod *romMethod = J9_ROM_METHOD_FROM_RAM_METHOD(methodID->method);
 
@@ -296,9 +294,9 @@ struct LocalJ9UTF8Buffer {
 	 * Constructs an empty LocalJ9UTF8Buffer.
 	 */
 	LocalJ9UTF8Buffer()
-		: utf8(nullptr)
+		: utf8(NULL)
 		, capacity(0)
-		, cursor(nullptr)
+		, cursor(NULL)
 	{
 	}
 
@@ -410,7 +408,10 @@ getClassSignatureLength(J9VMThread *currentThread, J9Class *clazz)
 		j9object_t sigString = J9VMJAVALANGCLASS_CLASSNAMESTRING(currentThread, J9VM_J9CLASS_TO_HEAPCLASS(clazz));
 		if (NULL != sigString) {
 			/* +2 so that we can fit 'L' and ';' around the class name. */
-			signatureLength = vm->internalVMFunctions->getStringUTF8Length(currentThread, sigString) + 2;
+			signatureLength = vm->internalVMFunctions->getStringUTF8Length(currentThread, sigString);
+			if (signatureLength <= (UDATA_MAX - 2)) {
+				signatureLength += 2;
+			}
 		} else {
 			J9Class *myClass = clazz;
 			UDATA numDims = 0;
@@ -470,24 +471,27 @@ getClassSignatureInout(J9VMThread *currentThread, J9Class *clazz, LocalJ9UTF8Buf
 		j9object_t sigString = J9VMJAVALANGCLASS_CLASSNAMESTRING(currentThread, J9VM_J9CLASS_TO_HEAPCLASS(clazz));
 		if (NULL != sigString) {
 			/* +3 so that we can fit 'L' and ';' around the class name and add null-terminator. */
-			UDATA utfLength = vm->internalVMFunctions->getStringUTF8Length(currentThread, sigString) + 3;
-			if (utfLength <= stringBuffer->remaining()) {
-				if (J9ROMCLASS_IS_ARRAY(clazz->romClass)) {
-					vm->internalVMFunctions->copyStringToUTF8Helper(
-						currentThread, sigString, J9_STR_XLAT, 0, J9VMJAVALANGSTRING_LENGTH(currentThread, sigString),
-						stringBuffer->cursor, utfLength - 3);
-					/* Adjust cursor to account for the call to copyStringToUTF8Helper. */
-					stringBuffer->advanceN(utfLength - 3);
-				} else {
-					stringBuffer->putCharAtCursor('L');
-					vm->internalVMFunctions->copyStringToUTF8Helper(
-						currentThread, sigString, J9_STR_XLAT, 0, J9VMJAVALANGSTRING_LENGTH(currentThread, sigString),
-						stringBuffer->cursor, utfLength - 3);
-					/* Adjust cursor to account for the call to copyStringToUTF8Helper. */
-					stringBuffer->advanceN(utfLength - 3);
-					stringBuffer->putCharAtCursor(';');
+			UDATA utfLength = vm->internalVMFunctions->getStringUTF8Length(currentThread, sigString);
+			if (utfLength <= (UDATA_MAX - 3)) {
+				utfLength += 3;
+				if (utfLength <= stringBuffer->remaining()) {
+					if (J9ROMCLASS_IS_ARRAY(clazz->romClass)) {
+						vm->internalVMFunctions->copyStringToUTF8Helper(
+							currentThread, sigString, J9_STR_XLAT, 0, J9VMJAVALANGSTRING_LENGTH(currentThread, sigString),
+							stringBuffer->cursor, utfLength - 3);
+						/* Adjust cursor to account for the call to copyStringToUTF8Helper. */
+						stringBuffer->advanceN(utfLength - 3);
+					} else {
+						stringBuffer->putCharAtCursor('L');
+						vm->internalVMFunctions->copyStringToUTF8Helper(
+							currentThread, sigString, J9_STR_XLAT, 0, J9VMJAVALANGSTRING_LENGTH(currentThread, sigString),
+							stringBuffer->cursor, utfLength - 3);
+						/* Adjust cursor to account for the call to copyStringToUTF8Helper. */
+						stringBuffer->advanceN(utfLength - 3);
+						stringBuffer->putCharAtCursor(';');
+					}
+					result = true;
 				}
-				result = true;
 			}
 		} else {
 			J9Class *myClass = clazz;
@@ -557,20 +561,34 @@ getJ9UTF8SignatureFromMethodTypeWithMemAlloc(J9VMThread *currentThread, j9object
 	j9object_t ptypes = J9VMJAVALANGINVOKEMETHODTYPE_PTYPES(currentThread, typeObject);
 	U_32 numArgs = J9INDEXABLEOBJECT_SIZE(currentThread, ptypes);
 	UDATA signatureLength = 2; /* space for '(', ')' */
+	UDATA tempSignatureLength = 0;
+	UDATA signatureUtf8Size = 0;
+	J9UTF8 *result = NULL;
+	j9object_t rtype = NULL;
+	J9Class *rclass = NULL;
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
 	/* Calculate total signature length, including all ptypes and rtype. */
 	for (U_32 i = 0; i < numArgs; i++) {
 		j9object_t pObject = J9JAVAARRAYOFOBJECT_LOAD(currentThread, ptypes, i);
 		J9Class *pclass = J9VM_J9CLASS_FROM_HEAPCLASS(currentThread, pObject);
-		signatureLength += getClassSignatureLength(currentThread, pclass);
+		tempSignatureLength = getClassSignatureLength(currentThread, pclass);
+		if (signatureLength > (J9UTF8_MAX_LENGTH - tempSignatureLength)) {
+			goto done;
+		}
+		signatureLength += tempSignatureLength;
 	}
-	j9object_t rtype = J9VMJAVALANGINVOKEMETHODTYPE_RTYPE(currentThread, typeObject);
-	J9Class *rclass = J9VM_J9CLASS_FROM_HEAPCLASS(currentThread, rtype);
-	signatureLength += getClassSignatureLength(currentThread, rclass);
+	rtype = J9VMJAVALANGINVOKEMETHODTYPE_RTYPE(currentThread, typeObject);
+	rclass = J9VM_J9CLASS_FROM_HEAPCLASS(currentThread, rtype);
+	tempSignatureLength = getClassSignatureLength(currentThread, rclass);
+	if (signatureLength > (J9UTF8_MAX_LENGTH - tempSignatureLength)) {
+		goto done;
+	}
+	signatureLength += tempSignatureLength;
 
-	UDATA signatureUtf8Size = signatureLength + sizeof(J9UTF8) + 1; /* +1 for a null-terminator */
-	J9UTF8 *result = reinterpret_cast<J9UTF8 *>(j9mem_allocate_memory(signatureUtf8Size, OMRMEM_CATEGORY_VM));
+	signatureUtf8Size = signatureLength + sizeof(J9UTF8) + 1; /* +1 for a null-terminator */
+	result = reinterpret_cast<J9UTF8 *>(j9mem_allocate_memory(signatureUtf8Size, OMRMEM_CATEGORY_VM));
+
 	if (NULL != result) {
 		LocalJ9UTF8Buffer stringBuffer(result, signatureUtf8Size);
 
@@ -588,6 +606,7 @@ getJ9UTF8SignatureFromMethodTypeWithMemAlloc(J9VMThread *currentThread, j9object
 		stringBuffer.commitLength();
 	}
 
+done:
 	return result;
 }
 
@@ -804,8 +823,8 @@ setCallSiteTargetImpl(J9VMThread *currentThread, jobject callsite, jobject targe
 		J9Class *mcsClass = vmFuncs->peekClassHashTable(
 			currentThread,
 			javaVM->systemClassLoader,
-			J9UTF8_DATA(&mutableCallSite),
-			J9UTF8_LENGTH(&mutableCallSite));
+			J9UTF8_DATA((J9UTF8 *)&mutableCallSite),
+			J9UTF8_LENGTH((J9UTF8 *)&mutableCallSite));
 
 		if (!isVolatile /* MutableCallSite uses setTargetNormal(). */
 		&& (NULL != jitConfig)
@@ -877,7 +896,7 @@ Java_java_lang_invoke_MethodHandleNatives_expand(JNIEnv *env, jclass clazz, jobj
 	} else {
 		j9object_t membernameObject = J9_JNI_UNWRAP_REFERENCE(self);
 		jint flags = J9VMJAVALANGINVOKEMEMBERNAME_FLAGS(currentThread, membernameObject);
-		jlong vmindex = (jlong)J9OBJECT_ADDRESS_LOAD(currentThread, membernameObject, vm->vmindexOffset);
+		jlong vmindex = JLONG_FROM_POINTER(J9OBJECT_ADDRESS_LOAD(currentThread, membernameObject, vm->vmindexOffset));
 
 		Trc_JCL_java_lang_invoke_MethodHandleNatives_expand_Data(env, membernameObject, flags, vmindex);
 		if (J9_ARE_ANY_BITS_SET(flags, MN_IS_FIELD)) {
@@ -1002,8 +1021,8 @@ Java_java_lang_invoke_MethodHandleNatives_resolve(
 		vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, NULL);
 	} else {
 		j9object_t membernameObject = J9_JNI_UNWRAP_REFERENCE(self);
-		jlong vmindex = (jlong)(UDATA)J9OBJECT_U64_LOAD(currentThread, membernameObject, vm->vmindexOffset);
-		jlong target = (jlong)(UDATA)J9OBJECT_U64_LOAD(currentThread, membernameObject, vm->vmtargetOffset);
+		jlong vmindex = (jlong)J9OBJECT_U64_LOAD(currentThread, membernameObject, vm->vmindexOffset);
+		jlong target = (jlong)J9OBJECT_U64_LOAD(currentThread, membernameObject, vm->vmtargetOffset);
 
 		jint flags = J9VMJAVALANGINVOKEMEMBERNAME_FLAGS(currentThread, membernameObject);
 		jint new_flags = 0;
@@ -1020,7 +1039,7 @@ Java_java_lang_invoke_MethodHandleNatives_resolve(
 			j9object_t clazzObject = J9VMJAVALANGINVOKEMEMBERNAME_CLAZZ(currentThread, membernameObject);
 			J9Class *resolvedClass = J9VM_J9CLASS_FROM_HEAPCLASS(currentThread, clazzObject);
 
-			jint ref_kind = (flags >> MN_REFERENCE_KIND_SHIFT) & MN_REFERENCE_KIND_MASK;
+			jint ref_kind = MN_GET_REFERENCE_KIND(flags);
 
 			J9Class *typeClass = J9OBJECT_CLAZZ(currentThread, typeObject);
 
@@ -1036,12 +1055,21 @@ Java_java_lang_invoke_MethodHandleNatives_resolve(
 				} else {
 					LocalJ9UTF8Buffer stringBuffer(reinterpret_cast<J9UTF8 *>(signatureBuffer), sizeof(signatureBuffer));
 					signature = getJ9UTF8SignatureFromMethodType(currentThread, typeObject, &stringBuffer);
+					if (NULL == signature) {
+						vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, NULL);
+						goto done;
+					}
 				}
 			} else if (J9VMJAVALANGSTRING_OR_NULL(vm) == typeClass) {
 				signature = vmFuncs->copyStringToJ9UTF8WithMemAlloc(currentThread, typeObject, J9_STR_XLAT, "", 0, signatureBuffer, sizeof(signatureBuffer));
 			} else if (J9VMJAVALANGCLASS(vm) == typeClass) {
 				J9Class *rclass = J9VM_J9CLASS_FROM_HEAPCLASS(currentThread, typeObject);
-				UDATA signatureLength = getClassSignatureLength(currentThread, rclass) + sizeof(J9UTF8) + 1 /* null-terminator */;
+				UDATA signatureLength = getClassSignatureLength(currentThread, rclass);
+				if (signatureLength > J9UTF8_MAX_LENGTH) {
+					vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, NULL);
+					goto done;
+				}
+				signatureLength += sizeof(J9UTF8) + 1 /* null-terminator */;
 				LocalJ9UTF8Buffer stringBuffer;
 				if (signatureLength <= sizeof(signatureBuffer)) {
 					stringBuffer = LocalJ9UTF8Buffer(reinterpret_cast<J9UTF8 *>(signatureBuffer), sizeof(signatureBuffer));
@@ -1151,7 +1179,7 @@ Java_java_lang_invoke_MethodHandleNatives_resolve(
 							new_flags = flags;
 
 							/* Load special sendTarget to throw the exception during invocation */
-							target = (jlong)(UDATA)vm->initialMethods.throwDefaultConflict;
+							target = JLONG_FROM_POINTER(vm->initialMethods.throwDefaultConflict);
 						} else {
 							goto done;
 						}
@@ -1160,7 +1188,7 @@ Java_java_lang_invoke_MethodHandleNatives_resolve(
 					}
 				} else if (NULL != method) {
 					J9JNIMethodID *methodID = vmFuncs->getJNIMethodID(currentThread, method);
-					target = (jlong)(UDATA)method;
+					target = JLONG_FROM_POINTER(method);
 
 					J9ROMMethod *romMethod = J9_ROM_METHOD_FROM_RAM_METHOD(methodID->method);
 					J9UTF8 *methodName = J9ROMMETHOD_NAME(romMethod);
@@ -1274,28 +1302,31 @@ Java_java_lang_invoke_MethodHandleNatives_resolve(
 #endif
 					) {
 						if (callerClass->classLoader != declaringClass->classLoader) {
-							J9BytecodeVerificationData *verifyData = vm->bytecodeVerificationData;
 							U_16 sigOffset = 0;
 
 							/* Skip the '[' or 'L' prefix */
 							while ('[' == J9UTF8_DATA(signature)[sigOffset]) {
 								sigOffset += 1;
 							}
-							if (IS_REF_OR_VAL_SIGNATURE(J9UTF8_DATA(signature)[sigOffset])) {
+							if (IS_CLASS_SIGNATURE(J9UTF8_DATA(signature)[sigOffset])) {
 								sigOffset += 1;
-								omrthread_monitor_enter(vm->classTableMutex);
-								UDATA clConstraintResult = verifyData->checkClassLoadingConstraintForNameFunction(
-																currentThread,
-																declaringClass->classLoader,
-																callerClass->classLoader,
-																J9UTF8_DATA(signature) + sigOffset,
-																J9UTF8_DATA(signature) + sigOffset,
-																J9UTF8_LENGTH(signature) - sigOffset - 1, /* -1 to remove the trailing ;*/
-																true);
-								omrthread_monitor_exit(vm->classTableMutex);
-								if (0 != clConstraintResult) {
-									vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGLINKAGEERROR, NULL);
-									goto done;
+								J9BytecodeVerificationData *verifyData = vm->bytecodeVerificationData;
+								if (NULL != verifyData) {
+									omrthread_monitor_enter(vm->classTableMutex);
+									UDATA clConstraintResult = verifyData->checkClassLoadingConstraintForNameFunction(
+																	currentThread,
+																	declaringClass->classLoader,
+																	callerClass->classLoader,
+																	J9UTF8_DATA(signature) + sigOffset,
+																	J9UTF8_DATA(signature) + sigOffset,
+																	J9UTF8_LENGTH(signature) - sigOffset - 1, /* -1 to remove the trailing ;*/
+																	TRUE,
+																	TRUE);
+									omrthread_monitor_exit(vm->classTableMutex);
+									if (0 != clConstraintResult) {
+										vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGLINKAGEERROR, NULL);
+										goto done;
+									}
 								}
 							}
 						}
@@ -1303,7 +1334,7 @@ Java_java_lang_invoke_MethodHandleNatives_resolve(
 
 					UDATA inconsistentData = 0;
 					J9JNIFieldID *fieldID = vmFuncs->getJNIFieldID(currentThread, declaringClass, romField, offset, &inconsistentData);
-					vmindex = (jlong)(UDATA)fieldID;
+					vmindex = JLONG_FROM_POINTER(fieldID);
 
 					new_clazz = J9VM_J9CLASS_TO_HEAPCLASS(declaringClass);
 					new_flags = MN_IS_FIELD | (fieldID->field->modifiers & CFR_FIELD_ACCESS_MASK);
@@ -1335,8 +1366,10 @@ Java_java_lang_invoke_MethodHandleNatives_resolve(
 					target = (jlong)offset;
 				}
 			}
-
-			if ((0 != target) && ((0 != vmindex) || J9_ARE_ANY_BITS_SET(flags, MN_IS_METHOD | MN_IS_CONSTRUCTOR))) {
+			/* A field may start at offset 0, so no need to check if (0 != target). */
+			if ((NULL != new_clazz)
+				&& ((0 != vmindex) || J9_ARE_ANY_BITS_SET(flags, MN_IS_METHOD | MN_IS_CONSTRUCTOR))
+			) {
 				/* Refetch reference after GC point */
 				membernameObject = J9_JNI_UNWRAP_REFERENCE(self);
 				if (addMemberNameToClass(currentThread, membernameObject, new_clazz)) {
@@ -1463,7 +1496,7 @@ Java_java_lang_invoke_MethodHandleNatives_getMembers(
 					UDATA classDepth = 0;
 					if (J9_ARE_ANY_BITS_SET(matchFlags, MN_SEARCH_SUPERCLASSES)) {
 						/* walk superclasses */
-						J9CLASS_DEPTH(defClass);
+						classDepth = J9CLASS_DEPTH(defClass);
 					}
 					J9Class *currentClass = defClass;
 
@@ -1568,7 +1601,7 @@ Java_java_lang_invoke_MethodHandleNatives_getMembers(
 					UDATA classDepth = 0;
 					if (J9_ARE_ANY_BITS_SET(matchFlags, MN_SEARCH_SUPERCLASSES)) {
 						/* walk superclasses */
-						J9CLASS_DEPTH(defClass);
+						classDepth = J9CLASS_DEPTH(defClass);
 					}
 					J9Class *currentClass = defClass;
 
@@ -1770,7 +1803,7 @@ Java_java_lang_invoke_MethodHandleNatives_staticFieldOffset(JNIEnv *env, jclass 
 		} else {
 			jint flags = J9VMJAVALANGINVOKEMEMBERNAME_FLAGS(currentThread, membernameObject);
 			if (J9_ARE_ALL_BITS_SET(flags, MN_IS_FIELD & J9AccStatic)) {
-				result = (jlong)(UDATA)J9OBJECT_U64_LOAD(currentThread, membernameObject, vm->vmtargetOffset);
+				result = (jlong)J9OBJECT_U64_LOAD(currentThread, membernameObject, vm->vmtargetOffset);
 			} else {
 				vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, NULL);
 			}
@@ -1860,7 +1893,7 @@ Java_java_lang_invoke_MethodHandleNatives_getMemberVMInfo(JNIEnv *env, jclass cl
 				 * (vTable offset for MH_REF_INVOKEVIRTUAL, iTable index for MH_REF_INVOKEINTERFACE,
 				 * and -1 for other ref kinds).
 				 */
-				jlong vmindex = (jlong)(UDATA)J9OBJECT_U64_LOAD(currentThread, membernameObject, vm->vmindexOffset);
+				jlong vmindex = (jlong)J9OBJECT_U64_LOAD(currentThread, membernameObject, vm->vmindexOffset);
 
 				if (J9_ARE_ANY_BITS_SET(flags, MN_IS_FIELD)) {
 					/* vmindex points to the field offset. */

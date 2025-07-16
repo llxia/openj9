@@ -292,9 +292,32 @@ initializeMethodRunAddressNoHook(J9JavaVM* vm, J9Method *method)
 	method->methodRunAddress = J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_NON_SYNC);
 }
 
+#if defined(J9VM_OPT_SNAPSHOTS)
+void
+initializeMethodRunAddressForSnapshot(J9JavaVM *vm, J9Method *method)
+{
+	method->extra = (void *)J9_STARTPC_NOT_TRANSLATED;
+
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+	if (initializeMethodRunAddressMethodHandle(method)) {
+		return;
+	}
+#endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
+
+#if defined(J9VM_OPT_METHOD_HANDLE)
+	if (initializeMethodRunAddressVarHandle(method)) {
+		return;
+	}
+#endif /* defined(J9VM_OPT_METHOD_HANDLE) */
+	initializeMethodRunAddressNoHook(vm, method);
+}
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+
+#if !defined(J9VM_OPT_SNAPSHOTS)
 J9Method cInitialStaticMethod = { 0, 0, J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_INITIAL_STATIC), 0 };
 J9Method cInitialSpecialMethod = { 0, 0, J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_INITIAL_SPECIAL), 0 };
 J9Method cInitialVirtualMethod = { 0, 0, J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_INITIAL_VIRTUAL), 0 };
+#endif /* !defined(J9VM_OPT_SNAPSHOTS) */
 J9Method cInvokePrivateMethod  = { 0, 0, J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_INVOKE_PRIVATE), 0 };
 #if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
 J9Method cThrowDefaultConflict = { 0, 0, J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_MEMBERNAME_DEFAULT_CONFLICT), 0 };
@@ -303,10 +326,54 @@ J9Method cThrowDefaultConflict = { 0, 0, J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_
 void
 initializeInitialMethods(J9JavaVM *vm)
 {
+#if defined(J9VM_OPT_SNAPSHOTS)
+	VMSNAPSHOTIMPLPORT_ACCESS_FROM_JAVAVM(vm);
+	PORT_ACCESS_FROM_JAVAVM(vm);
+
+	J9Method *cInitialStaticMethod = NULL;
+	J9Method *cInitialSpecialMethod = NULL;
+	J9Method *cInitialVirtualMethod = NULL;
+
+#if defined(J9VM_OPT_SNAPSHOTS)
+	if (IS_RESTORE_RUN(vm)) {
+		setInitialVMMethods(vm, &cInitialStaticMethod, &cInitialSpecialMethod, &cInitialVirtualMethod);
+	} else
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+	{
+#if defined(J9VM_OPT_SNAPSHOTS)
+		if (IS_SNAPSHOT_RUN(vm)) {
+			cInitialStaticMethod = (J9Method *)vmsnapshot_allocate_memory(sizeof(J9Method), J9MEM_CATEGORY_CLASSES);
+			cInitialSpecialMethod = (J9Method *)vmsnapshot_allocate_memory(sizeof(J9Method), J9MEM_CATEGORY_CLASSES);
+			cInitialVirtualMethod = (J9Method *)vmsnapshot_allocate_memory(sizeof(J9Method), J9MEM_CATEGORY_CLASSES);
+			storeInitialVMMethods(vm, cInitialStaticMethod, cInitialSpecialMethod, cInitialVirtualMethod);
+		} else
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+		{
+			cInitialStaticMethod = (J9Method *)j9mem_allocate_memory(sizeof(J9Method), J9MEM_CATEGORY_CLASSES);
+			cInitialSpecialMethod = (J9Method *)j9mem_allocate_memory(sizeof(J9Method), J9MEM_CATEGORY_CLASSES);
+			cInitialVirtualMethod = (J9Method *)j9mem_allocate_memory(sizeof(J9Method), J9MEM_CATEGORY_CLASSES);
+		}
+
+		memset(cInitialStaticMethod, 0, sizeof(J9Method));
+		cInitialStaticMethod->methodRunAddress = J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_INITIAL_STATIC);
+
+		memset(cInitialSpecialMethod, 0, sizeof(J9Method));
+		cInitialSpecialMethod->methodRunAddress = J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_INITIAL_SPECIAL);
+
+		memset(cInitialVirtualMethod, 0, sizeof(J9Method));
+		cInitialVirtualMethod->methodRunAddress = J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_INITIAL_VIRTUAL);
+	}
+
+	vm->initialMethods.initialStaticMethod = cInitialStaticMethod;
+	vm->initialMethods.initialSpecialMethod = cInitialSpecialMethod;
+	vm->initialMethods.initialVirtualMethod = cInitialVirtualMethod;
+#else /* defined(J9VM_OPT_SNAPSHOTS) */
 	vm->jniSendTarget = J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_RUN_JNI_NATIVE);
 	vm->initialMethods.initialStaticMethod = &cInitialStaticMethod;
 	vm->initialMethods.initialSpecialMethod = &cInitialSpecialMethod;
 	vm->initialMethods.initialVirtualMethod = &cInitialVirtualMethod;
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+	vm->jniSendTarget = J9_BCLOOP_ENCODE_SEND_TARGET(J9_BCLOOP_SEND_TARGET_RUN_JNI_NATIVE);
 	vm->initialMethods.invokePrivateMethod = &cInvokePrivateMethod;
 #if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
 	vm->initialMethods.throwDefaultConflict = &cThrowDefaultConflict;

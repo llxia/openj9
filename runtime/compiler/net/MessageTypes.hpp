@@ -96,6 +96,7 @@ enum MessageType : uint16_t
    ResolvedMethod_getResolvedImplementorMethods,
    ResolvedMethod_isFieldNullRestricted,
    ResolvedMethod_isFieldFlattened,
+   ResolvedMethod_getTargetMethodFromMemberName,
 
    ResolvedRelocatableMethod_createResolvedRelocatableJ9Method,
    ResolvedRelocatableMethod_fieldAttributes,
@@ -114,7 +115,6 @@ enum MessageType : uint16_t
    VM_getClassFromSignature,
    VM_jitFieldsOrStaticsAreSame,
    VM_classHasBeenExtended,
-   VM_compiledAsDLTBefore,
    VM_isThunkArchetype,
    VM_printTruncatedSignature,
    VM_getStaticHookAddress,
@@ -126,11 +126,13 @@ enum MessageType : uint16_t
    VM_getObjectClass,
    VM_getObjectClassAt,
    VM_getObjectClassFromKnownObjectIndex,
+   VM_getObjectClassFromKnownObjectIndexJLClass,
+   VM_getObjectClassInfoFromObjectReferenceLocation,
    VM_stackWalkerMaySkipFrames,
-   VM_getStringUTF8Length,
    VM_classInitIsFinished,
    VM_getClassFromNewArrayType,
    VM_getArrayClassFromComponentClass,
+   VM_getNullRestrictedArrayClassFromComponentClass,
    VM_matchRAMclassFromROMclass,
    VM_getInt32FieldAt,
    VM_getInt64FieldAt,
@@ -155,7 +157,6 @@ enum MessageType : uint16_t
    VM_reportHotField,
    VM_getReferenceSlotsInClass,
    VM_getMethodSize,
-   VM_addressOfFirstClassStatic,
    VM_getStaticFieldAddress,
    VM_getInterpreterVTableSlot,
    VM_revertToInterpreted,
@@ -199,7 +200,10 @@ enum MessageType : uint16_t
    VM_getVMIndexOffset,
    VM_inSnapshotMode,
    VM_isInvokeCacheEntryAnArray,
+   VM_getVarHandleAccessDescriptorMode,
    VM_getMethodHandleTableEntryIndex,
+   VM_getLayoutVarHandle,
+   VM_mutableCallSiteEpoch,
 
    // For static TR::CompilationInfo methods
    CompInfo_isCompiled,
@@ -264,8 +268,6 @@ enum MessageType : uint16_t
    // for JITServerIProfiler
    IProfiler_profilingSample,
    IProfiler_searchForMethodSample,
-   IProfiler_getMaxCallCount,
-   IProfiler_setCallCount,
 
    Recompilation_getJittedBodyInfoFromPC,
 
@@ -275,14 +277,24 @@ enum MessageType : uint16_t
    KnownObjectTable_getPointer,
    KnownObjectTable_getExistingIndexAt,
    // for KnownObjectTable outside J9::KnownObjectTable class
-   KnownObjectTable_mutableCallSiteEpoch,
    KnownObjectTable_dereferenceKnownObjectField,
    KnownObjectTable_dereferenceKnownObjectField2,
    KnownObjectTable_createSymRefWithKnownObject,
-   KnownObjectTable_getReferenceField,
    KnownObjectTable_getKnownObjectTableDumpInfo,
+   // for getting a J9Class from KnownObjectTable
+   KnownObjectTable_getOpaqueClass,
+   // for getting a vectorBitSize from KnownObjectTable
+   KnownObjectTable_getVectorBitSize,
+   // used with J9TransformUtil
+   KnownObjectTable_addFieldAddressFromBaseIndex,
+   KnownObjectTable_getFieldAddressData,
 
    AOTCache_getROMClassBatch,
+   AOTCache_getRAMClassFromClassRecordBatch,
+
+   AOTCacheMap_request,
+   AOTCacheMap_reply,
+
 
    MessageType_MAXTYPE
    };

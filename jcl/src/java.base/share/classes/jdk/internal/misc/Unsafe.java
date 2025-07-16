@@ -31,7 +31,11 @@ import java.util.Objects;
 /*[IF JAVA_SPEC_VERSION >= 12]*/
 import java.nio.ByteBuffer;
 import sun.nio.ch.DirectBuffer;
+/*[IF JAVA_SPEC_VERSION >= 26]*/
+import sun.nio.Cleaner;
+/*[ELSE] JAVA_SPEC_VERSION >= 26 */
 import jdk.internal.ref.Cleaner;
+/*[ENDIF] JAVA_SPEC_VERSION >= 26 */
 /*[ENDIF] JAVA_SPEC_VERSION >= 12 */
 
 public final class Unsafe {
@@ -45,52 +49,92 @@ public final class Unsafe {
 	/**
 	 * Represents an invalid field offset value.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long INVALID_FIELD_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int INVALID_FIELD_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Starting offset of byte array.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long ARRAY_BYTE_BASE_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int ARRAY_BYTE_BASE_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Starting offset of int array.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long ARRAY_INT_BASE_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int ARRAY_INT_BASE_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Starting offset of long array.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long ARRAY_LONG_BASE_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int ARRAY_LONG_BASE_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Starting offset of float array.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long ARRAY_FLOAT_BASE_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int ARRAY_FLOAT_BASE_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Starting offset of double array.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long ARRAY_DOUBLE_BASE_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int ARRAY_DOUBLE_BASE_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Starting offset of short array.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long ARRAY_SHORT_BASE_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int ARRAY_SHORT_BASE_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Starting offset of char array.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long ARRAY_CHAR_BASE_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int ARRAY_CHAR_BASE_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Starting offset of boolean array.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long ARRAY_BOOLEAN_BASE_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int ARRAY_BOOLEAN_BASE_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Starting offset of Object array.
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public static final long ARRAY_OBJECT_BASE_OFFSET;
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public static final int ARRAY_OBJECT_BASE_OFFSET;
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 
 	/**
 	 * Index size of byte array in bytes.
@@ -1565,7 +1609,11 @@ public final class Unsafe {
 	 * @throws NullPointerException if the class parameter is null
 	 * @throws IllegalArgumentException if class is not an array
 	 */
+	/*[IF JAVA_SPEC_VERSION >= 25]*/
+	public long arrayBaseOffset(Class<?> c) {
+	/*[ELSE] JAVA_SPEC_VERSION >= 25 */
 	public int arrayBaseOffset(Class<?> c) {
+	/*[ENDIF] JAVA_SPEC_VERSION >= 25 */
 		Objects.requireNonNull(c);
 		return arrayBaseOffset0(c);
 	}
@@ -1682,7 +1730,6 @@ public final class Unsafe {
 
 		return allocateUninitializedArray0(c, length);
 	}
-
 
 	/**
 	 * Atomically sets the parameter value at offset in obj if the compare value
@@ -5977,7 +6024,7 @@ public final class Unsafe {
 	 * memory blocks
 	 */
 	private void compareAndExchange16BitsOffsetChecks(long offset) {
-		if ((IS_BIG_ENDIAN) && (BYTE_OFFSET_MASK == (BYTE_OFFSET_MASK & offset))) {
+		if (BYTE_OFFSET_MASK == (BYTE_OFFSET_MASK & offset)) {
 			/*[MSG "K0700", "Update spans the word, not supported"]*/
 			throw new IllegalArgumentException(com.ibm.oti.util.Msg.getString("K0700")); //$NON-NLS-1$
 		}
@@ -7085,6 +7132,90 @@ public final class Unsafe {
 
 	public int nullMarkerOffset(Field f) {
 		throw new Error("jdk.internal.misc.Unsafe.nullMarkerOffset unimplemented"); //$NON-NLS-1$
+	}
+
+	public int arrayLayout(Class<?> arrayClass) {
+		throw new Error("jdk.internal.misc.Unsafe.arrayLayout unimplemented"); //$NON-NLS-1$
+	}
+
+	public int fieldLayout(Field f) {
+		throw new Error("jdk.internal.misc.Unsafe.fieldLayout unimplemented"); //$NON-NLS-1$
+	}
+
+	public <V> V getFlatValue(Object obj, long offset, int layoutKind, Class<?> valueType) {
+		throw new Error("jdk.internal.misc.Unsafe.getFlatValue unimplemented"); //$NON-NLS-1$
+	}
+
+	public <V> void putFlatValue(Object obj, long offset, int layoutKind, Class<?> valueType, V v) {
+		throw new Error("jdk.internal.misc.Unsafe.putFlatValue unimplemented"); //$NON-NLS-1$
+	}
+
+	public <V> Object getFlatValueVolatile(Object base, long offset, int layout, Class<?> valueType) {
+		throw new Error("jdk.internal.misc.Unsafe.getFlatValueVolatile unimplemented"); //$NON-NLS-1$
+	}
+
+	public <V> Object getFlatValueOpaque(Object base, long offset, int layout, Class<?> valueType) {
+		return getFlatValueVolatile(base, offset, layout, valueType);
+	}
+
+	public <V> Object getFlatValueAcquire(Object base, long offset, int layout, Class<?> valueType) {
+		return getFlatValueVolatile(base, offset, layout, valueType);
+	}
+
+	public <V> void putFlatValueVolatile(Object obj, long offset, int layout, Class<?> valueType, V x) {
+		throw new Error("jdk.internal.misc.Unsafe.putFlatValueVolatile unimplemented"); //$NON-NLS-1$
+	}
+
+	public <V> void putFlatValueOpaque(Object obj, long offset, int layout, Class<?> valueType, V x) {
+		putFlatValueVolatile(obj, offset, layout, valueType, x);
+	}
+
+	public <V> void putFlatValueRelease(Object obj, long offset, int layout, Class<?> valueType, V x) {
+		putFlatValueVolatile(obj, offset, layout, valueType, x);
+	}
+
+	public <V> Object compareAndExchangeFlatValue(Object obj, long offset, int layout, Class<?> valueType, V expected, V x) {
+		throw new Error("jdk.internal.misc.Unsafe.compareAndExchangeFlatValue unimplemented"); //$NON-NLS-1$
+	}
+
+	public <V> Object compareAndExchangeFlatValueAcquire(Object obj, long offset, int layout, Class<?> valueType, V expected, V x) {
+		return compareAndExchangeFlatValue(obj, offset, layout, valueType, expected, x);
+	}
+
+	public <V> Object compareAndExchangeFlatValueRelease(Object obj, long offset, int layout, Class<?> valueType, V expected, V x) {
+		return compareAndExchangeFlatValue(obj, offset, layout, valueType, expected, x);
+	}
+
+	public <V> boolean compareAndSetFlatValue(Object obj, long offset, int layout, Class<?> valueType, V expected, V x) {
+		throw new Error("jdk.internal.misc.Unsafe.compareAndSetFlatValue unimplemented"); //$NON-NLS-1$
+	}
+
+	public <V> boolean weakCompareAndSetFlatValuePlain(Object obj, long offset, int layout, Class<?> valueType, V expected, V x) {
+		return compareAndSetFlatValue(obj, offset, layout, valueType, expected, x);
+	}
+
+	public <V> boolean weakCompareAndSetFlatValue(Object obj, long offset, int layout, Class<?> valueType, V expected, V x) {
+		return compareAndSetFlatValue(obj, offset, layout, valueType, expected, x);
+	}
+
+	public <V> boolean weakCompareAndSetFlatValueRelease(Object obj, long offset, int layout, Class<?> valueType, V expected, V x) {
+		return compareAndSetFlatValue(obj, offset, layout, valueType, expected, x);
+	}
+
+	public <V> boolean weakCompareAndSetFlatValueAcquire(Object obj, long offset, int layout, Class<?> valueType, V expected, V x) {
+		return compareAndSetFlatValue(obj, offset, layout, valueType, expected, x);
+	}
+
+	public <V> Object getAndSetFlatValue(Object obj, long offset, int layout, Class<?> valueType, V newValue) {
+		throw new Error("jdk.internal.misc.Unsafe.getAndSetFlatValue unimplemented"); //$NON-NLS-1$
+	}
+
+	public <V> Object getAndSetFlatValueRelease(Object obj, long offset, int layout, Class<?> valueType, V newValue) {
+		return getAndSetFlatValue(obj, offset, layout, valueType, newValue);
+	}
+
+	public <V> Object getAndSetFlatValueAcquire(Object obj, long offset, int layout, Class<?> valueType, V newValue) {
+		return getAndSetFlatValue(obj, offset, layout, valueType, newValue);
 	}
 	/*[ENDIF] INLINE-TYPES */
 }

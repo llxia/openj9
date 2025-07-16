@@ -228,16 +228,31 @@ copyStringToUTF8Helper(J9VMThread *vmThread, j9object_t string, UDATA stringFlag
 		/* Manually version J9_STR_XLAT flag checking from the loop for performance as the compiler does not do it */
 		if ((stringFlags & J9_STR_XLAT) == 0) {
 			for (UDATA i = stringOffset; i < stringOffset + stringLength; i++) {
-				data += VM_VMHelpers::encodeUTF8CharI8(J9JAVAARRAYOFBYTE_LOAD(vmThread, stringValue, i), data);
+				I_8 unicode = J9JAVAARRAYOFBYTE_LOAD(vmThread, stringValue, i);
+				UDATA encodedLength = VM_VMHelpers::encodedUTF8LengthI8(unicode);
+
+				/* Stop writing to utf8Data if utf8DataLength will be exceeded. */
+				if (encodedLength > (utf8DataLength - (UDATA)(data - utf8Data))) {
+					break;
+				}
+
+				VM_VMHelpers::encodeUTF8CharI8(unicode, data);
+				data += encodedLength;
 			}
 		} else {
 			for (UDATA i = stringOffset; i < stringOffset + stringLength; i++) {
-				UDATA encodedLength = VM_VMHelpers::encodeUTF8CharI8(J9JAVAARRAYOFBYTE_LOAD(vmThread, stringValue, i), data);
+				I_8 unicode = J9JAVAARRAYOFBYTE_LOAD(vmThread, stringValue, i);
+				UDATA encodedLength = VM_VMHelpers::encodedUTF8LengthI8(unicode);
 
+				/* Stop writing to utf8Data if utf8DataLength will be exceeded. */
+				if (encodedLength > (utf8DataLength - (UDATA)(data - utf8Data))) {
+					break;
+				}
+
+				VM_VMHelpers::encodeUTF8CharI8(unicode, data);
 				if ('.' == *data) {
 					*data = '/';
 				}
-
 				data += encodedLength;
 			}
 		}
@@ -245,16 +260,31 @@ copyStringToUTF8Helper(J9VMThread *vmThread, j9object_t string, UDATA stringFlag
 		/* Manually version J9_STR_XLAT flag checking from the loop for performance as the compiler does not do it */
 		if ((stringFlags & J9_STR_XLAT) == 0) {
 			for (UDATA i = stringOffset; i < stringOffset + stringLength; i++) {
-				data += VM_VMHelpers::encodeUTF8Char(J9JAVAARRAYOFCHAR_LOAD(vmThread, stringValue, i), data);
+				U_16 unicode = J9JAVAARRAYOFCHAR_LOAD(vmThread, stringValue, i);
+				UDATA encodedLength = VM_VMHelpers::encodedUTF8Length(unicode);
+
+				/* Stop writing to utf8Data if utf8DataLength will be exceeded. */
+				if (encodedLength > (utf8DataLength - (UDATA)(data - utf8Data))) {
+					break;
+				}
+
+				VM_VMHelpers::encodeUTF8Char(unicode, data);
+				data += encodedLength;
 			}
 		} else {
 			for (UDATA i = stringOffset; i < stringOffset + stringLength; i++) {
-				UDATA encodedLength = VM_VMHelpers::encodeUTF8Char(J9JAVAARRAYOFCHAR_LOAD(vmThread, stringValue, i), data);
+				U_16 unicode = J9JAVAARRAYOFCHAR_LOAD(vmThread, stringValue, i);
+				UDATA encodedLength = VM_VMHelpers::encodedUTF8Length(unicode);
 
+				/* Stop writing to utf8Data if utf8DataLength will be exceeded. */
+				if (encodedLength > (utf8DataLength - (UDATA)(data - utf8Data))) {
+					break;
+				}
+
+				VM_VMHelpers::encodeUTF8Char(unicode, data);
 				if ('.' == *data) {
 					*data = '/';
 				}
-
 				data += encodedLength;
 			}
 		}
@@ -263,11 +293,10 @@ copyStringToUTF8Helper(J9VMThread *vmThread, j9object_t string, UDATA stringFlag
 	UDATA returnLength = (UDATA)(data - utf8Data);
 
 	if ((stringFlags & J9_STR_NULL_TERMINATE_RESULT) != 0) {
+		Assert_VM_true(returnLength < utf8DataLength);
 		*data = '\0';
-
-		Assert_VM_true(utf8DataLength >= returnLength + 1);
 	} else {
-		Assert_VM_true(utf8DataLength >= returnLength);
+		Assert_VM_true(returnLength <= utf8DataLength);
 	}
 
 	return returnLength;
@@ -279,20 +308,32 @@ copyStringToUTF8WithMemAlloc(J9VMThread *vmThread, j9object_t string, UDATA stri
 	Assert_VM_notNull(prependStr);
 	Assert_VM_notNull(string);
 
-	U_8* result = NULL;
+	U_8 *result = NULL;
 	UDATA stringLength = J9VMJAVALANGSTRING_LENGTH(vmThread, string);
-	UDATA length = prependStrLength + (stringLength * 3);
+	U_64 length = prependStrLength + ((U_64)stringLength * 3);
 
 	if (J9_ARE_ALL_BITS_SET(stringFlags, J9_STR_NULL_TERMINATE_RESULT)) {
 		++length;
 	}
 
+#if UDATA_MAX < (3 * INT32_MAX)
+	/* Memory allocation functions take a UDATA as the input parameter for length.
+	 * On 32-bit systems, the length needs to be restricted to UDATA_MAX since the
+	 * maximum UTF-8 length of a Java string can be 3 * Integer.MAX_VALUE. Otherwise,
+	 * there will be overflow. On 64-bit platforms, this is not an issue since UDATA
+	 * and U_64 are the same size.
+	 */
+	if (length > UDATA_MAX) {
+		length = UDATA_MAX;
+	}
+#endif /* UDATA_MAX < (3 * INT32_MAX) */
+
 	PORT_ACCESS_FROM_VMC(vmThread);
 
 	if (length > bufferLength) {
-		result = (U_8*)j9mem_allocate_memory(length, OMRMEM_CATEGORY_VM);
+		result = (U_8 *)j9mem_allocate_memory((UDATA)length, OMRMEM_CATEGORY_VM);
 	} else {
-		result = (U_8*)buffer;
+		result = (U_8 *)buffer;
 	}
 
 	if (NULL != result) {
@@ -302,68 +343,296 @@ copyStringToUTF8WithMemAlloc(J9VMThread *vmThread, j9object_t string, UDATA stri
 			memcpy(result, prependStr, prependStrLength);
 		}
 
-		computedUtf8Length = copyStringToUTF8Helper(vmThread, string, stringFlags, 0, stringLength, result + prependStrLength, length - prependStrLength);
+		computedUtf8Length = copyStringToUTF8Helper(
+				vmThread, string, stringFlags, 0,
+				stringLength, result + prependStrLength,
+				(UDATA)(length - prependStrLength));
 
 		if (NULL != utf8Length) {
 			*utf8Length = computedUtf8Length + prependStrLength;
 		}
 	}
 
-	return (char*)result;
+	return (char *)result;
 }
 
-J9UTF8*
+J9UTF8 *
 copyStringToJ9UTF8WithMemAlloc(J9VMThread *vmThread, j9object_t string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, char *buffer, UDATA bufferLength)
 {
 	Assert_VM_notNull(prependStr);
 	Assert_VM_notNull(string);
 
-	U_8* result = NULL;
+	J9UTF8 *result = NULL;
 	UDATA stringLength = J9VMJAVALANGSTRING_LENGTH(vmThread, string);
-	UDATA length = sizeof(J9UTF8) + prependStrLength + (stringLength * 3);
+	U_64 length = sizeof(J9UTF8) + prependStrLength + ((U_64)stringLength * 3);
 
 	if (J9_ARE_ALL_BITS_SET(stringFlags, J9_STR_NULL_TERMINATE_RESULT)) {
-		++length;
+		length += 1;
 	}
+
+#if UDATA_MAX < (3 * INT32_MAX)
+	/* Memory allocation functions take a UDATA as the input parameter for length.
+	 * On 32-bit systems, the length needs to be restricted to UDATA_MAX since the
+	 * maximum UTF-8 length of a Java string can be 3 * Integer.MAX_VALUE. Otherwise,
+	 * there will be overflow. On 64-bit platforms, this is not an issue since UDATA
+	 * and U_64 are the same size.
+	 */
+	if (length > UDATA_MAX) {
+		length = UDATA_MAX;
+	}
+#endif /* UDATA_MAX < (3 * INT32_MAX) */
 
 	PORT_ACCESS_FROM_VMC(vmThread);
 
-	if (length > bufferLength) {
-		result = (U_8*)j9mem_allocate_memory(length, OMRMEM_CATEGORY_VM);
+	if ((prependStrLength > J9UTF8_MAX_LENGTH) || (length > (J9UTF8_MAX_LENGTH - prependStrLength))) {
+		result = NULL;
+	} else if (length > bufferLength) {
+		result = (J9UTF8 *)j9mem_allocate_memory((UDATA)length, OMRMEM_CATEGORY_VM);
 	} else {
-		result = (U_8*)buffer;
+		result = (J9UTF8 *)buffer;
 	}
 
 	if (NULL != result) {
 		UDATA computedUtf8Length = 0;
 
 		if (0 < prependStrLength) {
-			memcpy(result + sizeof(J9UTF8), prependStr, prependStrLength);
+			memcpy(J9UTF8_DATA(result), prependStr, prependStrLength);
 		}
 
-		computedUtf8Length = copyStringToUTF8Helper(vmThread, string, stringFlags, 0, stringLength, result + sizeof(J9UTF8) + prependStrLength, length - sizeof(J9UTF8) - prependStrLength);
+		computedUtf8Length = copyStringToUTF8Helper(
+				vmThread, string, stringFlags, 0, stringLength,
+				J9UTF8_DATA(result) + prependStrLength,
+				(UDATA)(length - sizeof(J9UTF8) - prependStrLength));
 
 		J9UTF8_SET_LENGTH(result, (U_16)computedUtf8Length + (U_16)prependStrLength);
 	}
 
-	return (J9UTF8*)result;
+	return result;
 }
 
-IDATA
+J9UTF8 *
+copyStringToJ9UTF8WithPortLib(J9VMThread *vmThread, j9object_t string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, OMRPortLibrary *portLib)
+{
+	Assert_VM_notNull(prependStr);
+	Assert_VM_notNull(string);
+
+	J9UTF8 *result = NULL;
+	UDATA stringLength = J9VMJAVALANGSTRING_LENGTH(vmThread, string);
+	U_64 length = sizeof(J9UTF8) + prependStrLength + ((U_64)stringLength * 3);
+
+	if (J9_ARE_ALL_BITS_SET(stringFlags, J9_STR_NULL_TERMINATE_RESULT)) {
+		length += 1;
+	}
+
+#if UDATA_MAX < (3 * INT32_MAX)
+	/* Memory allocation functions take a UDATA as the input parameter for length.
+	 * On 32-bit systems, the length needs to be restricted to UDATA_MAX since the
+	 * maximum UTF-8 length of a Java string can be 3 * Integer.MAX_VALUE. Otherwise,
+	 * there will be overflow. On 64-bit platforms, this is not an issue since UDATA
+	 * and U_64 are the same size.
+	 */
+	if (length > UDATA_MAX) {
+		length = UDATA_MAX;
+	}
+#endif /* UDATA_MAX < (3 * INT32_MAX) */
+
+	if ((prependStrLength <= J9UTF8_MAX_LENGTH) && (length <= (J9UTF8_MAX_LENGTH - prependStrLength))) {
+		result = (J9UTF8 *)portLib->mem_allocate_memory(portLib, (UDATA)length, J9_GET_CALLSITE(), OMRMEM_CATEGORY_VM);
+	}
+
+	if (NULL != result) {
+		UDATA computedUtf8Length = 0;
+
+		if (0 < prependStrLength) {
+			memcpy(J9UTF8_DATA(result), prependStr, prependStrLength);
+		}
+
+		computedUtf8Length = copyStringToUTF8Helper(
+				vmThread, string, stringFlags, 0, stringLength,
+				J9UTF8_DATA(result) + prependStrLength,
+				(UDATA)(length - sizeof(J9UTF8) - prependStrLength));
+
+		J9UTF8_SET_LENGTH(result, (U_16)computedUtf8Length + (U_16)prependStrLength);
+	}
+
+	return result;
+}
+
+char *
+copyJ9UTF8ToUTF8WithMemAlloc(J9VMThread *vmThread, J9UTF8 *string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, char *buffer, UDATA bufferLength)
+{
+	Assert_VM_notNull(prependStr);
+	Assert_VM_notNull(string);
+
+	U_8 *result = NULL;
+	PORT_ACCESS_FROM_VMC(vmThread);
+
+	const U_8 *stringData = J9UTF8_DATA(string);
+	const UDATA stringLength = (UDATA)J9UTF8_LENGTH(string);
+	UDATA allocationSize = prependStrLength + stringLength;
+
+	if (J9_ARE_ALL_BITS_SET(stringFlags, J9_STR_NULL_TERMINATE_RESULT)) {
+		allocationSize += 1;
+	}
+
+	if (stringLength < bufferLength) {
+		result = (U_8 *)buffer;
+	} else {
+		result = (U_8 *)j9mem_allocate_memory(allocationSize, OMRMEM_CATEGORY_VM);
+	}
+
+	if (NULL != result) {
+		if (prependStrLength > 0) {
+			memcpy(result, prependStr, prependStrLength);
+		}
+		memcpy(result + prependStrLength, stringData, stringLength);
+		if (J9_ARE_ALL_BITS_SET(stringFlags, J9_STR_NULL_TERMINATE_RESULT)) {
+			result[allocationSize - 1] = '\0';
+		}
+	}
+
+	return (char *)result;
+}
+
+J9UTF8 *
+copyJ9UTF8WithMemAlloc(J9VMThread *vmThread, J9UTF8 *string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, char *buffer, UDATA bufferLength)
+{
+	Assert_VM_notNull(prependStr);
+	Assert_VM_notNull(string);
+
+	J9UTF8 *result = NULL;
+	PORT_ACCESS_FROM_VMC(vmThread);
+
+	const U_8 *stringData = J9UTF8_DATA(string);
+	const UDATA stringLength = (UDATA)J9UTF8_LENGTH(string);
+	const UDATA totalStringLength = prependStrLength + stringLength;
+	UDATA allocationSize = totalStringLength + sizeof(J9UTF8);
+
+	if (J9_ARE_ALL_BITS_SET(stringFlags, J9_STR_NULL_TERMINATE_RESULT)) {
+		allocationSize += 1;
+	}
+
+	if (totalStringLength < J9UTF8_MAX_LENGTH) {
+		if (allocationSize <= bufferLength) {
+			result = (J9UTF8 *)buffer;
+		} else {
+			result = (J9UTF8 *)j9mem_allocate_memory(allocationSize, OMRMEM_CATEGORY_VM);
+		}
+
+		if (NULL != result) {
+			U_8 *resultString = J9UTF8_DATA(result);
+			if (prependStrLength > 0) {
+				memcpy(resultString, prependStr, prependStrLength);
+			}
+			memcpy(resultString + prependStrLength, stringData, stringLength);
+			if (J9_ARE_ALL_BITS_SET(stringFlags, J9_STR_NULL_TERMINATE_RESULT)) {
+				resultString[totalStringLength] = '\0';
+			}
+			J9UTF8_SET_LENGTH(result, (U_16)totalStringLength);
+		}
+	}
+
+	return result;
+}
+
+J9UTF8 *
+copyJ9UTF8WithPortLib(J9VMThread *vmThread, J9UTF8 *string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, OMRPortLibrary *portLib)
+{
+	Assert_VM_notNull(prependStr);
+	Assert_VM_notNull(string);
+
+	J9UTF8 *result = NULL;
+
+	const U_8 *stringData = J9UTF8_DATA(string);
+	const UDATA stringLength = (UDATA)J9UTF8_LENGTH(string);
+	const UDATA totalStringLength = prependStrLength + stringLength;
+	UDATA allocationSize = totalStringLength + sizeof(J9UTF8);
+
+	if (J9_ARE_ALL_BITS_SET(stringFlags, J9_STR_NULL_TERMINATE_RESULT)) {
+		allocationSize += 1;
+	}
+
+	if (totalStringLength < J9UTF8_MAX_LENGTH) {
+		result = (J9UTF8 *)portLib->mem_allocate_memory(portLib, allocationSize, J9_GET_CALLSITE(), OMRMEM_CATEGORY_VM);
+
+		if (NULL != result) {
+			U_8 *resultString = J9UTF8_DATA(result);
+			if (prependStrLength > 0) {
+				memcpy(resultString, prependStr, prependStrLength);
+			}
+			memcpy(resultString + prependStrLength, stringData, stringLength);
+			if (J9_ARE_ALL_BITS_SET(stringFlags, J9_STR_NULL_TERMINATE_RESULT)) {
+				resultString[totalStringLength] = '\0';
+			}
+			J9UTF8_SET_LENGTH(result, (U_16)totalStringLength);
+		}
+	}
+
+	return result;
+}
+
+UDATA
 getStringUTF8Length(J9VMThread *vmThread, j9object_t string)
 {
-	IDATA utf8Length = 0;
+	U_64 utf8Length = 0;
 	UDATA unicodeLength = J9VMJAVALANGSTRING_LENGTH(vmThread, string);
 	j9object_t unicodeBytes = J9VMJAVALANGSTRING_VALUE(vmThread, string);
-	UDATA i;
 
 	if (IS_STRING_COMPRESSED(vmThread, string)) {
-		for (i = 0; i < unicodeLength; i++) {
-			utf8Length += VM_VMHelpers::encodedUTF8LengthI8(J9JAVAARRAYOFBYTE_LOAD(vmThread, unicodeBytes, i));
+		for (UDATA i = 0; i < unicodeLength; i++) {
+			UDATA nextLength = VM_VMHelpers::encodedUTF8LengthI8(J9JAVAARRAYOFBYTE_LOAD(vmThread, unicodeBytes, i));
+#if UDATA_MAX < (3 * INT32_MAX)
+			/* Truncate on a 32-bit platform since the maximum length of a UTF-8 string is 3 * Integer.MAX_VALUE.
+			 * This is to accommodate memory allocation functions which take a UDATA as the input parameter for
+			 * length. On 64-bit platforms, truncation is not needed since UDATA and U_64 are of the same size.
+			 */
+			if (utf8Length > (UDATA_MAX - nextLength)) {
+				break;
+			}
+#endif /* UDATA_MAX < (3 * INT32_MAX) */
+			utf8Length += nextLength;
 		}
 	} else {
-		for (i = 0; i < unicodeLength; i++) {
-			utf8Length += VM_VMHelpers::encodedUTF8Length(J9JAVAARRAYOFCHAR_LOAD(vmThread, unicodeBytes, i));
+		for (UDATA i = 0; i < unicodeLength; i++) {
+			UDATA nextLength = VM_VMHelpers::encodedUTF8Length(J9JAVAARRAYOFCHAR_LOAD(vmThread, unicodeBytes, i));
+#if UDATA_MAX < (3 * INT32_MAX)
+			/* Truncate on a 32-bit platform since the maximum length of a UTF-8 string is 3 * Integer.MAX_VALUE.
+			 * This is to accommodate memory allocation functions which take a UDATA as the input parameter for
+			 * length. On 64-bit platforms, truncation is not needed since UDATA and U_64 are of the same size.
+			 */
+			if (utf8Length > (UDATA_MAX - nextLength)) {
+				break;
+			}
+#endif /* UDATA_MAX < (3 * INT32_MAX) */
+			utf8Length += nextLength;
+		}
+	}
+
+	return (UDATA)utf8Length;
+}
+
+U_64
+getStringUTF8LengthTruncated(J9VMThread *vmThread, j9object_t string, U_64 maxLength)
+{
+	U_64 utf8Length = 0;
+	UDATA unicodeLength = J9VMJAVALANGSTRING_LENGTH(vmThread, string);
+	j9object_t unicodeBytes = J9VMJAVALANGSTRING_VALUE(vmThread, string);
+
+	if (IS_STRING_COMPRESSED(vmThread, string)) {
+		for (UDATA i = 0; i < unicodeLength; i++) {
+			UDATA nextLength = VM_VMHelpers::encodedUTF8LengthI8(J9JAVAARRAYOFBYTE_LOAD(vmThread, unicodeBytes, i));
+			if (utf8Length > (maxLength - nextLength)) {
+				break;
+			}
+			utf8Length += nextLength;
+		}
+	} else {
+		for (UDATA i = 0; i < unicodeLength; i++) {
+			UDATA nextLength = VM_VMHelpers::encodedUTF8Length(J9JAVAARRAYOFCHAR_LOAD(vmThread, unicodeBytes, i));
+			if (utf8Length > (maxLength - nextLength)) {
+				break;
+			}
+			utf8Length += nextLength;
 		}
 	}
 

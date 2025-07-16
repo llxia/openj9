@@ -44,28 +44,13 @@
 #include "omr.h"
 #include "vendor_version.h"
 
-/* The vm version which must match the JCL.
- * It has the format 0xAABBCCCC
- *	AA - vm version, BB - jcl version, CCCC - main version
- * CCCC must match exactly with the JCL
- * Up the vm version (AA) when adding natives
- * BB is the required level of JCL to run the vm
- */
-#define JCL_VERSION 0x06040270
-
-extern void *jclConfig;
-
-static UDATA
-doJCLCheck(J9JavaVM *vm, J9Class *j9VMInternalsClass);
-
-
 /*
-	Calculate the value for java.vm.info (and java.fullversion) system/vm properties.
-	Currently allocates into a fixed-size buffer. This really should be fixed.
-*/
-jint computeFullVersionString(J9JavaVM* vm)
+ * Calculate the value for java.vm.info (and java.fullversion) system/vm properties.
+ * Currently allocates into a fixed-size buffer. This really should be fixed.
+ */
+jint computeFullVersionString(J9JavaVM *vm)
 {
-	VMI_ACCESS_FROM_JAVAVM((JavaVM*)vm);
+	VMI_ACCESS_FROM_JAVAVM((JavaVM *)vm);
 	PORT_ACCESS_FROM_JAVAVM(vm);
 	const char *osarch = NULL;
 	const char *osname = NULL;
@@ -114,7 +99,7 @@ jint computeFullVersionString(J9JavaVM* vm)
 	osarch = j9sysinfo_get_CPU_architecture();
 
 #ifdef J9VM_ENV_DATA64
-	memInfo = J9JAVAVM_COMPRESS_OBJECT_REFERENCES(vm) ? "64-Bit Compressed References": "64-Bit";
+	memInfo = J9JAVAVM_COMPRESS_OBJECT_REFERENCES(vm) ? "64-Bit Compressed References" : "64-Bit";
 #else
 	#if defined(J9ZOS390) || defined(S390)
 		memInfo = "31-Bit";
@@ -141,7 +126,7 @@ jint computeFullVersionString(J9JavaVM* vm)
 	#define VENDOR_INFO ""
 #endif /* VENDOR_SHORT_NAME && VENDOR_SHA */
 
-	if (BUFFER_SIZE <= j9str_printf(PORTLIB, vminfo, BUFFER_SIZE + 1,
+	if (BUFFER_SIZE <= j9str_printf(vminfo, BUFFER_SIZE + 1,
 			"JRE %s %s %s-%s %s" JIT_INFO J9VM_VERSION_STRING OMR_INFO VENDOR_INFO OPENJDK_INFO,
 			j2se_version_info,
 			(NULL != osname ? osname : " "),
@@ -150,7 +135,7 @@ jint computeFullVersionString(J9JavaVM* vm)
 			EsBuildVersionString,
 			jitEnabled,
 			aotEnabled)) {
-		j9tty_err_printf(PORTLIB, "\n%s - %d: %s: Error: Java VM info string exceeds buffer size\n", __FILE__, __LINE__, __FUNCTION__);
+		j9tty_err_printf("\n%s - %d: %s: Error: Java VM info string exceeds buffer size\n", __FILE__, __LINE__, __FUNCTION__);
 		return JNI_ERR;
 	}
 
@@ -357,35 +342,6 @@ jint initializeKnownClasses(J9JavaVM* vm, U_32 runtimeFlags)
 	return JNI_OK;
 }
 
-
-static UDATA
-doJCLCheck(J9JavaVM *vm, J9Class *j9VMInternalsClass)
-{
-	J9VMThread *vmThread = vm->mainThread;
-	J9InternalVMFunctions *vmFuncs = vm->internalVMFunctions;
-	J9ROMStaticFieldShape *jclField;
-	U_8 *cConfigPtr;
-	U_8 *jclConfigPtr = NULL;
-	UDATA jclVersion = -1;
-
-	/* get the jcl specified by the class library (i.e. java.lang.J9VMInternals) */
-	vmFuncs->staticFieldAddress(vmThread, j9VMInternalsClass, (U_8*)"j9Config", sizeof("j9Config") - 1, (U_8*)"J", 1, NULL, (UDATA *)&jclField, J9_RESOLVE_FLAG_NO_THROW_ON_FAIL, NULL);
-	if (jclField != NULL) {
-		jclConfigPtr = (U_8 *)&jclField->initialValue;
-		/* get the jcl version from the class library (i.e. java.lang.J9VMInternals) */
-		vmFuncs->staticFieldAddress(vmThread, j9VMInternalsClass, (U_8*)"j9Version", sizeof("j9Version") - 1, (U_8*)"I", 1, NULL, (UDATA *)&jclField, J9_RESOLVE_FLAG_NO_THROW_ON_FAIL, NULL);
-		if (jclField != NULL) {
-			jclVersion = jclField->initialValue;
-		}
-	}
-
-	/* get the jcl specified by the DLL */
-	cConfigPtr = (U_8 *)&jclConfig;
-
-	/* check the values and report any errors */
-	return checkJCL(vmThread, cConfigPtr, jclConfigPtr, JCL_VERSION, jclVersion);
-}
-
 /**
  * Initialize a static int field in a Class.
  *
@@ -504,7 +460,7 @@ intializeVMConstants(J9VMThread *currentThread)
 	if (JNI_OK != rc) {
 		goto done;
 	}
-	
+
 	rc = initializeStaticIntField(currentThread, vmClass, J9VMCONSTANTPOOL_COMIBMOTIVMVM_J9_STRING_COMPRESSION_ENABLED, (I_32)IS_STRING_COMPRESSION_ENABLED_VM(vm));
 	if (JNI_OK != rc) {
 		goto done;
@@ -606,7 +562,7 @@ initializeRequiredClasses(J9VMThread *vmThread, char* dllName)
 
 	/* CANNOT hold VM Access while calling registerBootstrapLibrary */
 	vmFuncs->internalReleaseVMAccess(vmThread);
-	
+
 	if (vmFuncs->registerBootstrapLibrary(vmThread, dllName, &nativeLibrary, FALSE) != J9NATIVELIB_LOAD_OK) {
 		return 1;
 	}
@@ -614,7 +570,7 @@ initializeRequiredClasses(J9VMThread *vmThread, char* dllName)
 	/* If we have a JitConfig, add the JIT dll to the bootstrap loader so we can add JNI natives in the JIT */
 	if (NULL != vm->jitConfig) {
 		J9NativeLibrary* jitLibrary = NULL;
-	
+
 		if (vmFuncs->registerBootstrapLibrary(vmThread, J9_JIT_DLL_NAME, &jitLibrary, FALSE) != J9NATIVELIB_LOAD_OK) {
 			return 1;
 		}
@@ -676,10 +632,6 @@ initializeRequiredClasses(J9VMThread *vmThread, char* dllName)
 		return 1;
 	}
 
-	if (doJCLCheck(vm, vmInternalsClass) != 0) {
-		return 1;
-	}
-
 	/* Load ClassInitializationLock as early as possible */
 
 	lockClass = vmFuncs->internalFindKnownClass(vmThread, J9VMCONSTANTPOOL_JAVALANGJ9VMINTERNALSCLASSINITIALIZATIONLOCK, J9_FINDKNOWNCLASS_FLAG_NON_FATAL);
@@ -701,22 +653,29 @@ initializeRequiredClasses(J9VMThread *vmThread, char* dllName)
 
 	clazz = vmFuncs->allClassesStartDo(&state, vm, vm->systemClassLoader);
 	do {
-		j9object_t classObj = gcFuncs->J9AllocateObject(vmThread, classClass, J9_GC_ALLOCATE_OBJECT_TENURED | J9_GC_ALLOCATE_OBJECT_NON_INSTRUMENTABLE | J9_GC_ALLOCATE_OBJECT_HASHED);
-		j9object_t lockObject;
-		UDATA allocateFlags = J9_GC_ALLOCATE_OBJECT_NON_INSTRUMENTABLE;
+#if defined(J9VM_OPT_SNAPSHOTS)
+		if (IS_RESTORE_RUN(vm)) {
+			vmFuncs->initializeSnapshotClassObject(vm, vm->systemClassLoader, clazz);
+		} else
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+		{
+			j9object_t classObj = gcFuncs->J9AllocateObject(vmThread, classClass, J9_GC_ALLOCATE_OBJECT_TENURED | J9_GC_ALLOCATE_OBJECT_NON_INSTRUMENTABLE | J9_GC_ALLOCATE_OBJECT_HASHED);
+			j9object_t lockObject;
+			UDATA allocateFlags = J9_GC_ALLOCATE_OBJECT_NON_INSTRUMENTABLE;
 
-		if (NULL == classObj) {
-			return 1;
+			if (NULL == classObj) {
+				return 1;
+			}
+			J9VMJAVALANGCLASS_SET_VMREF(vmThread, classObj, clazz);
+			clazz->classObject = classObj;
+			lockObject = gcFuncs->J9AllocateObject(vmThread, lockClass, allocateFlags);
+			classObj = clazz->classObject;
+			if (lockObject == NULL) {
+				return 1;
+			}
+			J9VMJAVALANGJ9VMINTERNALSCLASSINITIALIZATIONLOCK_SET_THECLASS(vmThread, lockObject, (j9object_t)classObj);
+			J9VMJAVALANGCLASS_SET_INITIALIZATIONLOCK(vmThread, (j9object_t)classObj, lockObject);
 		}
-		J9VMJAVALANGCLASS_SET_VMREF(vmThread, classObj, clazz);
-		clazz->classObject = classObj;
-		lockObject = gcFuncs->J9AllocateObject(vmThread, lockClass, allocateFlags);
-		classObj = clazz->classObject;
-		if (lockObject == NULL) {
-			return 1;
-		}
-		J9VMJAVALANGJ9VMINTERNALSCLASSINITIALIZATIONLOCK_SET_THECLASS(vmThread, lockObject, (j9object_t)classObj);
-		J9VMJAVALANGCLASS_SET_INITIALIZATIONLOCK(vmThread, (j9object_t)classObj, lockObject);
 	} while ((clazz = vmFuncs->allClassesNextDo(&state)) != NULL);
 	vmFuncs->allClassesEndDo(&state);
 
@@ -725,11 +684,16 @@ initializeRequiredClasses(J9VMThread *vmThread, char* dllName)
 	 */
 	vm->extendedRuntimeFlags |= J9_EXTENDED_RUNTIME_CLASS_OBJECT_ASSIGNED;
 
-	if (vmFuncs->internalCreateBaseTypePrimitiveAndArrayClasses(vmThread) != 0) {
-		return 1;
+	if (!IS_RESTORE_RUN(vm)) {
+		if (0 != vmFuncs->internalCreateBaseTypePrimitiveAndArrayClasses(vmThread)) {
+			return 1;
+		}
+	} else {
+#if defined(J9VM_OPT_SNAPSHOTS)
+		vmFuncs->initializeBaseClasses(vm);
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
 	}
-
-	/* Initialize early since sendInitialize() uses this */ 
+	/* Initialize early since sendInitialize() uses this. */
 	if (initializeStaticMethod(vm, J9VMCONSTANTPOOL_JAVALANGJ9VMINTERNALS_INITIALIZATIONALREADYFAILED)) {
 		return 1;
 	}
@@ -743,7 +707,7 @@ initializeRequiredClasses(J9VMThread *vmThread, char* dllName)
 	if ((NULL == stringClass) || (NULL != vmThread->currentException)) {
 		return 1;
 	}
-	
+
 	/* Initialize the java.lang.String.compressionFlag static field early enough so that we have
 	 * access to it during the resolution of other classes in which Strings may need to be created
 	 * in StringTable.cpp
@@ -808,13 +772,13 @@ initializeRequiredClasses(J9VMThread *vmThread, char* dllName)
 				/* this is implicitly an unused property */
 				vmFuncs->setSystemProperty(vm, systemProperty, moduleName);
 			} else {
-				UDATA indexLen = j9str_printf(PORTLIB, NULL, 0, "%zu", vm->addModulesCount); /* get the length of the number string */
+				UDATA indexLen = j9str_printf(NULL, 0, "%zu", vm->addModulesCount); /* get the length of the number string */
 				char *propNameBuffer = j9mem_allocate_memory(sizeof(ADDMODS_PROPERTY_BASE) + indexLen, OMRMEM_CATEGORY_VM);
 				if (NULL == propNameBuffer) {
 					Trc_JCL_initializeRequiredClasses_addAgentModuleOutOfMemory(vmThread);
 					return 1;
 				}
-				j9str_printf(PORTLIB, propNameBuffer, sizeof(ADDMODS_PROPERTY_BASE) + indexLen, ADDMODS_PROPERTY_BASE "%zu", vm->addModulesCount);
+				j9str_printf(propNameBuffer, sizeof(ADDMODS_PROPERTY_BASE) + indexLen, ADDMODS_PROPERTY_BASE "%zu", vm->addModulesCount);
 				Trc_JCL_initializeRequiredClasses_addAgentModuleSetProperty(vmThread, propNameBuffer, moduleName);
 				vmFuncs->addSystemProperty(vm, propNameBuffer, moduleName, J9SYSPROP_FLAG_NAME_ALLOCATED);
 			}
@@ -847,13 +811,13 @@ initializeRequiredClasses(J9VMThread *vmThread, char* dllName)
 				/* this is implicitly an unused property */
 				vmFuncs->setSystemProperty(vm, systemProperty, moduleName);
 			} else {
-				UDATA indexLen = j9str_printf(PORTLIB, NULL, 0, "%zu", vm->addModulesCount); /* get the length of the number string */
+				UDATA indexLen = j9str_printf(NULL, 0, "%zu", vm->addModulesCount); /* get the length of the number string */
 				char *propNameBuffer = j9mem_allocate_memory(sizeof(ADDMODS_PROPERTY_BASE) + indexLen, OMRMEM_CATEGORY_VM);
 				if (NULL == propNameBuffer) {
 					Trc_JCL_initializeRequiredClasses_addAgentModuleOutOfMemory(vmThread);
 					return 1;
 				}
-				j9str_printf(PORTLIB, propNameBuffer, sizeof(ADDMODS_PROPERTY_BASE) + indexLen, ADDMODS_PROPERTY_BASE "%zu", vm->addModulesCount);
+				j9str_printf(propNameBuffer, sizeof(ADDMODS_PROPERTY_BASE) + indexLen, ADDMODS_PROPERTY_BASE "%zu", vm->addModulesCount);
 				Trc_JCL_initializeRequiredClasses_addAgentModuleSetProperty(vmThread, propNameBuffer, moduleName);
 				vmFuncs->addSystemProperty(vm, propNameBuffer, moduleName, J9SYSPROP_FLAG_NAME_ALLOCATED);
 			}

@@ -129,7 +129,7 @@ J9VMDllMain(J9JavaVM* vm, IDATA stage, void* reserved)
 			}
 
 			if ((*hook)->J9HookRegisterWithCallSite(hook, J9HOOK_VM_NATIVE_METHOD_RETURN, methodExitHook, OMR_GET_CALLSITE(), NULL)) {
-				j9tty_err_printf(PORTLIB, "<JNI check utility: unable to hook event>\n");
+				j9tty_err_printf("<JNI check utility: unable to hook event>\n");
 				return J9VMDLLMAIN_FAILED;
 			}
 
@@ -1070,25 +1070,25 @@ jniVerboseGetID(const char *function, JNIEnv *env, jclass classRef, const char *
 static void printJnichkHelp(J9PortLibrary* portLib) {
 	PORT_ACCESS_FROM_PORT(portLib);
 
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_1, NULL), J9JVM_VERSION_STRING);
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, J9_COPYRIGHT_STRING "\n\n");
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_2, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, "\n");
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_3, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_4, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_5, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_6, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_7, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_8, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_14, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_9, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_15, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_10, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_13, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_11, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_12, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_16, NULL));
-	j9file_printf(PORTLIB, J9PORT_TTY_OUT, "\n");
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_1, NULL), J9JVM_VERSION_STRING);
+	j9file_printf(J9PORT_TTY_OUT, J9_COPYRIGHT_STRING "\n\n");
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_2, NULL));
+	j9file_printf(J9PORT_TTY_OUT, "\n");
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_3, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_4, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_5, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_6, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_7, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_8, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_14, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_9, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_15, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_10, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_13, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_11, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_12, NULL));
+	j9file_printf(J9PORT_TTY_OUT, j9nls_lookup_message(J9NLS_DO_NOT_PRINT_MESSAGE_TAG, J9NLS_JNICHK_HELP_16, NULL));
+	j9file_printf(J9PORT_TTY_OUT, "\n");
 }
 
 
@@ -1783,7 +1783,7 @@ methodEnterHook(J9HookInterface** hook, UDATA eventNum, void* eventData, void* u
 
 		argBuffer[0] = '\0';
 		if (!(romMethod->modifiers & J9AccStatic)) {
-			written = j9str_printf(PORTLIB, current, remainingSize, "receiver ");
+			written = j9str_printf(current, remainingSize, "receiver ");
 			current += written;
 			remainingSize -= written;
 			jniDecodeValue(vmThread, 'L', argPtr, &current, &remainingSize);
@@ -1791,7 +1791,7 @@ methodEnterHook(J9HookInterface** hook, UDATA eventNum, void* eventData, void* u
 		}
 		while ((sigChar = jniNextSigChar(&sigData)) != ')') {
 			if (argPtr != arg0EA) {
-				written = j9str_printf(PORTLIB, current, remainingSize, ", ");
+				written = j9str_printf(current, remainingSize, ", ");
 				current += written;
 				remainingSize -= written;
 			}
@@ -1891,38 +1891,38 @@ jniDecodeValue(J9VMThread * vmThread, UDATA sigChar, void * valuePtr, char ** ou
 
 	switch (sigChar) {
 		case 'B':
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "(jbyte)%d", *((I_32 *) valuePtr));
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "(jbyte)%d", *((I_32 *) valuePtr));
 			break;
 		case 'C':
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "(jchar)%d", *((I_32 *) valuePtr));
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "(jchar)%d", *((I_32 *) valuePtr));
 			break;
 		case 'D':
 			memcpy(&doubleValue, valuePtr, 8);
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "(jdouble)%lf", doubleValue);
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "(jdouble)%lf", doubleValue);
 			argSize = 2;
 			break;
 		case 'F':
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "(jfloat)%lf", *((float *) valuePtr));
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "(jfloat)%lf", *((float *) valuePtr));
 			break;
 		case 'I':
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "(jint)%d", *((I_32 *) valuePtr));
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "(jint)%d", *((I_32 *) valuePtr));
 			break;
 		case 'J':
 			memcpy(&longValue, valuePtr, 8);
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "(jlong)%lld", longValue);
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "(jlong)%lld", longValue);
 			argSize = 2;
 			break;
 		case 'S':
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "(jshort)%d", *((I_32 *) valuePtr));
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "(jshort)%d", *((I_32 *) valuePtr));
 			break;
 		case 'Z':
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "(jboolean)%s", *((I_32 *) valuePtr) ? "true" : "false");
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "(jboolean)%s", *((I_32 *) valuePtr) ? "true" : "false");
 			break;
 		case 'L':
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "(jobject)0x%p", *((UDATA *) valuePtr));
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "(jobject)0x%p", *((UDATA *) valuePtr));
 			break;
 		default:
-			written = j9str_printf(PORTLIB, *outputBuffer, *outputBufferLength, "void");
+			written = j9str_printf(*outputBuffer, *outputBufferLength, "void");
 			argSize = 0;
 			break;
 	}
@@ -2457,7 +2457,7 @@ jniCheckObjectArg(const char* function, JNIEnv* env, jobject aJobject, char* sig
 		while (*sigArgs == '[') {
 			sigArgs++;
 		}
-		if (IS_REF_OR_VAL_SIGNATURE(*sigArgs)) {
+		if (IS_CLASS_SIGNATURE(*sigArgs)) {
 			while (*sigArgs != ';') {
 				sigArgs++;
 			}

@@ -25,42 +25,53 @@ package com.ibm.jvm;
 import java.util.Objects;
 
 /**
- * 
+ *
  * The <code>Log</code> class contains methods for controlling system log options
  * This class cannot be instantiated.
  */
 public class Log {
 
+	/*[IF JAVA_SPEC_VERSION < 24]*/
 	private static final String LEGACY_LOG_PERMISSION_PROPERTY = "com.ibm.jvm.enableLegacyLogSecurity"; //$NON-NLS-1$
-		
+
 	private static final LogPermission LOG_PERMISSION = new LogPermission();
-	
+	/*[ENDIF] JAVA_SPEC_VERSION < 24 */
+
 	/**
 	 * Query the log options. Returns a String representation of the log options.
 	 * @return The current log options
+	/*[IF JAVA_SPEC_VERSION < 24]
 	 * @throws SecurityException if there is a security manager and it doesn't allow the checks required to query the log settings
+	/*[ENDIF] JAVA_SPEC_VERSION < 24
 	 */
 	public static String QueryOptions() {
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 		checkLegacySecurityPermssion();
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 		return QueryOptionsImpl();
 	}
 
 	/**
 	 * Set the log options.
 	 * Use the same syntax as the -Xsyslog command-line option, with the initial -Xsyslog: omitted.
-	 * 
+	 *
 	 * @param options The command line log flags.
 	 * @return status 0 on success otherwise a RuntimeException is thrown
-	 * 
+	 *
 	 * @throws RuntimeException if there is a problem setting the log options
+	/*[IF JAVA_SPEC_VERSION < 24]
 	 * @throws SecurityException if there is a security manager and it doesn't allow the checks required to change the log settings
+	/*[ENDIF] JAVA_SPEC_VERSION < 24
 	 */
 	public static int SetOptions(String options) {
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 		checkLegacySecurityPermssion();
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 		Objects.requireNonNull(options, "options"); //$NON-NLS-1$
 		return SetOptionsImpl(options);
 	}
 
+	/*[IF JAVA_SPEC_VERSION < 24]*/
 	/**
 	 * Check the caller has permission to use the Log API for calls that existed pre-Java 8
 	 * when security was added. Public API added after Java 8 should call checkLogSecurityPermssion()
@@ -83,11 +94,12 @@ public class Log {
 			manager.checkPermission(LOG_PERMISSION);
 		}
 	}
+	/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 	/*
 	 * Log should not be instantiated.
 	 */
-	private Log() {	
+	private Log() {
 	}
 
 	private static native String QueryOptionsImpl();

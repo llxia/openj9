@@ -472,17 +472,18 @@ initializeReflectionGlobalsHook(J9HookInterface** hookInterface, UDATA eventNum,
 }
 
 
+#if JAVA_SPEC_VERSION < 24
 /**
  * JVM_GetClassContext
  */
 JNIEXPORT jobject JNICALL
 JVM_GetClassContext_Impl(JNIEnv *env)
 {
-	J9VMThread * vmThread = (J9VMThread *) env;
+	J9VMThread *vmThread = (J9VMThread *)env;
 	J9JavaVM *vm = vmThread->javaVM;
 	J9InternalVMFunctions *vmFuncs = vm->internalVMFunctions;
 	J9StackWalkState walkState;
-	jobject classCtx;
+	jobject classCtx = NULL;
 
 	Trc_SunVMI_GetClassContext_Entry(env);
 
@@ -493,20 +494,20 @@ JVM_GetClassContext_Impl(JNIEnv *env)
 
 	/* calculate length of class context */
 	walkState.skipCount = 1;
-	walkState.userData1 = (void *) 0;
-	walkState.userData2 = (void *) NULL;
+	walkState.userData1 = (void *)0;
+	walkState.userData2 = (void *)NULL;
 
 	vmFuncs->internalEnterVMFromJNI(vmThread);
 	vm->walkStackFrames(vmThread, &walkState);
 	vmFuncs->internalExitVMToJNI(vmThread);
 
 	classCtx = (*env)->NewObjectArray(env, (jsize)(UDATA) walkState.userData1, VM.jlClass, 0);
-	if (classCtx) {
+	if (NULL != classCtx) {
 		/* fill in class context elements */
 		walkState.skipCount = 1;
-		walkState.userData1 = (void *) 0;
+		walkState.userData1 = (void *)0;
 		vmFuncs->internalEnterVMFromJNI(vmThread);
-		walkState.userData2 = *((j9object_t*) classCtx);
+		walkState.userData2 = *(j9object_t *)classCtx;
 		vm->walkStackFrames(vmThread, &walkState);
 		vmFuncs->internalExitVMToJNI(vmThread);
 	}
@@ -515,6 +516,7 @@ JVM_GetClassContext_Impl(JNIEnv *env)
 
 	return classCtx;
 }
+#endif /* JAVA_SPEC_VERSION < 24 */
 
 
 JNIEXPORT void JNICALL
@@ -612,9 +614,12 @@ getClassContextIterator(J9VMThread * currentThread, J9StackWalkState * walkState
 JNIEXPORT void JNICALL
 JVM_GC_Impl(void)
 {
-	J9InternalVMFunctions *vmFuncs = VM.javaVM->internalVMFunctions;
-	J9VMThread *currentThread = vmFuncs->currentVMThread(VM.javaVM);
-	J9MemoryManagerFunctions *mmFuncs = VM.javaVM->memoryManagerFunctions;
+	J9JavaVM *vm = VM.javaVM;
+	J9InternalVMFunctions *vmFuncs = vm->internalVMFunctions;
+	J9VMThread *currentThread = vmFuncs->currentVMThread(vm);
+	J9MemoryManagerFunctions *mmFuncs = vm->memoryManagerFunctions;
+	I_64 startTicks = 0;
+	PORT_ACCESS_FROM_JAVAVM(vm);
 
 	Trc_SunVMI_GC_Entry(currentThread);
 
@@ -624,9 +629,14 @@ JVM_GC_Impl(void)
 	vmFuncs->internalAcquireVMAccess(currentThread);
 #endif /* J9VM_INTERP_ATOMIC_FREE_JNI */
 
+	if (J9_EVENT_IS_HOOKED(vm->hookInterface, J9HOOK_SYSTEM_GC_CALLED)) {
+		startTicks = j9time_nano_time();
+	}
+
 	/* Two GC requests are required to guarantee a GC actually occurs. */
 	mmFuncs->j9gc_modron_global_collect(currentThread);
 	mmFuncs->j9gc_modron_global_collect(currentThread);
+	TRIGGER_J9HOOK_SYSTEM_GC_CALLED(vm->hookInterface, currentThread, startTicks);
 
 	/* make sure we actually release VMAccess as finalization cannot be run with it */
 	vmFuncs->internalReleaseVMAccess(currentThread);
@@ -1256,7 +1266,9 @@ static SunVMI VMIFunctionTable = {
 		JVM_GCNoCompact_Impl,
 		JVM_GetCallerClass_Impl,
 		JVM_GetClassAccessFlags_Impl,
+#if JAVA_SPEC_VERSION < 24
 		JVM_GetClassContext_Impl,
+#endif /* JAVA_SPEC_VERSION < 24 */
 		JVM_GetClassLoader_Impl,
 		JVM_GetSystemPackage_Impl,
 		JVM_GetSystemPackages_Impl,
@@ -1274,7 +1286,7 @@ static SunVMI VMIFunctionTable = {
 		JVM_GetFieldTypeAnnotations_Impl,
 		JVM_GetMethodTypeAnnotations_Impl,
 		JVM_GetMethodParameters_Impl
-		};
+};
 
 
 /**

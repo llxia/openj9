@@ -190,11 +190,10 @@ Java_com_ibm_java_lang_management_internal_MemoryManagerMXBeanImpl_isManagedPool
 /* BBjclNativesCommonSystem*/
 void JNICALL Java_java_lang_System_setFieldImpl (JNIEnv * env, jclass cls, jstring name, jobject stream);
 jobject createSystemPropertyList (JNIEnv *env, const char *defaultValues[], int defaultCount);
-#if JAVA_SPEC_VERSION >= 11
-void JNICALL Java_java_lang_System_initJCLPlatformEncoding (JNIEnv *env, jclass clazz);
-#endif /* JAVA_SPEC_VERSION >= 11 */
 jstring JNICALL Java_java_lang_System_getSysPropBeforePropertiesInitialized(JNIEnv *env, jclass clazz, jint sysPropID);
+#if JAVA_SPEC_VERSION < 17
 jobject JNICALL Java_java_lang_System_getPropertyList (JNIEnv *env, jclass clazz);
+#endif /* JAVA_SPEC_VERSION < 17 */
 jstring JNICALL Java_java_lang_System_mapLibraryName (JNIEnv * env, jclass unusedClass, jstring inName);
 void JNICALL Java_java_lang_System_initLocale (JNIEnv *env, jclass clazz);
 
@@ -682,7 +681,9 @@ Java_sun_misc_Unsafe_defineClass__Ljava_lang_String_2_3BIILjava_lang_ClassLoader
 void JNICALL
 Java_sun_misc_Unsafe_setMemory__Ljava_lang_Object_2JJB(JNIEnv *env, jobject receiver, jobject obj, jlong offset, jlong size, jbyte value);
 void JNICALL Java_sun_misc_Unsafe_registerNatives(JNIEnv *env, jclass clazz);
+#if JAVA_SPEC_VERSION >= 9
 void JNICALL Java_jdk_internal_misc_Unsafe_registerNatives(JNIEnv *env, jclass clazz);
+#endif /* JAVA_SPEC_VERSION >= 9 */
 jboolean JNICALL Java_sun_misc_Unsafe_shouldBeInitialized(JNIEnv *env, jobject receiver, jclass clazz);
 jint JNICALL Java_sun_misc_Unsafe_pageSize(JNIEnv *env, jobject receiver);
 jint JNICALL Java_sun_misc_Unsafe_getLoadAverage(JNIEnv *env, jobject receiver, jdoubleArray loadavg, jint nelems);
@@ -739,8 +740,10 @@ extern J9_CFUNC jclass
 defineClassCommon (JNIEnv *env, jobject classLoaderObject,
 	jstring className, jbyteArray classRep, jint offset, jint length, jobject protectionDomain, UDATA *options, J9Class *hostClass, J9ClassPatchMap *patchMap, BOOLEAN validateName);
 
+#if JAVA_SPEC_VERSION < 24
 /* BBjclNativesCommonAccessController*/
 jboolean JNICALL Java_java_security_AccessController_initializeInternal (JNIEnv *env, jclass thisClz);
+#endif /* JAVA_SPEC_VERSION < 24 */
 
 /* BBjclNativesCommonProxy*/
 jclass JNICALL Java_java_lang_reflect_Proxy_defineClassImpl (JNIEnv * env, jclass recvClass, jobject classLoader, jstring className, jbyteArray classBytes);
@@ -760,15 +763,12 @@ extern J9_CFUNC j9object_t
 getStackTraceForThread (J9VMThread *vmThread, J9VMThread *targetThread, UDATA skipCount, j9object_t threadObject);
 
 /* J9SourceJclStandardInit*/
-jint JCL_OnUnload (J9JavaVM* vm, void* reserved);
-jint standardPreconfigure ( JavaVM *jvm);
-void
-internalInitializeJavaLangClassLoader (JNIEnv * env);
-IDATA checkJCL (J9VMThread * vmThread, U_8* dllValue, U_8* jclConfig, UDATA j9Version, UDATA jclVersion);
-jint
-completeInitialization (J9JavaVM * vm);
-jint standardInit ( J9JavaVM *vm, char* dllName);
-jint JNICALL JVM_OnUnload (JavaVM* jvm, void* reserved);
+jint JCL_OnUnload(J9JavaVM *vm, void *reserved);
+jint standardPreconfigure(JavaVM *jvm);
+void internalInitializeJavaLangClassLoader(JNIEnv *env);
+jint completeInitialization(J9JavaVM *vm);
+jint standardInit(J9JavaVM *vm, char *dllName);
+jint JNICALL JVM_OnUnload(JavaVM *jvm, void *reserved);
 
 /* J9SourceJclBPInit*/
 #if (defined(J9VM_OPT_DYNAMIC_LOAD_SUPPORT)) /* priv. proto (autogen) */
@@ -798,10 +798,6 @@ jcharArray JNICALL Java_com_ibm_oti_io_NativeCharacterConverter_convertBytesToCh
 
 /* BBjclNativesWin32SystemHelpers*/
 char* getPlatformFileEncoding (JNIEnv *env, char *codepage, int size, int encodingType);
-I_32
-convertToUTF8 (J9PortLibrary* portLibrary, const wchar_t* unicodeString, char* utf8Buffer, UDATA size);
-char * getTmpDir (JNIEnv *env, char **tempdir);
-jobject getPlatformPropertyList (JNIEnv *env, const char *strings[], int propIndex);
 void mapLibraryToPlatformName (const char *inPath, char *outPath);
 
 /************************************************************
@@ -810,8 +806,6 @@ void mapLibraryToPlatformName (const char *inPath, char *outPath);
 
 /* BBjclNativesUNIXSystemHelpers*/
 char *getPlatformFileEncoding (JNIEnv * env, char *codepageProp, int propSize, int encodingType);
-char * getTmpDir (JNIEnv *env, char**envSpace);
-jobject getPlatformPropertyList (JNIEnv * env, const char *strings[], int propIndex);
 void mapLibraryToPlatformName (const char *inPath, char *outPath);
 
 /* orbvmhelpers.c */
@@ -919,8 +913,10 @@ jobject JNICALL Java_java_lang_reflect_Array_multiNewArrayImpl(JNIEnv *env, jcla
 /* java_lang_Class.c */
 jobject JNICALL Java_java_lang_Class_getDeclaredAnnotationsData(JNIEnv *env, jobject jlClass);
 jobject JNICALL Java_java_lang_Class_getStackClasses(JNIEnv *env, jclass jlHeapClass, jint maxDepth, jboolean stopAtPrivileged);
+#if JAVA_SPEC_VERSION < 24
 jobject JNICALL Java_java_security_AccessController_getAccSnapshot(JNIEnv* env, jclass jsAccessController, jint startingFrame, jboolean forDoPrivilegedWithCombiner);
 jobject JNICALL Java_java_security_AccessController_getCallerPD(JNIEnv* env, jclass jsAccessController, jint startingFrame);
+#endif /* JAVA_SPEC_VERSION < 24 */
 jobject JNICALL Java_com_ibm_oti_vm_VM_getClassNameImpl(JNIEnv *env, jclass recv, jclass jlClass, jboolean internAndAssign);
 jobject JNICALL Java_java_lang_Class_getDeclaredFieldImpl(JNIEnv *env, jobject recv, jstring jname);
 jarray JNICALL Java_java_lang_Class_getDeclaredFieldsImpl(JNIEnv *env, jobject recv);
@@ -1270,6 +1266,18 @@ jboolean JNICALL
 Java_com_ibm_oti_vm_VM_isJVMInSingleThreadedMode(JNIEnv *env, jclass unused);
 
 #if defined(J9VM_OPT_JFR)
+jboolean JNICALL
+Java_com_ibm_oti_vm_VM_isJFREnabled(JNIEnv *env, jclass unused);
+jboolean JNICALL
+Java_com_ibm_oti_vm_VM_isJFRRecordingStarted(JNIEnv *env, jclass unused);
+void JNICALL
+Java_com_ibm_oti_vm_VM_jfrDump(JNIEnv *env, jclass unused);
+jboolean JNICALL
+Java_com_ibm_oti_vm_VM_setJFRRecordingFileName(JNIEnv *env, jclass unused, jstring fileNameString);
+jint JNICALL
+Java_com_ibm_oti_vm_VM_startJFR(JNIEnv *env, jclass unused);
+void JNICALL
+Java_com_ibm_oti_vm_VM_stopJFR(JNIEnv *env, jclass unused);
 void JNICALL
 Java_com_ibm_oti_vm_VM_triggerExecutionSample(JNIEnv *env, jclass unused);
 #endif /* defined(J9VM_OPT_JFR) */
@@ -1319,8 +1327,15 @@ Java_openj9_internal_criu_InternalCRIUSupport_isCheckpointAllowedImpl(JNIEnv *en
 jboolean JNICALL
 Java_openj9_internal_criu_InternalCRIUSupport_isCRIUSupportEnabledImpl(JNIEnv *env, jclass unused);
 
+jboolean JNICALL
+Java_openj9_internal_criu_InternalCRIUSupport_isTimeCompensationEnabledImpl(JNIEnv *env, jclass unused);
+
 void JNICALL
-Java_openj9_internal_criu_InternalCRIUSupport_checkpointJVMImpl(JNIEnv *env, jclass unused, jstring imagesDir, jboolean leaveRunning, jboolean shellJob, jboolean extUnixSupport, jint logLevel, jstring logFile, jboolean fileLocks, jstring workDir, jboolean tcpEstablished, jboolean autoDedup, jboolean trackMemory, jboolean unprivileged, jstring optionsFile, jstring envFile, jlong ghostFileLimit);
+Java_openj9_internal_criu_InternalCRIUSupport_checkpointJVMImpl(
+		JNIEnv *env, jclass unused, jstring imagesDir, jboolean leaveRunning, jboolean shellJob, jboolean extUnixSupport,
+		jint logLevel, jstring logFile, jboolean fileLocks, jstring workDir, jboolean tcpEstablished, jboolean autoDedup,
+		jboolean trackMemory, jboolean unprivileged, jstring optionsFile, jstring envFile, jlong ghostFileLimit,
+		jboolean tcpClose, jboolean tcpSkipInFlight);
 
 jobject JNICALL
 Java_openj9_internal_criu_InternalCRIUSupport_getRestoreSystemProperites(JNIEnv *env, jclass unused);
@@ -1343,6 +1358,11 @@ Java_jdk_internal_vm_Continuation_pin(JNIEnv *env, jclass unused);
 void JNICALL
 Java_jdk_internal_vm_Continuation_unpin(JNIEnv *env, jclass unused);
 #endif /* JAVA_SPEC_VERSION >= 19 */
+
+#if JAVA_SPEC_VERSION >= 24
+jboolean JNICALL
+Java_com_ibm_oti_vm_VM_isYieldBlockedVirtualThreadsEnabled(JNIEnv *env, jclass unused);
+#endif /* JAVA_SPEC_VERSION >= 24 */
 
 #ifdef __cplusplus
 } /* extern "C" */

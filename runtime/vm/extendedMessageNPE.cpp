@@ -248,7 +248,7 @@ convertMethodSignature(J9VMThread *vmThread, J9UTF8 *methodSig)
 
 		memset(result, 0, bufferSize);
 		/* first character is '(' */
-		j9str_printf(PORTLIB, cursor, availableSize, "(");
+		j9str_printf(cursor, availableSize, "(");
 		cursor += 1;
 		availableSize -= 1;
 		for (i = 1; (')' != string[i]); i++) {
@@ -258,7 +258,7 @@ convertMethodSignature(J9VMThread *vmThread, J9UTF8 *methodSig)
 				i += 1;
 			}
 			const char *elementType = NULL;
-			if (IS_REF_OR_VAL_SIGNATURE(string[i])) {
+			if (IS_CLASS_SIGNATURE(string[i])) {
 				i += 1;
 
 				UDATA objSize = 0;
@@ -303,23 +303,23 @@ convertMethodSignature(J9VMThread *vmThread, J9UTF8 *methodSig)
 					break;
 				}
 				UDATA elementLength = strlen(elementType);
-				j9str_printf(PORTLIB, cursor, availableSize, elementType);
+				j9str_printf(cursor, availableSize, elementType);
 				cursor += elementLength;
 				availableSize -= elementLength;
 			}
 			for(j = 0; j < arity; j++) {
-				j9str_printf(PORTLIB, cursor, availableSize, "[]");
+				j9str_printf(cursor, availableSize, "[]");
 				cursor += 2;
 				availableSize -= 2;
 			}
 
 			if (')' != string[i + 1]) {
-				j9str_printf(PORTLIB, cursor, availableSize, ", ");
+				j9str_printf(cursor, availableSize, ", ");
 				cursor += 2;
 				availableSize -= 2;
 			}
 		}
-		j9str_printf(PORTLIB, cursor, availableSize, ")");
+		j9str_printf(cursor, availableSize, ")");
 	} else {
 		bufferSize = 0;
 	}
@@ -1605,21 +1605,29 @@ simulateStack(J9NPEMessageData *npeMsgData)
 		case RTV_SEND: {
 			J9UTF8 *classSig = NULL;
 
+			Trc_VM_simulateStack_RTVSEND_bcIndex(vmThread, currentBytecode, bcIndex);
 			if (JBinvokeinterface2 == currentBytecode) {
-				/* Set to point to JBinvokeinterface */
+				/* Set to point to JBinvokeinterface. */
 				bcIndex += 2;
+				Trc_VM_simulateStack_RTVSEND_bcIndex2(vmThread, bcIndex);
 			}
 			UDATA index = PARAM_16(bcIndex, 1);
+			Trc_VM_simulateStack_RTVSEND_index(vmThread, index);
 			if (JBinvokestaticsplit == currentBytecode) {
 				index = *(U_16 *)(J9ROMCLASS_STATICSPLITMETHODREFINDEXES(romClass) + index);
+				Trc_VM_simulateStack_RTVSEND_JBinvokestaticsplit_index(vmThread, index);
 			} else if (JBinvokespecialsplit == currentBytecode) {
 				index = *(U_16 *)(J9ROMCLASS_SPECIALSPLITMETHODREFINDEXES(romClass) + index);
-			} else if (JBinvokedynamic == currentBytecode) {
+				Trc_VM_simulateStack_RTVSEND_JBinvokespecialsplit_index(vmThread, index);
+			}
+			if (JBinvokedynamic == currentBytecode) {
 				J9SRP *callSiteData = (J9SRP *) J9ROMCLASS_CALLSITEDATA(romClass);
 				classSig = ((J9UTF8 *) (J9ROMNAMEANDSIGNATURE_SIGNATURE(SRP_PTR_GET(callSiteData + index, J9ROMNameAndSignature*))));
+				Trc_VM_simulateStack_RTVSEND_JBinvokedynamic_classSig(vmThread, J9UTF8_LENGTH(classSig), J9UTF8_DATA(classSig));
 			} else {
 				J9ROMConstantPoolItem *info = &constantPool[index];
 				classSig = ((J9UTF8 *) (J9ROMNAMEANDSIGNATURE_SIGNATURE(J9ROMMETHODREF_NAMEANDSIGNATURE((J9ROMMethodRef *) info))));
+				Trc_VM_simulateStack_RTVSEND_others_classSig(vmThread, J9UTF8_LENGTH(classSig), J9UTF8_DATA(classSig));
 			}
 			stackTop -= getSendSlotsFromSignature(J9UTF8_DATA(classSig));
 

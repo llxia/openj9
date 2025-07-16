@@ -73,7 +73,8 @@ class OMR_EXTENSIBLE TreeEvaluator: public J9::TreeEvaluator
     * Inline Java's (Java 11 onwards) StringLatin1.inflate([BI[CII)V
     */
    static TR::Register *inlineStringLatin1Inflate(TR::Node *node, TR::CodeGenerator *cg);
-   static TR::Register *VMinlineCompareAndSwap( TR::Node *node, TR::CodeGenerator *cg, TR::InstOpCode::Mnemonic casOp, bool isObj);
+   static TR::Register *inlineStringCodingHasNegativesOrCountPositives(TR::Node *node, TR::CodeGenerator *cg, bool isCountPositives);
+   static TR::Register *VMinlineCompareAndSwap( TR::Node *node, TR::CodeGenerator *cg, TR::InstOpCode::Mnemonic casOp, bool isObj, bool isExchange = false);
    static TR::Register *inlineAtomicOps(TR::Node *node, TR::CodeGenerator *cg, int8_t size, TR::MethodSymbol *method, bool isArray = false);
    static TR::Register *inlineAtomicFieldUpdater(TR::Node *node, TR::CodeGenerator *cg, TR::MethodSymbol *method);
    static TR::Register *inlineKeepAlive(TR::Node *node, TR::CodeGenerator *cg);
@@ -126,8 +127,10 @@ class OMR_EXTENSIBLE TreeEvaluator: public J9::TreeEvaluator
     */
    static TR::Register *inlineVectorizedStringIndexOf(TR::Node *node, TR::CodeGenerator *cg, bool isCompressed);
    static TR::Register *inlineIntrinsicIndexOf(TR::Node *node, TR::CodeGenerator *cg, bool isLatin1);
-   static TR::Register *inlineDoubleMax(TR::Node *node, TR::CodeGenerator *cg);
-   static TR::Register *inlineDoubleMin(TR::Node *node, TR::CodeGenerator *cg);
+   static TR::Register *fminEvaluator(TR::Node *node, TR::CodeGenerator *cg);
+   static TR::Register *dminEvaluator(TR::Node *node, TR::CodeGenerator *cg);
+   static TR::Register *fmaxEvaluator(TR::Node *node, TR::CodeGenerator *cg);
+   static TR::Register *dmaxEvaluator(TR::Node *node, TR::CodeGenerator *cg);
    static TR::Register *inlineMathFma(TR::Node *node, TR::CodeGenerator *cg);
 
    /* This Evaluator generates the SIMD routine for methods
@@ -140,6 +143,20 @@ class OMR_EXTENSIBLE TreeEvaluator: public J9::TreeEvaluator
    static TR::Register *inlineUTF16BEEncodeSIMD(TR::Node *node, TR::CodeGenerator *cg);
    static TR::Register* inlineUTF16BEEncode    (TR::Node *node, TR::CodeGenerator *cg);
    static TR::Register *inlineCRC32CUpdateBytes(TR::Node *node, TR::CodeGenerator *cg, bool isDirectBuffer);
+
+   /**
+   * \brief
+   * Accelerate inlining onSpinWait() method.
+   *
+   * \details
+   * onSpinWait() method calls VM_AtomicSupport::yieldCPU() which is a simple NOP instruction on Z.
+   *
+   * \param node the method call node.
+   * \param cg the code generator.
+   *
+   * \return NULL
+   */
+   static TR::Register *inlineOnSpinWait(TR::Node *node, TR::CodeGenerator *cg);
 
    static TR::Register *zdloadEvaluator(TR::Node *node, TR::CodeGenerator *cg);
    static TR::Register *zdloadiEvaluator(TR::Node *node, TR::CodeGenerator *cg);
@@ -225,6 +242,7 @@ class OMR_EXTENSIBLE TreeEvaluator: public J9::TreeEvaluator
    static TR::Register *resolveAndNULLCHKEvaluator(TR::Node *node, TR::CodeGenerator *cg);
    static TR::Register *evaluateNULLCHKWithPossibleResolve(TR::Node *node, bool needResolution, TR::CodeGenerator *cg);
    static float interpreterProfilingInstanceOfOrCheckCastTopProb(TR::CodeGenerator * cg, TR::Node * node);
+   static TR::Register *inlineCheckAssignableFromEvaluator(TR::Node *node, TR::CodeGenerator *cg);
 
    /**
     * \brief
@@ -452,6 +470,7 @@ class OMR_EXTENSIBLE TreeEvaluator: public J9::TreeEvaluator
                                                          bool ignoreDecimalOverflow = false);
 
    static TR::Register *pdchkEvaluator(TR::Node *node, TR::CodeGenerator *cg);
+   static TR::Register *zdchkEvaluator(TR::Node *node, TR::CodeGenerator *cg);
 
    static TR::Register *pdcmpeqEvaluator(TR::Node *node, TR::CodeGenerator *cg);
    static TR::Register *pdcmpneEvaluator(TR::Node *node, TR::CodeGenerator *cg);

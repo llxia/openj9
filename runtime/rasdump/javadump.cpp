@@ -30,8 +30,6 @@
 #include <malloc.h>
 #elif defined(LINUX) || defined(AIXPPC)
 #include <alloca.h>
-#elif defined(J9ZOS390)
-#include <stdlib.h>
 #endif
 #if defined(J9ZTPF)
 #include <sys/mman.h>
@@ -88,10 +86,11 @@
 
 /* Callback Function prototypes */
 UDATA writeFrameCallBack          (J9VMThread* vmThread, J9StackWalkState* state);
-UDATA writeExceptionFrameCallBack (J9VMThread* vmThread, void* userData, UDATA bytecodeOffset, J9ROMClass* romClass, J9ROMMethod* romMethod, J9UTF8* sourceFile, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass);
+UDATA writeExceptionFrameCallBack (J9VMThread* vmThread, void* userData, UDATA bytecodeOffset, J9ROMClass* romClass, J9ROMMethod* romMethod, J9UTF8* sourceFile, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass, UDATA frameType);
 void  writeLoaderCallBack         (void* classLoader, void* userData);
 void  writeLibrariesCallBack      (void* classLoader, void* userData);
 void  writeClassesCallBack        (void* classLoader, void* userData);
+void  writeOutlivingLoadersCallBack(void *classLoader, void *userData);
 static UDATA outerMemCategoryCallBack (U_32 categoryCode, const char * categoryName, UDATA liveBytes, UDATA liveAllocations, BOOLEAN isRoot, U_32 parentCategoryCode, OMRMemCategoryWalkState * state);
 static UDATA innerMemCategoryCallBack (U_32 categoryCode, const char * categoryName, UDATA liveBytes, UDATA liveAllocations, BOOLEAN isRoot, U_32 parentCategoryCode, OMRMemCategoryWalkState * state);
 
@@ -242,10 +241,11 @@ private :
 
 	/* Allow the callback functions access */
 	friend UDATA writeFrameCallBack          (J9VMThread* vmThread, J9StackWalkState* state);
-	friend UDATA writeExceptionFrameCallBack (J9VMThread* vmThread, void* userData, UDATA bytecodeOffset, J9ROMClass* romClass, J9ROMMethod* romMethod, J9UTF8* sourceFile, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass);
+	friend UDATA writeExceptionFrameCallBack (J9VMThread* vmThread, void* userData, UDATA bytecodeOffset, J9ROMClass* romClass, J9ROMMethod* romMethod, J9UTF8* sourceFile, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass, UDATA frameType);
 	friend void  writeLoaderCallBack         (void* classLoader, void* userData);
 	friend void  writeLibrariesCallBack      (void* classLoader, void* userData);
 	friend void  writeClassesCallBack        (void* classLoader, void* userData);
+	friend void  writeOutlivingLoadersCallBack(void *classLoader, void *userData);
 	friend UDATA outerMemCategoryCallBack (U_32 categoryCode, const char * categoryName, UDATA liveBytes, UDATA liveAllocations, BOOLEAN isRoot, U_32 parentCategoryCode, OMRMemCategoryWalkState * state);
 	friend UDATA innerMemCategoryCallBack (U_32 categoryCode, const char * categoryName, UDATA liveBytes, UDATA liveAllocations, BOOLEAN isRoot, U_32 parentCategoryCode, OMRMemCategoryWalkState * state);
 
@@ -318,7 +318,8 @@ private :
 	void writeSharedClassSection(void);
 	void writeSharedClassSectionTopLayerStatsHelper(J9SharedClassJavacoreDataDescriptor* javacoreData, bool multiLayerStats);
 	void writeSharedClassSectionTopLayerStatsSummaryHelper(J9SharedClassJavacoreDataDescriptor* javacoreData);
-	void writeSharedClassSectionAllLayersStatsHelper(J9SharedClassJavacoreDataDescriptor* javacoreData);
+	void writeSharedClassSectionAllLayersStatsSummaryHelper(J9SharedClassJavacoreDataDescriptor* javacoreData);
+	void writeSharedClassSectionEachLayerStatsHelper(J9SharedClassJavacoreDataDescriptor* javacoreData);
 
 #endif
 	void writeTrailer(void);
@@ -347,6 +348,7 @@ private :
 	void        writeLoader                  (J9ClassLoader* classLoader);
 	void        writeLibraries               (J9ClassLoader* classLoader);
 	void        writeClasses                 (J9ClassLoader* classLoader);
+	void        writeOutlivingLoaders        (J9ClassLoader *classLoader);
 	void        writeEventDrivenTitle        (void);
 	void        writeUserRequestedTitle      (void);
 	void        writeNativeAllocator         (const char * name, U_32 depth, BOOLEAN isRoot, UDATA liveBytes, UDATA liveAllocations);
@@ -2801,6 +2803,16 @@ JavaCoreDumpWriter::writeClassSection(void)
 
 	pool_do(_VirtualMachine->classLoaderBlocks, writeClassesCallBack, this);
 
+	/* Write the sub-section header. */
+	_OutputStream.writeCharacters(
+		"1CLTEXTCLOLL   \tClassLoader outliving loaders\n"
+	);
+
+	if (!avoidLocks() && !omrthread_monitor_try_enter(_VirtualMachine->classTableMutex)) {
+		pool_do(_VirtualMachine->classLoaderBlocks, writeOutlivingLoadersCallBack, this);
+		omrthread_monitor_exit(_VirtualMachine->classTableMutex);
+	}
+
 	/* Write the section trailer */
 	_OutputStream.writeCharacters(
 		"NULL           ------------------------------------------------------------------------\n"
@@ -3395,7 +3407,7 @@ JavaCoreDumpWriter::writeSharedClassSectionTopLayerStatsSummaryHelper(J9SharedCl
 }
 
 void
-JavaCoreDumpWriter::writeSharedClassSectionAllLayersStatsHelper(J9SharedClassJavacoreDataDescriptor* javacoreData)
+JavaCoreDumpWriter::writeSharedClassSectionAllLayersStatsSummaryHelper(J9SharedClassJavacoreDataDescriptor* javacoreData)
 {
 	_OutputStream.writeCharacters(
 			"2SCLTEXTRCB            ROMClass bytes                            = "
@@ -3541,6 +3553,44 @@ JavaCoreDumpWriter::writeSharedClassSectionAllLayersStatsHelper(J9SharedClassJav
 }
 
 void
+JavaCoreDumpWriter::writeSharedClassSectionEachLayerStatsHelper(J9SharedClassJavacoreDataDescriptor* javacoreData)
+{
+	if (NULL == javacoreData) {
+		return;
+	}
+	if (NULL == _VirtualMachine->sharedClassConfig) {
+		return;
+	}
+	J9SharedClassCacheDescriptor *curCache = _VirtualMachine->sharedClassConfig->cacheDescriptorList;
+	if (NULL == curCache) {
+		return;
+	}
+	UDATA currentOSPageSize = javacoreData->currentOSPageSize;
+	I_8 layer = javacoreData->topLayer;
+	bool headerPrinted = false;
+	do {
+		if (currentOSPageSize != curCache->osPageSizeInHeader) {
+			if (!headerPrinted) {
+				_OutputStream.writeCharacters(
+						"NULL\n"
+						"1SCLTEXTCISL   Cache Info for a single layer\n"
+						"NULL\n"
+						"1SCLTEXTCLYR       Cache Layer    Page Size in header    current OS page size\n"
+						"NULL\n"
+				);
+				headerPrinted = true;
+			}
+			_OutputStream.writeCharacters("1SCLTEXTOSPG       ");
+			_OutputStream.writeInteger(layer, "%-15d");
+			_OutputStream.writeInteger(curCache->osPageSizeInHeader, "%-23zu");
+			_OutputStream.writeInteger(currentOSPageSize, "%zu\n");
+		}
+		layer -= 1;
+		curCache = curCache->next;
+	} while ((curCache != _VirtualMachine->sharedClassConfig->cacheDescriptorList) && (NULL != curCache));
+}
+
+void
 JavaCoreDumpWriter::writeSharedClassSection(void)
 {
 	J9SharedClassJavacoreDataDescriptor javacoreData;
@@ -3575,12 +3625,14 @@ JavaCoreDumpWriter::writeSharedClassSection(void)
 				"1SCLTEXTCSAL   Cache Statistics for All Layers\n"
 				"NULL\n"
 			);
-			writeSharedClassSectionAllLayersStatsHelper(&javacoreData);
+			writeSharedClassSectionAllLayersStatsSummaryHelper(&javacoreData);
 		} else {
 			writeSharedClassSectionTopLayerStatsHelper(&javacoreData, multiLayerStats);
-			writeSharedClassSectionAllLayersStatsHelper(&javacoreData);
+			writeSharedClassSectionAllLayersStatsSummaryHelper(&javacoreData);
 			writeSharedClassSectionTopLayerStatsSummaryHelper(&javacoreData);
 		}
+
+		writeSharedClassSectionEachLayerStatsHelper(&javacoreData);
 
 		/* Write the section trailer */
 		_OutputStream.writeCharacters(
@@ -4274,7 +4326,9 @@ JavaCoreDumpWriter::writeMonitorObject(J9ThreadMonitor* monitor, j9object_t obj,
 	if (NULL != obj) {
 		owner = getObjectMonitorOwner(_VirtualMachine, obj, &count);
 	} else if (NULL != lockOwner) {
-		owner = getVMThreadFromOMRThread(_VirtualMachine, lockOwner);
+		if (!IS_J9_OBJECT_MONITOR_OWNER_DETACHED(lockOwner)) {
+			owner = getVMThreadFromOMRThread(_VirtualMachine, lockOwner);
+		}
 		count = lock->count;
 	}
 
@@ -4299,7 +4353,16 @@ JavaCoreDumpWriter::writeMonitorObject(J9ThreadMonitor* monitor, j9object_t obj,
 	/* Describe its owning thread */
 	bool inflated = J9_ARE_ANY_BITS_SET(lock->flags, J9THREAD_MONITOR_INFLATED);
 
-	if ((NULL != owner) || (NULL != lockOwner)) {
+	if (IS_J9_OBJECT_MONITOR_OWNER_DETACHED(lockOwner)) {
+		if (inflated) {
+			_OutputStream.writeCharacters("owner \"");
+		} else {
+			_OutputStream.writeCharacters("Flat locked by \"");
+		}
+		_OutputStream.writeCharacters("<detached virtual thread>");
+		_OutputStream.writeCharacters(", entry count ");
+		_OutputStream.writeInteger(count, "%zu");
+	} else if ((NULL != owner) || (NULL != lockOwner)) {
 		if (inflated) {
 			_OutputStream.writeCharacters("owner \"");
 		} else {
@@ -4505,6 +4568,8 @@ JavaCoreDumpWriter::writeThread(J9VMThread* vmThread, J9PlatformThread *nativeTh
 		/* Replace vmstate with java state in the "3XMTHREADINFO" entry */
 		_OutputStream.writeCharacters(", state:");
 		writeThreadState(javaState);
+		_OutputStream.writeCharacters(", rawStateValue:");
+		_OutputStream.writeInteger(javaState);
 
 		_OutputStream.writeCharacters(", prio=");
 		_OutputStream.writeInteger(javaPriority, "%zu");
@@ -5486,6 +5551,54 @@ JavaCoreDumpWriter::writeClasses(J9ClassLoader* classLoader)
 
 /**************************************************************************************************/
 /*                                                                                                */
+/* JavaCoreDumpWriter::writeOutlivingLoaders() method implementation                              */
+/*                                                                                                */
+/**************************************************************************************************/
+void
+JavaCoreDumpWriter::writeOutlivingLoaders(J9ClassLoader *classLoader)
+{
+	_OutputStream.writeCharacters("2CLTEXTJ9CLLOAD\t\t");
+
+	_OutputStream.writeCharacters("J9ClassLoader(");
+	_OutputStream.writePointer(classLoader);
+	_OutputStream.writeCharacters(") obj(");
+	_OutputStream.writePointer(getClassLoaderObject(classLoader));
+	_OutputStream.writeCharacters(")");
+	if (classLoader == _VirtualMachine->systemClassLoader) {
+		_OutputStream.writeCharacters(" system");
+	} else if (classLoader == _VirtualMachine->applicationClassLoader) {
+		_OutputStream.writeCharacters(" application");
+	} else if (classLoader == _VirtualMachine->extensionClassLoader) {
+		_OutputStream.writeCharacters(" extension");
+	} else if (classLoader == _VirtualMachine->anonClassLoader) {
+		_OutputStream.writeCharacters(" anonymous");
+	}
+
+	if (J9CLASSLOADER_OUTLIVING_LOADERS_PERMANENT == classLoader->outlivingLoaders) {
+		_OutputStream.writeCharacters(" (permanent)\n");
+		return;
+	}
+
+	_OutputStream.writeCharacters("\n");
+	if (J9_ARE_ANY_BITS_SET((UDATA)classLoader->outlivingLoaders, J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG)) {
+		_OutputStream.writeCharacters("3CLTEXTOUTLIVIN\t\t\t");
+		_OutputStream.writePointer((J9ClassLoader *)((UDATA)classLoader->outlivingLoaders & ~(UDATA)J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG));
+		_OutputStream.writeCharacters("\n");
+	} else if (NULL != classLoader->outlivingLoaders) {
+		J9HashTable *table = (J9HashTable *)classLoader->outlivingLoaders;
+		J9HashTableState state;
+		J9ClassLoader **entry = (J9ClassLoader **)hashTableStartDo(table, &state);
+		while (NULL != entry) {
+			_OutputStream.writeCharacters("3CLTEXTOUTLIVIN\t\t\t");
+			_OutputStream.writePointer(*entry);
+			_OutputStream.writeCharacters("\n");
+			entry = (J9ClassLoader **)hashTableNextDo(&state);
+		}
+	}
+}
+
+/**************************************************************************************************/
+/*                                                                                                */
 /* JavaCoreDumpWriter::getClassLoaderObject() method implementation                               */
 /*                                                                                                */
 /**************************************************************************************************/
@@ -5711,6 +5824,12 @@ writeClassesCallBack(void* classLoader, void* userData)
 	((JavaCoreDumpWriter*)(userData))->writeClasses((J9ClassLoader*)classLoader);
 }
 
+void
+writeOutlivingLoadersCallBack(void *classLoader, void *userData)
+{
+	((JavaCoreDumpWriter *)userData)->writeOutlivingLoaders((J9ClassLoader *)classLoader);
+}
+
 UDATA
 writeFrameCallBack(J9VMThread* vmThread, J9StackWalkState* state)
 {
@@ -5718,7 +5837,7 @@ writeFrameCallBack(J9VMThread* vmThread, J9StackWalkState* state)
 }
 
 UDATA
-writeExceptionFrameCallBack(J9VMThread* vmThread, void* userData, UDATA bytecodeOffset, J9ROMClass* romClass, J9ROMMethod* romMethod, J9UTF8* sourceFile, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass)
+writeExceptionFrameCallBack(J9VMThread* vmThread, void* userData, UDATA bytecodeOffset, J9ROMClass* romClass, J9ROMMethod* romMethod, J9UTF8* sourceFile, UDATA lineNumber, J9ClassLoader* classLoader, J9Class* ramClass, UDATA frameType)
 {
 	JavaCoreDumpWriter *jcdw = (JavaCoreDumpWriter *)((J9StackWalkState*)userData)->userData1;
 	return jcdw->writeExceptionFrame(userData, romClass, romMethod, sourceFile, lineNumber);
@@ -5746,6 +5865,7 @@ spaceIteratorCallback(J9JavaVM* virtualMachine, J9MM_IterateSpaceDescriptor* spa
 	UDATA sizeTarget = 0;
 	UDATA allocTotal = 0;
 	UDATA freeTotal = 0;
+	UDATA offheapUsage = 0;
 #if defined (J9VM_GC_VLHGC)
 	regioniterationblock regionTotals;
 #endif /* J9VM_GC_VLHGC */
@@ -5801,6 +5921,23 @@ spaceIteratorCallback(J9JavaVM* virtualMachine, J9MM_IterateSpaceDescriptor* spa
 		jcw->_OutputStream.writeCharacters(" ");
 		jcw->_OutputStream.writeCharacters(spaceDescriptor->name);
 		jcw->_OutputStream.writeCharacters("\n");
+
+		if (virtualMachine->memoryManagerFunctions->j9gc_off_heap_allocation_enabled(virtualMachine)) {
+			void *offheapControlStructure = NULL;
+			void *offheapBase = NULL;
+			void *offheapTop = NULL;
+			virtualMachine->memoryManagerFunctions->j9gc_get_offheap_data(virtualMachine, &offheapControlStructure, &offheapBase, &offheapTop, &offheapUsage);
+
+			jcw->_OutputStream.writeCharacters("1STHEAPEXT     ");
+			jcw->_OutputStream.writePointer(offheapControlStructure);
+			jcw->_OutputStream.writeCharacters(" ");
+			jcw->_OutputStream.writePointer(offheapBase);
+			jcw->_OutputStream.writeCharacters(" ");
+			jcw->_OutputStream.writePointer(offheapTop);
+			jcw->_OutputStream.writeCharacters(" ");
+			jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_HEX, sizeof(void *) * 2, (UDATA)offheapTop - (UDATA)offheapBase);
+			jcw->_OutputStream.writeCharacters(" VirtualLargeObjectHeap (off-heap)\n");
+		}
 #endif /* J9VM_GC_VLHGC */
 	}
 
@@ -5813,27 +5950,45 @@ spaceIteratorCallback(J9JavaVM* virtualMachine, J9MM_IterateSpaceDescriptor* spa
 
 	jcw->_OutputStream.writeCharacters("NULL\n");
 	jcw->_OutputStream.writeCharacters("1STHEAPTOTAL   ");
-	jcw->_OutputStream.writeCharacters("Total memory:        ");
+	jcw->_OutputStream.writeCharacters("Total memory:          ");
 	jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_DECIMAL, decimalLength, sizeTotal);
 	jcw->_OutputStream.writeCharacters(" (");
 	jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_HEX, sizeof(void *) * 2, sizeTotal);
 	jcw->_OutputStream.writeCharacters(")\n");
 	if (0 != sizeTarget) {
 		jcw->_OutputStream.writeCharacters("1STHEAPTARGET  ");
-		jcw->_OutputStream.writeCharacters("Target memory:       ");
+		jcw->_OutputStream.writeCharacters("Target memory:         ");
 		jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_DECIMAL, decimalLength, sizeTarget);
 		jcw->_OutputStream.writeCharacters(" (");
 		jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_HEX, sizeof(void *) * 2, sizeTarget);
 		jcw->_OutputStream.writeCharacters(")\n");
 	}
 	jcw->_OutputStream.writeCharacters("1STHEAPINUSE   ");
-	jcw->_OutputStream.writeCharacters("Total memory in use: ");
+	jcw->_OutputStream.writeCharacters("Total memory in use:   ");
 	jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_DECIMAL, decimalLength, allocTotal);
 	jcw->_OutputStream.writeCharacters(" (");
 	jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_HEX, sizeof(void *) * 2, allocTotal);
 	jcw->_OutputStream.writeCharacters(")\n");
+	if (virtualMachine->memoryManagerFunctions->j9gc_off_heap_allocation_enabled(virtualMachine)) {
+		jcw->_OutputStream.writeCharacters("2STHEAPSPCUSE  ");
+		jcw->_OutputStream.writeCharacters(spaceDescriptor->name);
+		jcw->_OutputStream.writeCharacters(" memory in use:");
+		jcw->_OutputStream.writeVPrintf(
+				FORMAT_SIZE_DECIMAL,
+				decimalLength + LITERAL_STRLEN("Off-heap") - strlen(spaceDescriptor->name),
+				allocTotal - offheapUsage);
+		jcw->_OutputStream.writeCharacters(" (");
+		jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_HEX, sizeof(void *) * 2, allocTotal - offheapUsage);
+		jcw->_OutputStream.writeCharacters(")\n");
+		jcw->_OutputStream.writeCharacters("2STHEAPEXTUSE  ");
+		jcw->_OutputStream.writeCharacters("Off-heap memory in use:");
+		jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_DECIMAL, decimalLength, offheapUsage);
+		jcw->_OutputStream.writeCharacters(" (");
+		jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_HEX, sizeof(void *) * 2, offheapUsage);
+		jcw->_OutputStream.writeCharacters(")\n");
+	}
 	jcw->_OutputStream.writeCharacters("1STHEAPFREE    ");
-	jcw->_OutputStream.writeCharacters("Total memory free:   ");
+	jcw->_OutputStream.writeCharacters("Total memory free:     ");
 	jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_DECIMAL, decimalLength, freeTotal);
 	jcw->_OutputStream.writeCharacters(" (");
 	jcw->_OutputStream.writeVPrintf(FORMAT_SIZE_HEX, sizeof(void *) * 2, freeTotal);

@@ -28,7 +28,7 @@ extern "C" {
 #endif
 
 
-#if (defined(__IBMCPP__) || defined(__IBMC__) && !defined(MVS)) && !defined(J9ZOS390) && !defined(LINUXPPC64)
+#if (defined(__IBMCPP__) || defined(__IBMC__) && !defined(__MVS__) || defined(__open_xl__)) && !defined(J9ZOS390) && !defined(LINUXPPC64)
 #if defined(AIXPPC)
 #define JIT_HELPER(x) extern "C" void * x
 #else
@@ -143,6 +143,7 @@ JIT_HELPER(jitThrowCurrentException);  // asm calling-convention helper
 JIT_HELPER(jitThrowException);  // asm calling-convention helper
 JIT_HELPER(jitThrowUnreportedException);  // asm calling-convention helper
 JIT_HELPER(jitThrowExceptionInInitializerError);  // asm calling-convention helper
+JIT_HELPER(jitThrowIdentityException);  // asm calling-convention helper
 JIT_HELPER(jitThrowInstantiationException);  // asm calling-convention helper
 JIT_HELPER(jitThrowNullPointerException);  // asm calling-convention helper
 JIT_HELPER(jitThrowWrongMethodTypeException);  // asm calling-convention helper

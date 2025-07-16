@@ -164,7 +164,7 @@ Java_java_lang_StackWalker_walkWrapperImpl(JNIEnv *env, jclass clazz, jint flags
 		Assert_JCL_notNull(walkImplMID);
 		JCL_CACHE_SET(env, MID_java_lang_StackWalker_walkImpl, walkImplMID);
 	}
-	jobject result = env->CallStaticObjectMethod(clazz, walkImplMID, function, (jlong)(IDATA)walkState);
+	jobject result = env->CallStaticObjectMethod(clazz, walkImplMID, function, JLONG_FROM_POINTER(walkState));
 
 	if (NULL != walkerMethodChars) {
 		env->ReleaseStringUTFChars(stackWalkerMethod, walkerMethodChars);
@@ -192,6 +192,7 @@ Java_java_lang_StackWalker_walkContinuationImpl(JNIEnv *env, jclass clazz, jint 
 	J9VMThread stackThread = {0};
 	J9VMEntryLocalStorage els = {0};
 
+	stackThread.javaVM = vm;
 	enterVMFromJNI(vmThread);
 	j9object_t continuationObject = J9_JNI_UNWRAP_REFERENCE(cont);
 	J9VMContinuation *continuation = J9VMJDKINTERNALVMCONTINUATION_VMREF(vmThread, continuationObject);
@@ -229,7 +230,7 @@ Java_java_lang_StackWalker_walkContinuationImpl(JNIEnv *env, jclass clazz, jint 
 		Assert_JCL_notNull (walkImplMID);
 		JCL_CACHE_SET(env, MID_java_lang_StackWalker_walkImpl, walkImplMID);
 	}
-	jobject result = env->CallStaticObjectMethod(clazz, walkImplMID, function, (jlong)(UDATA)&walkState);
+	jobject result = env->CallStaticObjectMethod(clazz, walkImplMID, function, JLONG_FROM_POINTER(&walkState));
 
 	return result;
 }

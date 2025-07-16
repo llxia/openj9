@@ -24,6 +24,7 @@
 
 #include "control/Options.hpp"
 #include "env/ClassLoaderTable.hpp"
+#include "env/DependencyTable.hpp"
 #include "env/annotations/AnnotationBase.hpp"
 #include "env/ut_j9jit.h"
 #include "control/CompilationRuntime.hpp"
@@ -71,12 +72,12 @@ static IDATA initializeCompilerArgs(J9JavaVM* vm,
    const char *fatalErrorStr = NULL;
    if (isXjit)
       {
-      VMOPT_WITH_COLON = J9::Options::_externalOptionStrings[J9::ExternalOptions::Xjitcolon];
+      VMOPT_WITH_COLON = J9::Options::getExternalOptionString(J9::ExternalOptions::Xjitcolon);
       fatalErrorStr = "no arguments for -Xjit:";
       }
    else
       {
-      VMOPT_WITH_COLON = J9::Options::_externalOptionStrings[J9::ExternalOptions::Xaotcolon];
+      VMOPT_WITH_COLON = J9::Options::getExternalOptionString(J9::ExternalOptions::Xaotcolon);
       fatalErrorStr = "no arguments for -Xaot:";
       }
 
@@ -269,47 +270,33 @@ IDATA J9VMDllMain(J9JavaVM* vm, IDATA stage, void * reserved)
             return J9VMDLLMAIN_FAILED;
             }
 
-         /* Find and consume these before the library might be unloaded */
-         FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xnodfpbd], 0);
-         if (FIND_ARG_IN_VMARGS(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xdfpbd], 0) >= 0)
-            {
-            FIND_AND_CONSUME_VMARG( EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xhysteresis], 0);
-            }
-         FIND_AND_CONSUME_VMARG( EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xnoquickstart], 0); // deprecated
-         FIND_AND_CONSUME_VMARG(STARTSWITH_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xtuneelastic], 0);
-         argIndexQuickstart = FIND_AND_CONSUME_VMARG( EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xquickstart], 0);
-         tlhPrefetch = FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XtlhPrefetch], 0);
-         notlhPrefetch = FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XnotlhPrefetch], 0);
-         lockReservation = FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XlockReservation], 0);
-         FIND_AND_CONSUME_VMARG(EXACT_MEMORY_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xcodecache], 0);
-         FIND_AND_CONSUME_VMARG(STARTSWITH_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XjniAcc], 0);
-         FIND_AND_CONSUME_VMARG(EXACT_MEMORY_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xcodecachetotal], 0);
-         FIND_AND_CONSUME_VMARG(EXACT_MEMORY_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXcodecachetotal], 0);
+         // Update arg index for args that are consumed by the JIT
+         J9::Options::findExternalOptions(vm);
 
-         FIND_AND_CONSUME_VMARG(STARTSWITH_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xlpcodecache], 0);
+         argIndexQuickstart = J9::Options::getExternalOptionIndex(J9::ExternalOptions::Xquickstart);
+         tlhPrefetch = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XtlhPrefetch);
+         notlhPrefetch = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XnotlhPrefetch);
+         lockReservation = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XlockReservation);
 
-         FIND_AND_CONSUME_VMARG(EXACT_MEMORY_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XsamplingExpirationTime], 0);
-         FIND_AND_CONSUME_VMARG(EXACT_MEMORY_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XcompilationThreads], 0);
-         FIND_AND_CONSUME_VMARG(EXACT_MEMORY_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XaggressivenessLevel], 0);
-         argIndexXjit = FIND_AND_CONSUME_VMARG(OPTIONAL_LIST_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xjit], 0);
-         argIndexXaot = FIND_AND_CONSUME_VMARG(OPTIONAL_LIST_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xaot], 0);
-         argIndexXnojit = FIND_AND_CONSUME_VMARG(OPTIONAL_LIST_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xnojit], 0);
+         argIndexXjit = J9::Options::getExternalOptionIndex(J9::ExternalOptions::Xjit);
+         argIndexXaot = J9::Options::getExternalOptionIndex(J9::ExternalOptions::Xaot);
+         argIndexXnojit = J9::Options::getExternalOptionIndex(J9::ExternalOptions::Xnojit);
 
-         argIndexRIEnabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXplusRuntimeInstrumentation], 0);
-         argIndexRIDisabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXminusRuntimeInstrumentation], 0);
+         argIndexRIEnabled = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XXplusRuntimeInstrumentation);
+         argIndexRIDisabled = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XXminusRuntimeInstrumentation);
 
          // Determine if user disabled Runtime Instrumentation
          if (argIndexRIEnabled >= 0 || argIndexRIDisabled >= 0)
             TR::Options::_hwProfilerEnabled = (argIndexRIDisabled > argIndexRIEnabled) ? TR_no : TR_yes;
 
-         argIndexPerfEnabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXplusPerfTool], 0);
-         argIndexPerfDisabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXminusPerfTool], 0);
+         argIndexPerfEnabled = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XXplusPerfTool);
+         argIndexPerfDisabled = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XXminusPerfTool);
 
          // Determine if user disabled PerfTool
          if (argIndexPerfEnabled >= 0 || argIndexPerfDisabled >= 0)
             TR::Options::_perfToolEnabled = (argIndexPerfDisabled > argIndexPerfEnabled) ? TR_no : TR_yes;
 
-         TR::Options::_doNotProcessEnvVars = (FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXdoNotProcessJitEnvVars], 0) >= 0);
+         TR::Options::_doNotProcessEnvVars = (J9::Options::getExternalOptionIndex(J9::ExternalOptions::XXdoNotProcessJitEnvVars) >= 0);
 
          isQuickstart = J9_ARE_ANY_BITS_SET(vm->extendedRuntimeFlags2, J9_EXTENDED_RUNTIME2_TUNE_QUICKSTART);
 
@@ -415,11 +402,14 @@ IDATA J9VMDllMain(J9JavaVM* vm, IDATA stage, void * reserved)
       case JIT_INITIALIZED :
          if (isJIT || isAOT)
             {
+            // Update arg index for args that are not consumed by the JIT
+            J9::Options::findExternalOptions(vm, false);
+
             /* We need to initialize the following if we allow JIT compilation, AOT compilation or AOT relocation to be done */
             try
                {
-               argIndexMergeOptionsEnabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXplusMergeCompilerOptions], 0);
-               argIndexMergeOptionsDisabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXminusMergeCompilerOptions], 0);
+               argIndexMergeOptionsEnabled = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XXplusMergeCompilerOptions);
+               argIndexMergeOptionsDisabled = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XXminusMergeCompilerOptions);
 
                // Determine if user wants to merge compiler options
                bool mergeCompilerOptions = false;
@@ -429,8 +419,8 @@ IDATA J9VMDllMain(J9JavaVM* vm, IDATA stage, void * reserved)
                /*
                 * Note that the option prefix we need to match includes the colon.
                 */
-               argIndexXjit = FIND_ARG_IN_VMARGS( STARTSWITH_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xjitcolon], 0);
-               argIndexXaot = FIND_ARG_IN_VMARGS( STARTSWITH_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xaotcolon], 0);
+               argIndexXjit = J9::Options::getExternalOptionIndex(J9::ExternalOptions::Xjitcolon);
+               argIndexXaot = J9::Options::getExternalOptionIndex(J9::ExternalOptions::Xaotcolon);
 
                /* do initializations for -Xjit options */
                if (isJIT && argIndexXjit >= 0)
@@ -440,8 +430,6 @@ IDATA J9VMDllMain(J9JavaVM* vm, IDATA stage, void * reserved)
                      return rc;
                   }
 
-               codert_onload(vm);
-
                /* do initializations for -Xaot options */
                if (isAOT && argIndexXaot >= 0)
                   {
@@ -449,6 +437,8 @@ IDATA J9VMDllMain(J9JavaVM* vm, IDATA stage, void * reserved)
                   if (rc)
                      return rc;
                   }
+
+               codert_onload(vm);
 
                jitConfig = vm->jitConfig;
 
@@ -504,7 +494,7 @@ IDATA J9VMDllMain(J9JavaVM* vm, IDATA stage, void * reserved)
 #if defined(J9VM_OPT_SHARED_CLASSES)
          // ENABLE_AOT must be set AND the shared class must be properly initialized
          UDATA aotFlags = J9SHR_RUNTIMEFLAG_CACHE_INITIALIZATION_COMPLETE;
-         if (vm->sharedClassConfig && ((vm->sharedClassConfig->runtimeFlags & aotFlags) == aotFlags))
+         if (vm->sharedClassConfig && ((vm->sharedClassConfig->runtimeFlags & aotFlags) == aotFlags) && TR::Options::getAggressivityLevel() != OMR::Options::AGGRESSIVE_THROUGHPUT)
             {
             TR::Options::setSharedClassCache(true); // Set to true as long as cache is present and initialized
 
@@ -513,9 +503,20 @@ IDATA J9VMDllMain(J9JavaVM* vm, IDATA stage, void * reserved)
             if (sharedCache != NULL)
                {
                TR_PersistentMemory *persistentMemory = (TR_PersistentMemory *)(vm->jitConfig->scratchSegment);
-               TR_PersistentClassLoaderTable *loaderTable = persistentMemory->getPersistentInfo()->getPersistentClassLoaderTable();
+               auto persistentInfo = persistentMemory->getPersistentInfo();
+               TR_PersistentClassLoaderTable *loaderTable = persistentInfo->getPersistentClassLoaderTable();
                sharedCache->setPersistentClassLoaderTable(loaderTable);
                loaderTable->setSharedCache(sharedCache);
+
+#if !defined(PERSISTENT_COLLECTIONS_UNSUPPORTED)
+               if (persistentInfo->getTrackAOTDependencies() && !TR::Options::getCmdLineOptions()->getOption(TR_DisableCHOpts))
+                  {
+                  TR_AOTDependencyTable *dependencyTable = new (PERSISTENT_NEW) TR_AOTDependencyTable(sharedCache);
+                  persistentInfo->setAOTDependencyTable(dependencyTable);
+                  }
+#endif /* !defined(PERSISTENT_COLLECTIONS_UNSUPPORTED) */
+               if (!persistentInfo->getAOTDependencyTable())
+                  persistentInfo->setTrackAOTDependencies(false);
                }
             }
          else
@@ -631,7 +632,7 @@ IDATA J9VMDllMain(J9JavaVM* vm, IDATA stage, void * reserved)
                   continue;
 
                //char threadName[32]; // make sure the name below does not exceed 32 chars
-               //sprintf(threadName, "JIT Compilation Thread-%d", curCompThreadInfoPT->getCompThreadId());
+               //snprintf(threadName, sizeof(threadName), "JIT Compilation Thread-%d", curCompThreadInfoPT->getCompThreadId());
 
                char *threadName = (
                   curCompThreadInfoPT->compilationThreadIsActive() ?

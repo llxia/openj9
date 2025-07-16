@@ -257,12 +257,15 @@ TR::CodeCache*
 J9::CodeCacheManager::reserveCodeCache(bool compilationCodeAllocationsMustBeContiguous,
                                       size_t sizeEstimate,
                                       int32_t compThreadID,
-                                      int32_t *numReserved)
+                                      int32_t *numReserved,
+                                      TR::CodeCacheKind kind)
    {
    TR::CodeCache *codeCache = self()->OMR::CodeCacheManager::reserveCodeCache(compilationCodeAllocationsMustBeContiguous,
                                                                             sizeEstimate,
                                                                             compThreadID,
-                                                                            numReserved);
+                                                                            numReserved,
+                                                                            kind);
+
    if (codeCache == NULL)
       {
       J9JITConfig *jitConfig = self()->fej9()->getJ9JITConfig();
@@ -305,14 +308,7 @@ J9::CodeCacheManager::allocateCodeCacheSegment(size_t segmentSize,
    if (config.largeCodePageSize() > pageSizes[0])
       largeCodePageSize = config.largeCodePageSize();
 
-#if defined(TR_TARGET_POWER) && defined(TR_HOST_POWER)
-   /* Use largeCodePageSize on PPC only if its 16M.
-    If we pass in any pagesize other than the default page size, the port library picks the shared memory api to allocate which wastes memory */
-   size_t sixteenMegs = 16 * 1024 * 1024;
-   if (largeCodePageSize == sixteenMegs)
-#else
    if (largeCodePageSize > 0)
-#endif
       {
       vmemParams.pageSize = largeCodePageSize;
       vmemParams.pageFlags = config.largeCodePageFlags();
@@ -743,13 +739,15 @@ J9::CodeCacheManager::almostOutOfCodeCache()
 
    TR::CodeCacheConfig &config = self()->codeCacheConfig();
 
-   // If we can allocate another code cache we are fine
-   // Put common case first
+   // If we can allocate another code cache we are fine.
+   // Put common case first.
    if (self()->canAddNewCodeCache())
+      {
       return false;
+      }
    else
       {
-      // Check the space in the most current code cache
+      // Check the space in the most current code cache.
       bool foundSpace = false;
 
          {
@@ -767,6 +765,7 @@ J9::CodeCacheManager::almostOutOfCodeCache()
       if (!foundSpace)
          {
          _lowCodeCacheSpaceThresholdReached = true;   // Flag can be checked under debugger
+         _jitConfig->lowCodeCacheFreeSpace = 1;
          if (config.verbosePerformance())
             {
             TR_VerboseLog::writeLineLocked(TR_Vlog_CODECACHE,"Reached code cache space threshold. Disabling JIT profiling.");

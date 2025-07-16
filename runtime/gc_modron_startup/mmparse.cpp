@@ -645,7 +645,12 @@ gcParseXlpOption(J9JavaVM *vm)
 	IDATA xlpGCIndex = -1;
 	UDATA requestedPageSize = 0;
 	UDATA requestedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+	UDATA *pageSizes;
+	UDATA *pageFlags;
 	PORT_ACCESS_FROM_JAVAVM(vm);
+
+	pageSizes = j9vmem_supported_page_sizes();
+	pageFlags = j9vmem_supported_page_flags();
 
 	/* Parse -Xlp option.
 	 * -Xlp option enables large pages with the default large page size, but will not
@@ -782,18 +787,16 @@ gcParseXlpOption(J9JavaVM *vm)
 	}
 
 	/*
-	 * Check for -Xlp:gc: and handle it if necessary
+	 * Check for -Xlp:gcmetadata: and handle it if necessary
 	 */
 	xlpGCIndex = FIND_AND_CONSUME_VMARG(STARTSWITH_MATCH, "-Xlp:gcmetadata:", NULL);
 
 	if (-1 != xlpGCIndex) {
 		UDATA gcmetadataPageSize = 0;
 		UDATA gcmetadataPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
-		UDATA *pageSizes;
-		UDATA *pageFlags;
 		bool found = false;
 		/*
-		 * Parse sub options for -Xlp:gc:
+		 * Parse sub options for -Xlp:gcmetadata:
 		 */
 		xlpErrorState = xlpSubOptionsParser(vm, xlpGCIndex, &xlpError, &gcmetadataPageSize, &gcmetadataPageFlags, NULL, NULL);
 
@@ -809,15 +812,12 @@ gcParseXlpOption(J9JavaVM *vm)
 		/*
 		 * Update values in case of exact match only
 		 */
-		pageSizes = j9vmem_supported_page_sizes();
-		pageFlags = j9vmem_supported_page_flags();
-
 		for (UDATA pageIndex = 0; 0 != pageSizes[pageIndex]; ++pageIndex) {
 			if ((pageSizes[pageIndex] == gcmetadataPageSize) && (pageFlags[pageIndex] == gcmetadataPageFlags)) {
 				found = true;
 				extensions->gcmetadataPageSize = gcmetadataPageSize;
 				extensions->gcmetadataPageFlags = gcmetadataPageFlags;
- 				break;
+				break;
 			}
 		}
 
@@ -831,6 +831,54 @@ gcParseXlpOption(J9JavaVM *vm)
 			qualifiedSize(&newSize, &newQualifier);
 
 			j9nls_printf(PORTLIB, J9NLS_INFO, J9NLS_GC_OPTIONS_XLP_PAGE_NOT_SUPPORTED, "gcmetadata", oldSize, oldQualifier, oldPageType, newSize, newQualifier, newPageType);
+		}
+	}
+
+	/*
+	 * Check for -Xlp:offheap: and handle it if necessary
+	 */
+	xlpGCIndex = FIND_AND_CONSUME_VMARG(STARTSWITH_MATCH, "-Xlp:offheap:", NULL);
+
+	if (-1 != xlpGCIndex) {
+		UDATA offheapPageSize = 0;
+		UDATA offheapPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		bool found = false;
+		/*
+		 * Parse sub options for -Xlp:offheap:
+		 */
+		xlpErrorState = xlpSubOptionsParser(vm, xlpGCIndex, &xlpError, &offheapPageSize, &offheapPageFlags, NULL, NULL);
+
+		if (XLP_NO_ERROR != xlpErrorState) {
+			goto _reportXlpError;
+		}
+
+		if (xlpError.extraCommaWarning) {
+			/* print extra comma ignored warning */
+			j9nls_printf(PORTLIB, J9NLS_INFO, J9NLS_GC_OPTIONS_XLP_EXTRA_COMMA);
+		}
+
+		/*
+		 * Update values in case of exact match only
+		 */
+		for (UDATA pageIndex = 0; 0 != pageSizes[pageIndex]; ++pageIndex) {
+			if ((pageSizes[pageIndex] == offheapPageSize) && (pageFlags[pageIndex] == offheapPageFlags)) {
+				found = true;
+				extensions->sparseHeapPageSize = offheapPageSize;
+				extensions->sparseHeapPageFlags = offheapPageFlags;
+				break;
+			}
+		}
+
+		if (!found) {
+			const char *oldQualifier, *newQualifier;
+			UDATA oldSize = offheapPageSize;
+			UDATA newSize = extensions->sparseHeapPageSize;
+			const char *oldPageType = getPageTypeStringWithLeadingSpace(oldSize);
+			const char *newPageType = getPageTypeStringWithLeadingSpace(newSize);
+			qualifiedSize(&oldSize, &oldQualifier);
+			qualifiedSize(&newSize, &newQualifier);
+
+			j9nls_printf(PORTLIB, J9NLS_INFO, J9NLS_GC_OPTIONS_XLP_PAGE_NOT_SUPPORTED, "offheap", oldSize, oldQualifier, oldPageType, newSize, newQualifier, newPageType);
 		}
 	}
 
@@ -1681,29 +1729,24 @@ gcParseCommandLineAndInitializeWithValues(J9JavaVM *vm, IDATA *memoryParameters)
 
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
-	/* Parse the command line
-	 * Order is important for parameters that match as substrings (-Xmrx/-Xmr)
-	 */
-	{
-		bool enableOriginalJDK8HeapSizeCompatibilityOption = false;
-		/* only parse VMOPT_XXENABLEORIGINALJDK8HEAPSIZECOMPATIBILITY option for Java 8 and below */
-		if (J2SE_18 >= J2SE_VERSION(vm)) {
+	/* only parse VMOPT_XXENABLEORIGINALJDK8HEAPSIZECOMPATIBILITY option for Java 8 and below */
+	if (J2SE_18 >= J2SE_VERSION(vm)) {
 
-			IDATA enabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, VMOPT_XXENABLEORIGINALJDK8HEAPSIZECOMPATIBILITY, NULL);
-			IDATA disabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, VMOPT_XXDISABLEORIGINALJDK8HEAPSIZECOMPATIBILITY, NULL);
-			if (enabled > disabled) {
-				enableOriginalJDK8HeapSizeCompatibilityOption = true;
-			}
+		IDATA enabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, VMOPT_XXENABLEORIGINALJDK8HEAPSIZECOMPATIBILITY, NULL);
+		IDATA disabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, VMOPT_XXDISABLEORIGINALJDK8HEAPSIZECOMPATIBILITY, NULL);
+		if (enabled > disabled) {
+			extensions->enableOriginalJDK8HeapSizeCompatibilityOption = true;
 		}
+	}
+
+	{
 		IDATA testContainerMemLimitEnabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, "-XX:+fvtest_testContainerMemLimit", NULL);
 		IDATA testContainerMemLimitDisabled = FIND_AND_CONSUME_VMARG(EXACT_MATCH, "-XX:-fvtest_testContainerMemLimit", NULL);
 		if (testContainerMemLimitEnabled > testContainerMemLimitDisabled) {
 			extensions->testContainerMemLimit = true;
 		}
-		/* set default max heap for Java */
-		extensions->memoryMax = extensions->computeDefaultMaxHeapForJava(enableOriginalJDK8HeapSizeCompatibilityOption);
-		extensions->maxSizeDefaultMemorySpace = extensions->memoryMax;
 	}
+
 	result = option_set_to_opt(vm, OPT_XMCA, &index, EXACT_MEMORY_MATCH, &vm->ramClassAllocationIncrement);
 	if (OPTION_OK != result) {
 		goto _error;
@@ -1914,10 +1957,6 @@ gcParseCommandLineAndInitializeWithValues(J9JavaVM *vm, IDATA *memoryParameters)
 		extensions->numaForced = true;
 #endif /* defined(J9VM_GC_VLHGC) || defined(J9VM_GC_GENERATIONAL) */
 	}
-	/* Since the user is not specifying a value, ensure that -Xmdx is set to the same value
-	 * as -Xmx.  It does not matter whether -Xmx was specified or not.
-	 */
-	extensions->maxSizeDefaultMemorySpace = extensions->memoryMax;
 
 	/* Parse for recognized Sovereign command line options.  Any duplication with an Xgc option
 	 * will be overwritten.  This currently must be done after check for resource management so we can

@@ -133,24 +133,25 @@ const char *TR_RelocationRuntime::_reloErrorCodeNames[] =
    "svmValidationFailure",                             // 45
    "wkcValidationFailure",                             // 46
    "methodTracingValidationFailure",                   // 47
+   "dynamicMethodFromcallsiteIndexValidationFailure",  // 48
+   "handleMethodFromcallsiteIndexValidationFailure" ,  // 49
 
-   "classAddressRelocationFailure",                    // 48
-   "inlinedMethodRelocationFailure",                   // 49
-   "symbolFromManagerRelocationFailure",               // 50
-   "thunkRelocationFailure",                           // 51
-   "trampolineRelocationFailure",                      // 52
-   "picTrampolineRelocationFailure",                   // 53
-   "cacheFullRelocationFailure",                       // 54
-   "blockFrequencyRelocationFailure",                  // 55
-   "recompQueuedFlagRelocationFailure",                // 56
-   "debugCounterRelocationFailure",                    // 57
-   "directJNICallRelocationFailure",                   // 58
-   "ramMethodConstRelocationFailure",                  // 59
-   "catchBlockCounterRelocationFailure",               // 60
-   "staticDefaultValueInstanceRelocationFailure",      // 61
+   "classAddressRelocationFailure",                    // 50
+   "inlinedMethodRelocationFailure",                   // 51
+   "symbolFromManagerRelocationFailure",               // 52
+   "thunkRelocationFailure",                           // 53
+   "trampolineRelocationFailure",                      // 54
+   "picTrampolineRelocationFailure",                   // 55
+   "cacheFullRelocationFailure",                       // 56
+   "blockFrequencyRelocationFailure",                  // 57
+   "recompQueuedFlagRelocationFailure",                // 58
+   "debugCounterRelocationFailure",                    // 59
+   "directJNICallRelocationFailure",                   // 60
+   "ramMethodConstRelocationFailure",                  // 61
+   "catchBlockCounterRelocationFailure",               // 62
+   "staticDefaultValueInstanceRelocationFailure",      // 63
 
-   "maxRelocationError"                                // 62
-
+   "maxRelocationError"                                // 64
    };
 
 TR_RelocationRuntime::TR_RelocationRuntime(J9JITConfig *jitCfg)
@@ -536,6 +537,15 @@ void TR_RelocationRuntime::relocationFailureCleanup()
       }
    }
 
+static int32_t strHash(const char *str)
+   {
+   // The string hash from Java.
+   int32_t result = 0;
+   for (const unsigned char *s = reinterpret_cast<const unsigned char *>(str); '\0' != *s; ++s)
+      result = (result * 31) + *s;
+   return result;
+   }
+
 // Function called for AOT method from both JXE and Shared Classes to perform relocations
 //
 void
@@ -702,6 +712,37 @@ TR_RelocationRuntime::relocateAOTCodeAndData(U_8 *tempDataStart,
             }
          }
 
+      if (_exceptionTable->inlinedCalls)
+         {
+         if (comp()->getOptions()->getVerboseOption(TR_VerboseInlining))
+            {
+            U_32 numInlinedCallSites = getNumInlinedCallSites(_exceptionTable);
+            int32_t jittedBodyHash = strHash(comp()->signature());
+            char callerBuf[501], calleeBuf[501];
+            TR_VerboseLog::CriticalSection vlogLock;
+            TR_VerboseLog::writeLine(TR_Vlog_INL, "%d methods inlined into %x %s @ %p", numInlinedCallSites, jittedBodyHash, comp()->signature(), _exceptionTable->startPC);
+            for (auto siteIndex = 0; siteIndex < numInlinedCallSites; siteIndex++)
+               {
+               TR_InlinedCallSite *site = (TR_InlinedCallSite *)getInlinedCallSiteArrayElement(_exceptionTable, siteIndex);
+               int32_t calleeLen = fej9()->printTruncatedSignature(calleeBuf, sizeof(calleeBuf)-1, site->_methodInfo);
+               calleeBuf[calleeLen] = 0; // null terminate
+               const char *callerSig = comp()->signature();
+               int16_t callerIndex = site->_byteCodeInfo.getCallerIndex();
+               if (callerIndex != -1)
+                  {
+                  TR_InlinedCallSite *callerCallsite = (TR_InlinedCallSite *)getInlinedCallSiteArrayElement(_exceptionTable, callerIndex);
+                  int32_t callerLen = fej9()->printTruncatedSignature(callerBuf, sizeof(callerBuf)-1, callerCallsite->_methodInfo);
+                  callerBuf[callerLen] = 0; // null terminate
+                  callerSig = callerBuf;
+                  }
+               TR_VerboseLog::writeLine(TR_Vlog_INL, "#%d: %x #%d inlined %x@%d -> %x bcsz=%d %s",
+                  siteIndex, jittedBodyHash, callerIndex,
+                  strHash(callerSig), site->_byteCodeInfo.getByteCodeIndex(),
+                  strHash(calleeBuf), TR::Compiler->mtd.bytecodeSize(site->_methodInfo), calleeBuf);
+               }
+            }
+         }
+
       // Fix RAM method and send target AFTER all relocations are complete.
       startPC = _exceptionTable->startPC;
       } //end if J9_JIT_DCE_EXCEPTION_INFO
@@ -856,6 +897,15 @@ TR_RelocationRuntime::relocateMethodMetaData(UDATA codeRelocationAmount, UDATA d
       _exceptionTable->osrInfo = (void *) (((U_8 *)_exceptionTable->osrInfo) + dataRelocationAmount);
       }
 
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+   if (_exceptionTable->invokeBasicCallInfo != NULL)
+      {
+      uint8_t *infoAddr = (uint8_t*)_exceptionTable->invokeBasicCallInfo;
+      infoAddr += dataRelocationAmount;
+      _exceptionTable->invokeBasicCallInfo = (J9JITInvokeBasicCallInfo*)infoAddr;
+      }
+#endif
+
    // Reset the uninitialized bit
    _exceptionTable->flags &= ~JIT_METADATA_NOT_INITIALIZED;
    }
@@ -910,7 +960,7 @@ TR_RelocationRuntime::fillAOTHeader(J9JavaVM *vm, TR_FrontEnd *fe, TR_AOTHeader 
 uint32_t
 TR_RelocationRuntime::getCurrentLockwordOptionHashValue(J9JavaVM *vm)
    {
-   IDATA currentLockwordArgIndex = FIND_ARG_IN_VMARGS(STARTSWITH_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xlockword], NULL);
+   IDATA currentLockwordArgIndex = J9::Options::getExternalOptionIndex(J9::ExternalOptions::Xlockword);
    uint32_t currentLockwordOptionHashValue = 0;
    if (currentLockwordArgIndex >= 0)
       {
@@ -1100,7 +1150,7 @@ TR_SharedCacheRelocationRuntime::allocateSpaceInCodeCache(UDATA codeSize)
       {
       int32_t numReserved;
 
-      _codeCache = manager->reserveCodeCache(false, codeSize, compThreadID, &numReserved);  // Acquire a cold/warm code cache.
+      _codeCache = manager->reserveCodeCache(false, codeSize, compThreadID, &numReserved, _comp->codeCacheKind());  // Acquire a cold/warm code cache.
       if (!codeCache())
          {
          // TODO: how do we pass back error codes to trigger retrial?
@@ -1326,7 +1376,15 @@ TR_SharedCacheRelocationRuntime::validateAOTHeader(TR_FrontEnd *fe, J9VMThread *
          {
          checkAOTHeaderFlags(hdrInCache, featureFlags);
          }
-      else if (hdrInCache->gcPolicyFlag != javaVM()->memoryManagerFunctions->j9gc_modron_getWriteBarrierType(javaVM()) )
+      else if (!((hdrInCache->gcPolicyFlag == javaVM()->memoryManagerFunctions->j9gc_modron_getWriteBarrierType(javaVM())) ||
+                 // it's safe to run AOT code with inline cardmark barrier even if runtime will not need it since the barrier
+                 // is only executed for active Concurrent Mark cycles (which won't ever happen with Concurrent Mark disabled
+                 // in runtime)
+                 ((hdrInCache->gcPolicyFlag == gc_modron_wrtbar_cardmark_and_oldcheck) &&
+                  (javaVM()->memoryManagerFunctions->j9gc_modron_getWriteBarrierType(javaVM()) == gc_modron_wrtbar_oldcheck)
+                 )
+                )
+              )
          {
          incompatibleCache(J9NLS_RELOCATABLE_CODE_WRONG_GC_POLICY,
                            "AOT header validation failed: incompatible gc write barrier type");
@@ -1503,7 +1561,7 @@ TR_JITServerRelocationRuntime::allocateSpaceInCodeCache(UDATA codeSize)
       {
       int32_t numReserved;
 
-      _codeCache = manager->reserveCodeCache(false, codeSize, compThreadID, &numReserved);  // Acquire a cold/warm code cache.
+      _codeCache = manager->reserveCodeCache(false, codeSize, compThreadID, &numReserved, _comp->codeCacheKind());  // Acquire a cold/warm code cache.
       if (!codeCache())
          {
          // TODO: How do we pass back error codes to trigger retrial?
@@ -1551,14 +1609,14 @@ TR_JITServerRelocationRuntime::allocateSpaceInDataCache(uintptr_t metaDataSize,
    }
 
 uint8_t *
-TR_JITServerRelocationRuntime::copyDataToCodeCache(const void *startAddress, size_t totalSize, TR_J9VMBase *fe)
+TR_JITServerRelocationRuntime::copyDataToCodeCache(const void *startAddress, size_t totalSize, TR_J9VMBase *fe, TR::CodeCacheKind kind)
    {
    TR::CompilationInfoPerThreadBase *compInfoPT = fe->_compInfoPT;
    int32_t numReserved;
    TR::CodeCache *codeCache = NULL;
    TR::CodeCacheManager *manager = TR::CodeCacheManager::instance();
    TR_ASSERT(!compInfoPT->getCompilation()->cg()->getCodeCache(), "No code caches should be reserved when copying a thunk");
-   codeCache = manager->reserveCodeCache(false, totalSize, compInfoPT->getCompThreadId(), &numReserved);
+   codeCache = manager->reserveCodeCache(false, totalSize, compInfoPT->getCompThreadId(), &numReserved, kind);
    if (!codeCache)
       return NULL;
 

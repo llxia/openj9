@@ -116,7 +116,14 @@ getCurrentClassLoader(J9VMThread *currentThread)
 		} else {
 			classLoader = vm->applicationClassLoader;
 			/* If the app loader doesn't exist yet, use the boot loader */
-			if (NULL == classLoader) {
+			if ((NULL == classLoader)
+#if defined(J9VM_OPT_SNAPSHOTS)
+				/* Need to preserve the order. Classloaders should not be considered active until
+				 * the classloader object is set
+				 */
+				|| (NULL == classLoader->classLoaderObject)
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+			) {
 				classLoader = vm->systemClassLoader;
 			}
 		}
@@ -396,7 +403,9 @@ getObjectClass(JNIEnv *env, jobject obj)
 jint JNICALL
 getVersion(JNIEnv *env)
 {
-#if JAVA_SPEC_VERSION >= 21
+#if JAVA_SPEC_VERSION >= 24
+	return JNI_VERSION_24;
+#elif JAVA_SPEC_VERSION >= 21
 	return JNI_VERSION_21;
 #elif JAVA_SPEC_VERSION >= 20
 	return JNI_VERSION_20;
@@ -827,10 +836,24 @@ getStringUTFLength(JNIEnv *env, jstring string)
 	VM_VMAccess::inlineEnterVMFromJNI(currentThread);
 	j9object_t stringObject = J9_JNI_UNWRAP_REFERENCE(string);
 
-	UDATA utfLength = getStringUTF8Length(currentThread, stringObject);
+	U_64 utfLength = getStringUTF8LengthTruncated(currentThread, stringObject, INT32_MAX);
 	VM_VMAccess::inlineExitVMToJNI(currentThread);
 	return (jsize)utfLength;
 }
+
+#if JAVA_SPEC_VERSION >= 24
+jlong JNICALL
+getStringUTFLengthAsLong(JNIEnv *env, jstring string)
+{
+	J9VMThread *currentThread = (J9VMThread *)env;
+	VM_VMAccess::inlineEnterVMFromJNI(currentThread);
+	j9object_t stringObject = J9_JNI_UNWRAP_REFERENCE(string);
+
+	U_64 utfLength = getStringUTF8LengthTruncated(currentThread, stringObject, I_64_MAX);
+	VM_VMAccess::inlineExitVMToJNI(currentThread);
+	return (jlong)utfLength;
+}
+#endif /* JAVA_SPEC_VERSION >= 24 */
 
 static const char*
 getStringUTFCharsImpl(JNIEnv *env, jstring string, jboolean *isCopy, jboolean ensureMem32)
@@ -838,14 +861,17 @@ getStringUTFCharsImpl(JNIEnv *env, jstring string, jboolean *isCopy, jboolean en
 	J9VMThread *currentThread = (J9VMThread*)env;
 	VM_VMAccess::inlineEnterVMFromJNI(currentThread);
 	j9object_t stringObject = J9_JNI_UNWRAP_REFERENCE(string);
-	/* Add 1 for null terminator */
-	UDATA utfLength = getStringUTF8Length(currentThread, stringObject) + 1;
 
+	UDATA utfLength = getStringUTF8Length(currentThread, stringObject);
 	U_8 *utfChars = NULL;
-	if (ensureMem32) {
-		utfChars = (U_8*)jniArrayAllocateMemory32FromThread(currentThread, utfLength);
-	} else {
-		utfChars = (U_8*)jniArrayAllocateMemoryFromThread(currentThread, utfLength);
+	if (utfLength < UDATA_MAX) {
+		/* Add 1 for a null terminator. */
+		utfLength += 1;
+		if (ensureMem32) {
+			utfChars = (U_8 *)jniArrayAllocateMemory32FromThread(currentThread, utfLength);
+		} else {
+			utfChars = (U_8 *)jniArrayAllocateMemoryFromThread(currentThread, utfLength);
+		}
 	}
 
 	if (NULL == utfChars) {

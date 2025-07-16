@@ -25,16 +25,18 @@ package java.lang;
 import com.ibm.oti.vm.J9UnmodifiableClass;
 import java.lang.ref.SoftReference;
 import java.lang.reflect.*;
+/*[IF JAVA_SPEC_VERSION < 24]*/
+import java.security.AccessControlContext;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
+import java.security.CodeSource;
+import java.security.ProtectionDomain;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Properties;
 import java.util.WeakHashMap;
-import java.security.AccessControlContext;
-import java.security.CodeSource;
-import java.security.ProtectionDomain;
 import java.io.FileDescriptor;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -54,22 +56,6 @@ import com.ibm.oti.util.Msg;
 
 @J9UnmodifiableClass
 final class J9VMInternals {
-	/*[PR VMDESIGN 1891] Move j9Version and j9Config from Class to J9VMInternals */
-	/*[IF]*/
-	/**
-	 * It is important that these remain static final
-	 * because the VM peeks for them before running the <clinit>
-	 */
-	/*[ENDIF]*/
-	/*[IF]*/
-	// j9Version - 0xAABBCCCC
-	// AA - vm version, BB - jcl version, CCCC - master version
-	// Up the JCL version (BB) when adding functionality
-	/*[ENDIF]*/
-
-	private static final int j9Version = 0x06040270;
-
-	private static final long j9Config = 0x7363617237306200L;	// 'scar70b\0'
 
 	/*[REM] this field will be folded into methods compiled by the JIT and is needed for the fastIdentityHashCode optimization below */
 	/*[REM] the real value of this field is set in the System.afterClinitInitialization since this class starts too early */
@@ -171,7 +157,7 @@ final class J9VMInternals {
 			Runtime.getRuntime().addShutdownHook(new Thread(runnable, "CommonCleanerShutdown", true, false, false, null)); //$NON-NLS-1$
 		}
 		/*[ENDIF] JAVA_SPEC_VERSION >= 9 */
-/*[IF CRAC_SUPPORT]*/
+		/*[IF CRAC_SUPPORT]*/
 		if (openj9.internal.criu.InternalCRIUSupport.isCRaCSupportEnabled()) {
 			// export java.base/jdk.crac unconditionally
 			J9VMInternals.class.getModule().implAddExports("jdk.crac"); //$NON-NLS-1$
@@ -182,7 +168,17 @@ final class J9VMInternals {
 				om.get().implAddExports("jdk.crac.management"); //$NON-NLS-1$
 			}
 		}
-/*[ENDIF] CRAC_SUPPORT */
+		/*[ENDIF] CRAC_SUPPORT */
+		/*[IF (11 <= JAVA_SPEC_VERSION) & (JAVA_SPEC_VERSION <= 17)]*/
+		/* ImageReader should be initialized before main() is called to
+		 * avoid being affected by a potential invalid java.home path.
+		 */
+		try {
+			jdk.internal.jimage.ImageReaderFactory.getImageReader();
+		} catch (java.io.UncheckedIOException e) {
+			// Ignored deliberately.
+		}
+		/*[ENDIF] (11 <= JAVA_SPEC_VERSION) & (JAVA_SPEC_VERSION <= 17) */
 	}
 
 	/**
@@ -271,8 +267,11 @@ final class J9VMInternals {
 	private static native Throwable newInstance(Class exceptionClass, Class constructorClass);
 
 	private static Throwable cloneThrowable(final Throwable throwable, final HashMap hashMapThrowable) {
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 		return (Throwable)AccessController.doPrivileged(new PrivilegedAction() {
+			@Override
 			public Object run() {
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 				Throwable clone;
 				try {
 					Class cls = throwable.getClass();
@@ -305,8 +304,10 @@ final class J9VMInternals {
 					clone = new Throwable(Msg.getString("K05c3", e, throwable.toString())); //$NON-NLS-1$
 				}
 				return clone;
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 			}
 		});
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 	}
 
 	/**
@@ -385,12 +386,13 @@ final class J9VMInternals {
 		}
 	}
 
+	/*[IF JAVA_SPEC_VERSION < 24]*/
 	/*[PR CVMC 124584] checkPackageAccess(), not defineClassImpl(), should use ProtectionDomain */
-	private static void checkPackageAccess(final Class clazz, ProtectionDomain pd) {
+	private static void checkPackageAccess(final Class<?> clazz, ProtectionDomain pd) {
 		@SuppressWarnings("removal")
 		final SecurityManager sm = System.getSecurityManager();
 		if (sm != null) {
-			ProtectionDomain[] pdArray = (pd == null) ? new ProtectionDomain[]{} : new ProtectionDomain[]{pd};
+			ProtectionDomain[] pdArray = (pd == null) ? new ProtectionDomain[] {} : new ProtectionDomain[] { pd };
 			AccessController.doPrivileged(new PrivilegedAction<Object>() {
 				@Override
 				public Object run() {
@@ -400,7 +402,7 @@ final class J9VMInternals {
 					}
 					if (Proxy.isProxyClass(clazz)) {
 						/*[PR CMVC 198986] Fix proxies */
-						ClassLoader	cl = clazz.getClassLoaderImpl();
+						ClassLoader cl = clazz.getClassLoaderImpl();
 						sun.reflect.misc.ReflectUtil.checkProxyPackageAccess(cl, clazz.getInterfaces());
 					}
 					return null;
@@ -408,6 +410,7 @@ final class J9VMInternals {
 			}, new AccessControlContext(pdArray));
 		}
 	}
+	/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 	/*[PR CMVC 104341] Exceptions in Object.finalize() not ignored */
 
@@ -602,7 +605,6 @@ final class J9VMInternals {
 	 */
 	public static native void dumpString(String str);
 
-
 	private static String[] getClassInfoStrings(final Class<?> clazz, String classPath){
 		String classLoaderStr = "<Bootstrap Loader>"; //$NON-NLS-1$
 		String cpResult = "<Unknown>"; //$NON-NLS-1$
@@ -611,9 +613,11 @@ final class J9VMInternals {
 			ClassLoader classLoader = clazz.getClassLoader();
 			if (classLoader != null) {
 				classLoaderStr = classLoader.toString();
+				/*[IF JAVA_SPEC_VERSION < 24]*/
 				classPath = AccessController.doPrivileged(new PrivilegedAction<String>() {
 					@Override
 					public String run() {
+				/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 						String path = null;
 						try {
 							ProtectionDomain pd = clazz.getProtectionDomain();
@@ -628,9 +632,13 @@ final class J9VMInternals {
 							}
 						} catch (Exception e) {
 						}
+				/*[IF JAVA_SPEC_VERSION >= 24]*/
+						classPath = path;
+				/*[ELSE] JAVA_SPEC_VERSION >= 24 */
 						return path;
 					}
 				});
+				/*[ENDIF] JAVA_SPEC_VERSION >= 24 */
 			}
 		}
 		if (classPath != null) {

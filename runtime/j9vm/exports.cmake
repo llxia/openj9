@@ -78,7 +78,6 @@ jvm_add_exports(jvm
 	_JVM_GetClassAccessFlags@8
 	_JVM_GetClassAnnotations@8
 	_JVM_GetClassConstantPool@8
-	_JVM_GetClassContext@4
 	_JVM_GetClassLoader@8
 	_JVM_GetClassSignature@8
 	_JVM_GetEnclosingMethodInfo@8
@@ -145,8 +144,6 @@ jvm_add_exports(jvm
 	post_block
 	pre_block
 	# Additions for Java 7
-	_JVM_GetStackAccessControlContext@8
-	_JVM_GetInheritedAccessControlContext@8
 	_JVM_GetArrayLength@8
 	_JVM_GetArrayElement@12
 	_JVM_GetStackTraceElement@12
@@ -162,7 +159,6 @@ jvm_add_exports(jvm
 	_JVM_HoldsLock@12
 	_JVM_InitProperties@8
 	_JVM_ArrayCopy@28
-	_JVM_DoPrivileged@20
 	_JVM_IHashCode@8
 	_JVM_Clone@8
 	_JVM_CompileClass@12
@@ -182,14 +178,10 @@ jvm_add_exports(jvm
 	_JVM_IsInterface@8
 	_JVM_GetClassSigners@8
 	_JVM_SetClassSigners@12
-	_JVM_IsArrayClass@8
-	_JVM_IsPrimitiveClass@8
 	_JVM_GetComponentType@8
-	_JVM_GetClassModifiers@8
 	_JVM_GetClassDeclaredFields@12
 	_JVM_GetClassDeclaredMethods@12
 	_JVM_GetClassDeclaredConstructors@12
-	_JVM_GetProtectionDomain@8
 	_JVM_SetProtectionDomain@12
 	_JVM_GetDeclaredClasses@8
 	_JVM_GetDeclaringClass@8
@@ -281,6 +273,12 @@ jvm_add_exports(jvm
 	_JVM_CopySwapMemory@44
 	JVM_BeforeHalt
 )
+
+if((JAVA_SPEC_VERSION LESS 9) AND OMR_OS_WINDOWS)
+	jvm_add_exports(jvm
+		_JVM_DoPrivileged@20
+	)
+endif()
 
 if(JAVA_SPEC_VERSION LESS 11)
 	jvm_add_exports(jvm
@@ -382,6 +380,7 @@ if(NOT JAVA_SPEC_VERSION LESS 17)
 	jvm_add_exports(jvm
 		JVM_DumpClassListToFile
 		JVM_DumpDynamicArchive
+		JVM_GetProperties
 	)
 	if(J9VM_ZOS_3164_INTEROPERABILITY)
 		jvm_add_exports(jvm
@@ -409,14 +408,6 @@ if(NOT JAVA_SPEC_VERSION LESS 19)
 		JVM_LoadZipLibrary
 		JVM_RegisterContinuationMethods
 	)
-	if(JAVA_SPEC_VERSION LESS 21)
-		jvm_add_exports(jvm
-			JVM_VirtualThreadMountBegin
-			JVM_VirtualThreadMountEnd
-			JVM_VirtualThreadUnmountBegin
-			JVM_VirtualThreadUnmountEnd
-		)
-	endif()
 endif()
 
 if(JAVA_SPEC_VERSION LESS 20)
@@ -428,8 +419,12 @@ if(JAVA_SPEC_VERSION LESS 20)
 else()
 	jvm_add_exports(jvm
 		JVM_GetClassFileVersion
-		JVM_VirtualThreadHideFrames
 	)
+	if(JAVA_SPEC_VERSION LESS 24)
+		jvm_add_exports(jvm
+			JVM_VirtualThreadHideFrames
+		)
+	endif()
 endif()
 
 if(NOT JAVA_SPEC_VERSION LESS 21)
@@ -460,10 +455,32 @@ if(NOT JAVA_SPEC_VERSION LESS 23)
 	)
 endif()
 
-if(NOT JAVA_SPEC_VERSION LESS 24)
+if(JAVA_SPEC_VERSION LESS 24)
+	jvm_add_exports(jvm
+		_JVM_GetClassContext@4
+		_JVM_GetInheritedAccessControlContext@8
+		_JVM_GetStackAccessControlContext@8
+	)
+else()
 	jvm_add_exports(jvm
 		JVM_IsContainerized
 		JVM_IsStaticallyLinked
+		JVM_VirtualThreadPinnedEvent
+		JVM_TakeVirtualThreadListToUnblock
+	)
+endif()
+
+if(JAVA_SPEC_VERSION LESS 25)
+	jvm_add_exports(jvm
+		_JVM_GetClassModifiers@8
+		_JVM_GetProtectionDomain@8
+		_JVM_IsArrayClass@8
+		_JVM_IsPrimitiveClass@8
+	)
+else()
+	jvm_add_exports(jvm
+		JVM_CreateThreadSnapshot
+		JVM_NeedsClassInitBarrierForCDS
 	)
 endif()
 
@@ -475,9 +492,13 @@ endif()
 
 if(J9VM_OPT_VALHALLA_VALUE_TYPES)
 	jvm_add_exports(jvm
-		JVM_IsValhallaEnabled
+		JVM_IsFlatArray
 		JVM_IsImplicitlyConstructibleClass
 		JVM_IsNullRestrictedArray
+		JVM_IsValhallaEnabled
+		JVM_NewNullableAtomicArray
 		JVM_NewNullRestrictedArray
+		JVM_NewNullRestrictedAtomicArray
+		JVM_VirtualThreadHideFrames
 	)
 endif()

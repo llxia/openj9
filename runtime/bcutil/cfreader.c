@@ -147,7 +147,7 @@ readAttributes(J9CfrClassFile * classfile, J9CfrAttribute *** pAttributes, U_32 
 	J9CfrAttributeRecord *record;
 	J9CfrAttributePermittedSubclasses *permittedSubclasses;
 #if defined(J9VM_OPT_VALHALLA_VALUE_TYPES)
-	J9CfrAttributePreload *preload;
+	J9CfrAttributeLoadableDescriptors *loadableDescriptors;
 #endif /* defined(J9VM_OPT_VALHALLA_VALUE_TYPES) */
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
 	J9CfrAttributeImplicitCreation *implicitCreation;
@@ -175,7 +175,7 @@ readAttributes(J9CfrClassFile * classfile, J9CfrAttribute *** pAttributes, U_32 
 	BOOLEAN recordAttributeRead = FALSE;
 	BOOLEAN permittedSubclassesAttributeRead = FALSE;
 #if defined(J9VM_OPT_VALHALLA_VALUE_TYPES)
-	BOOLEAN preloadAttributeRead = FALSE;
+	BOOLEAN loadableDescriptorsAttributeRead = FALSE;
 #endif /* defined(J9VM_OPT_VALHALLA_VALUE_TYPES) */
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
 	BOOLEAN implicitCreationAttributeRead = FALSE;
@@ -933,29 +933,31 @@ readAttributes(J9CfrClassFile * classfile, J9CfrAttribute *** pAttributes, U_32 
 			break;
 
 #if defined(J9VM_OPT_VALHALLA_VALUE_TYPES)
-		case CFR_ATTRIBUTE_Preload:
-			/* JVMS: There may be at most one Preload attribute in the attributes table of a ClassFile structure... */
-			if (preloadAttributeRead) {
-				errorCode = J9NLS_CFR_ERR_MULTIPLE_PRELOAD_ATTRIBUTES__ID;
+		case CFR_ATTRIBUTE_LoadableDescriptors:
+			/* JVMS: There may be at most one LoadableDescriptors attribute
+			 * in the attributes table of a ClassFile structure...
+			 */
+			if (loadableDescriptorsAttributeRead) {
+				errorCode = J9NLS_CFR_ERR_MULTIPLE_LOADABLEDESCRIPTORS_ATTRIBUTES__ID;
 				offset = address;
 				goto _errorFound;
 			}
-			preloadAttributeRead = TRUE;
+			loadableDescriptorsAttributeRead = TRUE;
 
-			if (!ALLOC(preload, J9CfrAttributePreload)) {
+			if (!ALLOC(loadableDescriptors, J9CfrAttributeLoadableDescriptors)) {
 				return -2;
 			}
-			attrib = (J9CfrAttribute*)preload;
+			attrib = (J9CfrAttribute *)loadableDescriptors;
 
 			CHECK_EOF(2);
-			NEXT_U16(preload->numberOfClasses, index);
+			NEXT_U16(loadableDescriptors->numberOfDescriptors, index);
 
-			if (!ALLOC_ARRAY(preload->classes, preload->numberOfClasses, U_16)) {
+			if (!ALLOC_ARRAY(loadableDescriptors->descriptors, loadableDescriptors->numberOfDescriptors, U_16)) {
 				return -2;
 			}
-			for (j = 0; j < preload->numberOfClasses; j++) {
+			for (j = 0; j < loadableDescriptors->numberOfDescriptors; j++) {
 				CHECK_EOF(2);
-				NEXT_U16(preload->classes[j], index);
+				NEXT_U16(loadableDescriptors->descriptors[j], index);
 			}
 			break;
 #endif /* defined(J9VM_OPT_VALHALLA_VALUE_TYPES) */
@@ -1706,18 +1708,6 @@ checkFields(J9PortLibrary* portLib, J9CfrClassFile * classfile, U_8 * segment, U
 
 #if defined(J9VM_OPT_VALHALLA_VALUE_TYPES)
 		if (J9_IS_CLASSFILE_VALUETYPE(classfile)) {
-			if (J9_ARE_ALL_BITS_SET(classfile->accessFlags, CFR_ACC_ABSTRACT)) {
-				if (J9_ARE_NO_BITS_SET(value, CFR_ACC_STATIC)) {
-					errorCode = J9NLS_CFR_ERR_MISSING_ACC_STATIC_ON_ABSTRACT_IDENTITYLESS_CLASS_FIELD__ID;
-					goto _errorFound;
-				}
-			} else {
-				if (J9_ARE_NO_BITS_SET(value, CFR_ACC_STATIC | CFR_ACC_FINAL)) {
-					errorCode = J9NLS_CFR_ERR_VALUE_CLASS_FIELD_NOT_STATIC_OR_FINAL__ID;
-					goto _errorFound;
-				}
-			}
-
 			/* Each field of a value class must have exactly one of its ACC_STATIC or ACC_STRICT flags set. */
 			if (J9_ARE_NO_BITS_SET(value, CFR_ACC_STRICT | CFR_ACC_STATIC)) {
 				errorCode = J9NLS_CFR_ERR_VALUE_CLASS_FIELD_NOT_STATIC_OR_STRICT__ID;
@@ -1725,16 +1715,17 @@ checkFields(J9PortLibrary* portLib, J9CfrClassFile * classfile, U_8 * segment, U
 			}
 		}
 
-		/* A field must not have set both ACC_STRICT and ACC_STATIC. */
-		if (J9_ARE_ALL_BITS_SET(value, CFR_ACC_STRICT | CFR_ACC_STATIC)) {
-			errorCode = J9NLS_CFR_ERR_FIELD_CANT_BE_STRICT_AND_STATIC__ID;
-			goto _errorFound;
-		}
-
-		/* A field that has set ACC_STRICT must also have set ACC_FINAL. */
-		if (J9_ARE_ALL_BITS_SET(value, CFR_ACC_STRICT) && J9_ARE_NO_BITS_SET(value, CFR_ACC_FINAL)) {
-			errorCode = J9NLS_CFR_ERR_STRICT_FIELD_MUST_BE_FINAL__ID;
-			goto _errorFound;
+		if (J9ROMFIELD_IS_STRICT(classfile, value)) {
+			/* A field must not have set both ACC_STRICT and ACC_STATIC. */
+			if (J9_ARE_ALL_BITS_SET(value, CFR_ACC_STATIC)) {
+				errorCode = J9NLS_CFR_ERR_FIELD_CANT_BE_STRICT_AND_STATIC__ID;
+				goto _errorFound;
+			}
+			/* A field that has set ACC_STRICT must also have set ACC_FINAL. */
+			if (J9_ARE_NO_BITS_SET(value, CFR_ACC_FINAL)) {
+				errorCode = J9NLS_CFR_ERR_STRICT_FIELD_MUST_BE_FINAL__ID;
+				goto _errorFound;
+			}
 		}
 #endif /* defined(J9VM_OPT_VALHALLA_VALUE_TYPES) */
 
@@ -2118,14 +2109,6 @@ checkAttributes(J9PortLibrary* portLib, J9CfrClassFile* classfile, J9CfrAttribut
 					errorCode = J9NLS_CFR_ERR_CATCH_NOT_CLASS__ID;
 					goto _errorFound;
 				}
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-				if (CFR_CONSTANT_Class == cpBase[value].tag) {
-					if (bcvIsReferenceTypeDescriptor(&cpBase[cpBase[value].slot1])) {
-						errorCode = J9NLS_CFR_ERR_CATCH_IS_REFERENCETYPE_DESCRIPTOR__ID;
-						goto _errorFound;
-					}
-				}
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 			}
 					
 			if(checkAttributes(portLib, classfile, code->attributes, code->attributesCount, segment, -1, code->codeLength, flags)) {
@@ -2145,12 +2128,6 @@ checkAttributes(J9PortLibrary* portLib, J9CfrClassFile* classfile, J9CfrAttribut
 					errorCode = J9NLS_CFR_ERR_EXCEPTION_NOT_CLASS__ID;
 					goto _errorFound;
 				}
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-				if (bcvIsReferenceTypeDescriptor(&cpBase[cpBase[value].slot1])) {
-					errorCode = J9NLS_CFR_ERR_EXCEPTION_IS_REFERENCETYPE_DESCRIPTOR__ID;
-					goto _errorFound;
-				}
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 			}
 			break;
 
@@ -2289,13 +2266,6 @@ checkAttributes(J9PortLibrary* portLib, J9CfrClassFile* classfile, J9CfrAttribut
 					errorCode = J9NLS_CFR_ERR_INNER_CLASS_NOT_CLASS__ID;
 					goto _errorFound;
 				}
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-				classInfoUtf8 = &cpBase[cpBase[value].slot1];
-				if (bcvIsReferenceTypeDescriptor(classInfoUtf8)) {
-					errorCode = J9NLS_CFR_ERR_INNER_CLASS_REFERENCETYPE__ID;
-					goto _errorFound;
-				}
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 				/* Check class name integrity? */
 
 				innerClassArrayIndexTable[value] = j;
@@ -2319,15 +2289,9 @@ checkAttributes(J9PortLibrary* portLib, J9CfrClassFile* classfile, J9CfrAttribut
 						errorCode = J9NLS_CFR_ERR_OUTER_CLASS_UTF8_ZERO_LENGTH__ID;
 						goto _errorFound;
 					}
-					/* Capture the error if the outer_class_info_index points to an array class or other referencetype descriptor */
-					if (
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-						bcvIsReferenceTypeDescriptor(classInfoUtf8)
-#else /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
-						('[' == classInfoUtf8->bytes[0])
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
-					) {
-						errorCode = J9NLS_CFR_ERR_OUTER_CLASS_REFERENCETYPE_DESCRIPTOR__ID;
+					/* Capture the error if the outer_class_info_index points to an array class */
+					if ('[' == classInfoUtf8->bytes[0]) {
+						errorCode = J9NLS_CFR_ERR_OUTER_CLASS_BAD_ARRAY_CLASS__ID;
 						goto _errorFound;
 					}
 				}
@@ -2402,12 +2366,6 @@ checkAttributes(J9PortLibrary* portLib, J9CfrClassFile* classfile, J9CfrAttribut
 				errorCode = J9NLS_CFR_ERR_ENCLOSING_METHOD_CLASS_INDEX_NOT_CLASS__ID;
 				goto _errorFound;
 			}
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-			if (bcvIsReferenceTypeDescriptor(&cpBase[cpBase[value].slot1])) {
-				errorCode = J9NLS_CFR_ERR_ENCLOSING_METHOD_CLASS_INDEX_IS_REFERENCETYPE__ID;
-				goto _errorFound;
-			}
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 
 			value = enclosing->methodIndex;
 			if(value >= cpCount) {
@@ -2583,28 +2541,28 @@ checkAttributes(J9PortLibrary* portLib, J9CfrClassFile* classfile, J9CfrAttribut
 			break;
 
 #if defined(J9VM_OPT_VALHALLA_VALUE_TYPES)
-		case CFR_ATTRIBUTE_Preload:
-			value = ((J9CfrAttributePreload*)attrib)->nameIndex;
+		case CFR_ATTRIBUTE_LoadableDescriptors:
+			value = ((J9CfrAttributeLoadableDescriptors *)attrib)->nameIndex;
 			if ((0 == value) || (value >= cpCount)) {
 				errorCode = J9NLS_CFR_ERR_BAD_INDEX__ID;
 				goto _errorFound;
 				break;
 			}
 			if ((0 != value) && (cpBase[value].tag != CFR_CONSTANT_Utf8)) {
-				errorCode = J9NLS_CFR_ERR_PRELOAD_NAME_NOT_UTF8__ID;
+				errorCode = J9NLS_CFR_ERR_LOADABLEDESCRIPTORS_NAME_NOT_UTF8__ID;
 				goto _errorFound;
 				break;
 			}
 
-			for (j = 0; j < ((J9CfrAttributePreload*)attrib)->numberOfClasses; j++) {
-				value = ((J9CfrAttributePreload*)attrib)->classes[j];
+			for (j = 0; j < ((J9CfrAttributeLoadableDescriptors *)attrib)->numberOfDescriptors; j++) {
+				value = ((J9CfrAttributeLoadableDescriptors *)attrib)->descriptors[j];
 				if ((0 == value) || (value >= cpCount)) {
 					errorCode = J9NLS_CFR_ERR_BAD_INDEX__ID;
 					goto _errorFound;
 					break;
 				}
-				if ((0 != value) && (cpBase[value].tag != CFR_CONSTANT_Class)) {
-					errorCode = J9NLS_CFR_ERR_PRELOAD_CLASS_ENTRY_NOT_CLASS_TYPE__ID;
+				if ((0 != value) && (cpBase[value].tag != CFR_CONSTANT_Utf8)) {
+					errorCode = J9NLS_CFR_ERR_LOADABLEDESCRIPTORS_ENTRY_NOT_UTF8_TYPE__ID;
 					goto _errorFound;
 					break;
 				}
@@ -2657,12 +2615,6 @@ checkAttributes(J9PortLibrary* portLib, J9CfrClassFile* classfile, J9CfrAttribut
 				errorCode = J9NLS_CFR_ERR_BAD_NEST_HOST_INDEX__ID;
 				goto _errorFound;
 			}
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-			if (bcvIsReferenceTypeDescriptor(&cpBase[cpBase[value].slot1])) {
-				errorCode = J9NLS_CFR_ERR_NEST_HOST_INVALID_REFERENCETYPE_DESCRIPTOR__ID;
-				goto _errorFound;
-			}
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 			break;
 
 		case CFR_ATTRIBUTE_NestMembers: {
@@ -2677,12 +2629,6 @@ checkAttributes(J9PortLibrary* portLib, J9CfrClassFile* classfile, J9CfrAttribut
 					errorCode = J9NLS_CFR_ERR_NEST_MEMBERS_NAME_NOT_CONSTANT_CLASS__ID;
 					goto _errorFound;
 				}
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-				if (bcvIsReferenceTypeDescriptor(&cpBase[cpBase[value].slot1])) {
-					errorCode = J9NLS_CFR_ERR_NEST_MEMBER_INVALID_REFERENCETYPE_DESCRIPTOR__ID;
-					goto _errorFound;
-				}
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 			}
 			break;
 		}
@@ -2849,14 +2795,6 @@ checkClass(J9PortLibrary *portLib, J9CfrClassFile* classfile, U_8* segment, U_32
 			offset = endOfConstantPool + 2;
 			goto _errorFound;
 		}
-
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-		if (bcvIsReferenceTypeDescriptor(&classfile->constantPool[value])) {
-			errorCode = J9NLS_INVALID_REFERENCETYPE_DESCRIPTOR_ON_CLASS__ID;
-			offset = endOfConstantPool + 2;
-			goto _errorFound;
-		}
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 	}
 
 	value = classfile->superClass;
@@ -2881,14 +2819,6 @@ checkClass(J9PortLibrary *portLib, J9CfrClassFile* classfile, U_8* segment, U_32
 			offset = endOfConstantPool + 4;
 			goto _errorFound;
 		}
-
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-		if (bcvIsReferenceTypeDescriptor(&classfile->constantPool[superClassInfo->slot1])) {
-			errorCode = J9NLS_INVALID_REFERENCETYPE_DESCRIPTOR_ON_SUPER_CLASS__ID;
-			offset = endOfConstantPool + 4;
-			goto _errorFound;
-		}
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 	}
 
 	for (i = 0; i < classfile->interfacesCount; i++) {
@@ -2916,13 +2846,6 @@ checkClass(J9PortLibrary *portLib, J9CfrClassFile* classfile, U_8* segment, U_32
 				goto _errorFound;
 			}
 		}
-#if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-		if (bcvIsReferenceTypeDescriptor(&classfile->constantPool[cpInfo->slot1])) {
-			errorCode = J9NLS_INVALID_REFERENCETYPE_DESCRIPTOR_ON_INTERFACE__ID;
-			offset = endOfConstantPool + 4 + (i << 1);
-			goto _errorFound;
-		}
-#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 	}
 
 	/* Check that interfaces subclass object. */

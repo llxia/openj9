@@ -118,6 +118,8 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	j9gc_get_softmx,
 	j9gc_get_initial_heap_size,
 	j9gc_get_maximum_heap_size,
+	j9gc_get_minimum_young_generation_size,
+	j9gc_get_maximum_young_generation_size,
 	j9gc_objaccess_checkClassLive,
 #if defined(J9VM_GC_OBJECT_ACCESS_BARRIER)
 	j9gc_objaccess_indexableReadI8,
@@ -143,6 +145,7 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 #endif /* !J9VM_ENV_DATA64 */
 	j9gc_objaccess_indexableStoreObject,
 	j9gc_objaccess_indexableStoreAddress,
+	j9gc_objaccess_indexableDataDisplacement,
 	j9gc_objaccess_mixedObjectReadI32,
 	j9gc_objaccess_mixedObjectReadU32,
 	j9gc_objaccess_mixedObjectReadI64,
@@ -203,6 +206,8 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	j9gc_get_gcmodestring,
 	j9gc_get_object_size_in_bytes,
 	j9gc_get_object_total_footprint_in_bytes,
+	j9gc_get_explicit_GC_disabled,
+	j9gc_get_unique_GC_count,
 	j9gc_modron_global_collect,
 	j9gc_modron_global_collect_with_overrides,
 	j9gc_modron_local_collect,
@@ -223,6 +228,7 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	j9mm_get_guaranteed_nursery_range,
 	j9gc_arraylet_getLeafSize,
 	j9gc_arraylet_getLeafLogSize,
+	j9gc_get_offheap_data,
 	j9gc_set_allocation_sampling_interval,
 	j9gc_set_allocation_threshold,
 	j9gc_objaccess_recentlyAllocatedObject,
@@ -251,6 +257,7 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 #endif /* J9VM_GC_OBJECT_ACCESS_BARRIER */
 	j9gc_get_bytes_allocated_by_thread,
 	j9gc_get_cumulative_bytes_allocated_by_thread,
+	j9gc_get_cumulative_class_unloading_stats,
 	j9mm_iterate_all_ownable_synchronizer_objects,
 	j9mm_iterate_all_continuation_objects,
 	ownableSynchronizerObjectCreated,

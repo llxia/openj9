@@ -40,6 +40,7 @@
 #include "control/rossa.h"
 #include "runtime/RelocationRuntime.hpp"
 #if defined(J9VM_OPT_JITSERVER)
+#include <vector>
 #include "control/JITServerHelpers.hpp"
 #include "env/PersistentCollections.hpp"
 #include "net/ServerStream.hpp"
@@ -457,7 +458,8 @@ public:
    static bool canRelocateMethod(TR::Compilation * comp);
    static int computeCompilationThreadPriority(J9JavaVM *vm);
    static void *compilationEnd(J9VMThread *context, TR::IlGeneratorMethodDetails & details, J9JITConfig *jitConfig, void * startPC,
-                               void *oldStartPC, TR_FrontEnd *vm=0, TR_MethodToBeCompiled *entry=NULL, TR::Compilation *comp=NULL);
+                               void *oldStartPC, bool preventFutureMethodCountingOnFailure = true, TR_FrontEnd *vm=0,
+                               TR_MethodToBeCompiled *entry=NULL, TR::Compilation *comp=NULL);
 #if defined(J9VM_OPT_JITSERVER)
    static JITServer::ServerStream *getStream();
 #endif /* defined(J9VM_OPT_JITSERVER) */
@@ -787,6 +789,9 @@ public:
    void  cleanDLTRecordOnUnload();
    DLTTracking *getDLT_HT() const { return _dltHT; }
    void setDLT_HT(DLTTracking *dltHT) { _dltHT = dltHT; }
+#if defined(J9VM_OPT_JITSERVER)
+   std::vector<J9Method*> collectDLTedMethods();
+#endif /* defined(J9VM_OPT_JITSERVER) */
 #else
    DLTTracking *getDLT_HT() const { return NULL; }
 #endif // J9VM_JIT_DYNAMIC_LOOP_TRANSFER
@@ -1228,6 +1233,7 @@ private:
    TR::Monitor *_dltMonitor;
    struct DLT_record     *_freeDLTRecord;
    struct DLT_record     *_dltHash[DLT_HASHSIZE];
+   int32_t _numDLTRecords;
 #endif
    DLTTracking           *_dltHT;
 

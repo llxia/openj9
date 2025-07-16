@@ -362,11 +362,15 @@ public:
    size_t numRecords() const { return _numRecords; }
    size_t codeSize() const { return _codeSize; }
    size_t dataSize() const { return _dataSize; }
+   size_t signatureSize() const { return _signatureSize; }
    const SerializedSCCOffset *offsets() const { return (const SerializedSCCOffset *)_varSizedData; }
    SerializedSCCOffset *offsets() { return (SerializedSCCOffset *)_varSizedData; }
    const uint8_t *code() const { return (const uint8_t *)(offsets() + _numRecords); }
    const uint8_t *data() const { return code() + _codeSize; }
    uint8_t *data() { return (uint8_t *)(code() + _codeSize); }
+
+   const char *signature() const { return (char *)(data() + _dataSize); }
+
    const uint8_t *end() const { return (const uint8_t *)this + size(); }
 
    static SerializedAOTMethod *get(std::string &str)
@@ -382,13 +386,15 @@ private:
 
    SerializedAOTMethod(uintptr_t definingClassChainId, uint32_t index,
                        TR_Hotness optLevel, uintptr_t aotHeaderId, size_t numRecords,
-                       const void *code, size_t codeSize, const void *data, size_t dataSize);
+                       const void *code, size_t codeSize,
+                       const void *data, size_t dataSize,
+                       const char *signature, size_t signatureSize);
    SerializedAOTMethod();
 
-   static size_t size(size_t numRecords, size_t codeSize, size_t dataSize)
+   static size_t size(size_t numRecords, size_t codeSize, size_t dataSize, size_t signatureSize)
       {
       return sizeof(SerializedAOTMethod) + numRecords * sizeof(SerializedSCCOffset) +
-             OMR::alignNoCheck(codeSize + dataSize, sizeof(size_t));
+             OMR::alignNoCheck(codeSize + dataSize + signatureSize, sizeof(size_t));
       }
 
    bool isValidHeader(const JITServerAOTCacheReadContext &context) const;
@@ -404,9 +410,25 @@ private:
    const size_t _numRecords;
    const size_t _codeSize;
    const size_t _dataSize;
-   // Layout: SerializedSCCOffset offsets[_numRecords], uint8_t code[_codeSize], uint8_t data[_dataSize]
-   uint8_t _varSizedData[];
-   };
 
+   const size_t _signatureSize;
+   // Layout: SerializedSCCOffset offsets[_numRecords]
+   //         uint8_t             code[_codeSize]
+   //         uint8_t             data[_dataSize]
+   //         char*               signature[_signatureSize]
+   uint8_t _varSizedData[];
+   }; // struct SerializedAOTMethod
+
+// Helper macros to make the code for printing class and method names to vlog more concise
+#define RECORD_NAME(record) (int)(record)->nameLength(), (const char *)(record)->name()
+#define LENGTH_AND_DATA(str) J9UTF8_LENGTH(str), (const char *)J9UTF8_DATA(str)
+#define ROMCLASS_NAME(romClass) LENGTH_AND_DATA(J9ROMCLASS_CLASSNAME(romClass))
+#define ROMMETHOD_NAS(romMethod) LENGTH_AND_DATA(J9ROMMETHOD_NAME(romMethod)), LENGTH_AND_DATA(J9ROMMETHOD_SIGNATURE(romMethod))
+#define RAMCLASS_NAME(ramClass) ROMCLASS_NAME((ramClass)->romClass)
+#define FULL_RAMCLASS_NAME(ramClass, region) LENGTH_AND_DATA(JITServerHelpers::getFullClassName(ramClass, region))
+#define RAMMETHOD_SIGNATURE(ramMethod) \
+   RAMCLASS_NAME(J9_CLASS_FROM_METHOD(ramMethod)), ROMMETHOD_NAS(J9_ROM_METHOD_FROM_RAM_METHOD(ramMethod))
+#define OPTLEVEL_NAME(comp) (comp)->compileRelocatableCode() ? "AOT " : "", (comp)->getHotnessName()
+#define SIGNATURE_AND_OPTLEVEL(comp) (comp)->signature(), OPTLEVEL_NAME(comp)
 
 #endif /* defined(JITSERVER_AOT_SERIALIZATION_RECORDS_H) */

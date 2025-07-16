@@ -323,7 +323,7 @@ dumpQualifiedSize(J9PortLibrary* portLib, UDATA byteSize, const char* optionName
 		message_num,
 		NULL);
 
-	paramSize = j9str_printf(PORTLIB, buffer, 16, "%zu%s", size, qualifier);
+	paramSize = j9str_printf(buffer, 16, "%zu%s", size, qualifier);
 	paramSize = 15 - paramSize;
 	paramSize += strlen(optionDescription);
 	paramSize -= strlen(optionName);
@@ -1393,24 +1393,19 @@ verboseStackMapFrameVerification(J9HookInterface** hook, UDATA eventNum, void* e
 static void
 printModule(J9VMThread* vmThread, char* message, J9Module* module)
 {
-	char moduleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char *moduleNameUTF = NULL;
 	J9UTF8 *jrtURL = NULL;
 	char* template = "%s: %s from: %.*s\n";
 
 	PORT_ACCESS_FROM_VMC(vmThread);
 
-	/* module name */
-	moduleNameUTF = vmThread->javaVM->internalVMFunctions->copyStringToUTF8WithMemAlloc(
-		vmThread, module->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, moduleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-
-	/* module location */
+	/* module location. */
 	jrtURL = getModuleJRTURL(vmThread, module->classLoader, module);
 
-	j9tty_printf(PORTLIB, template, message, moduleNameUTF, J9UTF8_LENGTH(jrtURL), J9UTF8_DATA(jrtURL));
-
-	if (moduleNameUTF != moduleNameBuf) {
-		j9mem_free_memory((void *)moduleNameUTF);
+	J9UTF8 *moduleName = module->moduleName;
+	if (NULL != moduleName) {
+		j9tty_printf(
+			PORTLIB, template, message,
+			(const char *)J9UTF8_DATA(moduleName), J9UTF8_LENGTH(jrtURL), J9UTF8_DATA(jrtURL));
 	}
 }
 
@@ -1605,17 +1600,17 @@ baseTypeToIndex(UDATA encodedType)
  * convert a BCV encoded data type to a human readable string based on specified format.
  */
 static UDATA
-printDataType(J9PortLibrary* portLibrary, VerboseVerificationBuffer* buf, J9BytecodeVerificationData* verifyData, UDATA encodedType, const char* fmt)
+printDataType(J9PortLibrary *portLibrary, VerboseVerificationBuffer *buf, J9BytecodeVerificationData *verifyData, UDATA encodedType, const char *fmt)
 {
-	J9ROMClass* romClass = verifyData->romClass;
-	struct J9UTF8* utf = NULL;
-	U_32* offset = 0;
+	J9ROMClass *romClass = verifyData->romClass;
+	J9UTF8 *utf = NULL;
+	U_32 *offset = NULL;
 	UDATA typeTag = encodedType & BCV_TAG_MASK;
 	UDATA msgLen = 0;
 	UDATA cpIndex = 0;
-	const char* typeString = NULL;
+	const char *typeString = NULL;
 	J9ROMConstantPoolItem *constantPool = NULL;
-	U_8* code = NULL;
+	U_8 *code = NULL;
 	PORT_ACCESS_FROM_PORT(portLibrary);
 
 	switch (typeTag) {
@@ -1651,12 +1646,12 @@ printDataType(J9PortLibrary* portLibrary, VerboseVerificationBuffer* buf, J9Byte
 	case BCV_OBJECT_OR_ARRAY: /* FALLTHROUGH */
 	case BCV_SPECIAL_INIT: /* FALLTHROUGH */
 	default:
-		offset = (U_32*) verifyData->classNameList[BCV_INDEX_FROM_TYPE(encodedType)];
-		msgLen = (U_32) J9UTF8_LENGTH(offset + 1);
-		if (offset[0] == 0) {
-			typeString = (const char*)J9UTF8_DATA(offset + 1);
+		offset = (U_32 *)verifyData->classNameList[BCV_INDEX_FROM_TYPE(encodedType)];
+		msgLen = J9UTF8_LENGTH((J9UTF8 *)(offset + 1));
+		if (0 == offset[0]) {
+			typeString = (const char *)J9UTF8_DATA((J9UTF8 *)(offset + 1));
 		} else {
-			typeString = (const char*)((UDATA) offset[0] + (UDATA) romClass);
+			typeString = (const char *)((UDATA)offset[0] + (UDATA)romClass);
 		}
 		printVerificationInfo(PORTLIB, buf, fmt, msgLen, typeString);
 		break;
@@ -1797,4 +1792,3 @@ initVerboseVerificationBuffer(VerboseVerificationBuffer* buf, UDATA size, char* 
 	buf->cursor = 0;
 	buf->buffer = (U_8*)byteArray;
 }
-

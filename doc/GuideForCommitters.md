@@ -28,6 +28,10 @@ follow when reviewing and merging pull requests and issues. It also provides
 a checklist of items that committers must ensure have been completed prior to
 merging a pull request.
 
+Committers should be aware of the
+[Eclipse Foundation Generative Artificial Intelligence Usage Guidelines](https://www.eclipse.org/projects/guidelines/genai/)
+as well as the
+[Eclipse OpenJ9 Generative Artificial Intelligence Usage Guidelines](/CONTRIBUTING.md#Generative-Artificial-Intelligence-Usage-Guidelines).
 
 ## General Guidelines
 
@@ -140,7 +144,7 @@ possible between them.
     It is strongly recommended that you check that the tips of the
     `eclipse-openj9/openj9-omr` [`master`](https://github.com/eclipse-openj9/openj9-omr/tree/master),
     `eclipse-openj9/openj9-omr` [`openj9`](https://github.com/eclipse-openj9/openj9-omr/tree/openj9)
-    and `eclipse/omr` [`master`](https://github.com/eclipse/omr/tree/master)
+    and `eclipse-omr/omr` [`master`](https://github.com/eclipse-omr/omr/tree/master)
     branches are all the same before proceeding.  If they are different,
     be aware that you will be introducing other OMR changes that have
     not yet passed an OMR Acceptance build.  While not strictly
@@ -167,9 +171,10 @@ possible between them.
     necessary to wait for this build to finish because an equivalent
     of the OMR Acceptance Build was already tested in Step 1.
 
-7.  Verify that the `master` branch of the `eclipse-openj9/openj9-omr` repo
-    contains the Eclipse OMR commit you merged in Step 3.  Make note
-    of the commit SHA for Step 8.
+7.  Verify that the [master branch](https://github.com/eclipse-openj9/openj9-omr/commits/master)
+    of the [eclipse-openj9/openj9-omr](https://github.com/eclipse-openj9/openj9-omr)
+    repo contains the Eclipse OMR commit you merged in Step 3.
+    Make note of the commit SHA for Step 8.
 
 8.  Launch a ["Promote_OMR"](https://openj9-jenkins.osuosl.org/job/Promote_OMR/)
     job on the SHA of the commit that was just merged in the Eclipse

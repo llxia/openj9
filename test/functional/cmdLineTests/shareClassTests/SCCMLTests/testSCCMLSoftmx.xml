@@ -49,7 +49,7 @@
 	
 	The string 'corrupt' is checked because it can appear several messages like below.
 		JVMSHRC443E Cache CRC is incorrect indicating a corrupt cache. Incorrect cache CRC: 0x0.
-		JVMDUMP013I Processed dump event "corruptcache", detail "".
+		JVMDUMP056I Processed dump event "corruptcache", detail "" at yyyy/mm/dd HH:MM:SS.
 		JVMSHRC442E Shared cache "jim" is corrupt. Corruption code is -1. Corrupt value is 0x0. No new JVMs will be allowed to connect to the cache.
 	-->
 		
@@ -89,7 +89,8 @@
 		<output type="required" caseSensitive="yes" regex="yes" javaUtilPattern="yes">ROMClasses\s+= 0</output>
 		<output type="success" caseSensitive="yes" regex="yes" javaUtilPattern="yes">Cache is 100% soft full</output>
 
-		<output type="failure" caseSensitive="yes" regex="yes" javaUtilPattern="yes">#(.)*= [^0][0-9]*</output>
+		<!-- Everything else except # Additional startup hints allowed should be 0 -->
+		<output type="failure" caseSensitive="yes" regex="yes" javaUtilPattern="yes">#(?!\s*Additional startup hints allowed\s*=\s*\d+)(\s+\w+.*?)\s*= [^0][0-9]*</output>
 		<output type="failure" caseSensitive="yes" regex="no">error</output>
 		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
 		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>

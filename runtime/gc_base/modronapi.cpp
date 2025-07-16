@@ -47,6 +47,10 @@
 #include "MemorySpace.hpp"
 #include "MemorySubSpace.hpp"
 #include "MemoryPoolLargeObjects.hpp"
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+#include "SparseAddressOrderedFixedSizeDataPool.hpp"
+#include "SparseVirtualMemory.hpp"
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
 #include "VMInterface.hpp"
 #include "VMThreadListIterator.hpp"
 #include "VMAccess.hpp"
@@ -701,6 +705,19 @@ j9gc_pool_memoryusage(J9JavaVM *javaVM, UDATA poolID, UDATA *free, UDATA *total)
 	return j9gc_pool_maxmemory(javaVM, poolID);
 }
 
+void
+j9gc_get_offheap_data(J9JavaVM *javaVM, void **offheapControlStructure, void **base, void **top, UDATA *usage)
+{
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+	MM_SparseVirtualMemory *largeObjectVirtualMemory = MM_GCExtensions::getExtensions(javaVM)->largeObjectVirtualMemory;
+
+	*offheapControlStructure = (void *)largeObjectVirtualMemory;
+	*base = largeObjectVirtualMemory->getHeapBase();
+	*top = largeObjectVirtualMemory->getHeapTop();
+	*usage = largeObjectVirtualMemory->getSparseDataPool()->getFreeListPoolAllocBytes();
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+}
+
 /**
  * retrieve the gc action
  */
@@ -840,6 +857,92 @@ j9gc_get_maximum_heap_size(J9JavaVM *javaVM)
 }
 
 /**
+ * API to return the minimum young generation memory size
+ * for all GC policies that apply:
+ * - Nursery minimum size for Gencon
+ * - Eden minimum size for Balanced
+ * - 0 for all other policies
+ */
+UDATA
+j9gc_get_minimum_young_generation_size(J9JavaVM *javaVM)
+{
+	MM_GCExtensions *ext = MM_GCExtensions::getExtensions(javaVM);
+	OMR_VM *omrVM = javaVM->omrVM;
+	UDATA result = 0;
+
+	switch (omrVM->gcPolicy) {
+	case OMR_GC_POLICY_OPTTHRUPUT:
+		break;
+
+	case OMR_GC_POLICY_OPTAVGPAUSE:
+		break;
+
+	case OMR_GC_POLICY_GENCON:
+		result = ext->minNewSpaceSize;
+		break;
+
+	case OMR_GC_POLICY_METRONOME:
+		break;
+
+	case OMR_GC_POLICY_BALANCED:
+		result = ext->tarokIdealEdenMinimumBytes;
+		break;
+
+	case OMR_GC_POLICY_NOGC:
+		break;
+
+	default:
+		/* Undefined or unknown GC policy */
+		Assert_MM_unreachable();
+		break;
+	}
+	return result;
+}
+
+/**
+ * API to return the maximum young generation memory size
+ * for all GC policies that apply:
+ * - Nursery maximum size for Gencon
+ * - Eden maximum size for Balanced
+ * - 0 for all other policies
+ */
+UDATA
+j9gc_get_maximum_young_generation_size(J9JavaVM *javaVM)
+{
+	MM_GCExtensions *ext = MM_GCExtensions::getExtensions(javaVM);
+	OMR_VM *omrVM = javaVM->omrVM;
+	UDATA result = 0;
+
+	switch (omrVM->gcPolicy) {
+	case OMR_GC_POLICY_OPTTHRUPUT:
+		break;
+
+	case OMR_GC_POLICY_OPTAVGPAUSE:
+		break;
+
+	case OMR_GC_POLICY_GENCON:
+		result = ext->maxNewSpaceSize;
+		break;
+
+	case OMR_GC_POLICY_METRONOME:
+		break;
+
+	case OMR_GC_POLICY_BALANCED:
+		result = ext->tarokIdealEdenMaximumBytes;
+		break;
+
+	case OMR_GC_POLICY_NOGC:
+		break;
+
+	default:
+		/* Undefined or unknown GC policy */
+		Assert_MM_unreachable();
+		break;
+	}
+	return result;
+}
+
+/**
  * API to return a string representing the current GC mode.
  * Examples of the string returned are "optthruput", and "gencon".
  */
@@ -873,6 +976,31 @@ UDATA
 j9gc_get_object_total_footprint_in_bytes(J9JavaVM *javaVM, j9object_t objectPtr)
 {
 	return MM_GCExtensions::getExtensions(javaVM)->objectModel.getTotalFootprintInBytes(objectPtr);
+}
+
+/**
+ * API to return is explicit GC disabled
+ *
+ * @parm[in] javaVM The J9JavaVM
+ * @return true if explicit GC is disabled
+ */
+BOOLEAN
+j9gc_get_explicit_GC_disabled(J9JavaVM *javaVM)
+{
+	return MM_GCExtensions::getExtensions(javaVM)->disableExplicitGC;
+}
+
+/**
+ * API to return a unique GC ID based on all counts
+ *
+ * @parm[in] javaVM The J9JavaVM
+ * @return unique GC ID count
+ */
+UDATA
+j9gc_get_unique_GC_count(J9JavaVM *javaVM)
+{
+	MM_GCExtensions *extensions = MM_GCExtensions::getExtensions(javaVM);
+	return extensions->getUniqueGCCycleCount();
 }
 
 /**
@@ -976,6 +1104,20 @@ BOOLEAN
 j9gc_get_cumulative_bytes_allocated_by_thread(J9VMThread *vmThread, UDATA *cumulativeValue)
 {
 	return MM_EnvironmentBase::getEnvironment(vmThread->omrVMThread)->_objectAllocationInterface->getAllocationStats()->bytesAllocatedCumulative(cumulativeValue);
+}
+
+/**
+ * @param[in] vmThread the vmThread we are querying about
+ * @param[out] anonymous cumulative value pointer for unloaded anonymous classes
+ * @param[out] classes cumulative value pointer for unloaded classes (including anonymous)
+ * @param[out] classloaders cumulative value pointer for unloaded classesloaders
+ */
+BOOLEAN
+j9gc_get_cumulative_class_unloading_stats(J9VMThread *vmThread, UDATA *anonymous, UDATA *classes, UDATA *classloaders)
+{
+	MM_GCExtensions *ext = MM_GCExtensions::getExtensions(vmThread->javaVM);
+	ext->globalGCStats.classUnloadStats.getUnloadedCountersCumulative(anonymous, classes, classloaders);
+	return true;
 }
 
 /**

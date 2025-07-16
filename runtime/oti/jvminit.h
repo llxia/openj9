@@ -221,7 +221,6 @@ enum INIT_STAGE {
 #define VMOPT_BP_JXE "_jxe"
 #define VMOPT_NEEDS_JCL "_needs_jcl"
 #define VMOPT_J2SE_J9 "_j2se_j9"
-#define VMOPT_XJCL_COLON "-Xjcl:"
 #define VMOPT_XFUTURE "-Xfuture"
 #define VMOPT_ALL "all"
 #define VMOPT_XSIGQUITTOFILE "-XsigquitToFile"
@@ -268,6 +267,7 @@ enum INIT_STAGE {
 #define VMOPT_XFASTRESOLVE "-Xfastresolve"
 #define VMOPT_XSHARECLASSES "-Xshareclasses"
 #define VMOPT_XSHARECLASSES_COLON "-Xshareclasses:"
+#define VMOPT_XSNAPSHOT "-Xsnapshot="
 #define VMOPT_XSERVICE_EQUALS "-Xservice="
 #define VMOPT_XISS "-Xiss"
 #define VMOPT_XSSI "-Xssi"
@@ -443,6 +443,8 @@ enum INIT_STAGE {
 #define VMOPT_XXSLEEPMILLISECONDSFORNOTCHECKPOINTSAFE_EQUALS "-XX:sleepMillisecondsForNotCheckpointSafe="
 #define VMOPT_XXENABLEDEBUGONRESTORE "-XX:+DebugOnRestore"
 #define VMOPT_XXDISABLEDEBUGONRESTORE "-XX:-DebugOnRestore"
+#define VMOPT_XXENABLETIMECOMPENSATION "-XX:+EnableTimeCompensation"
+#define VMOPT_XXDISABLETIMECOMPENSATION "-XX:-EnableTimeCompensation"
 #endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
 
 #if defined(J9VM_OPT_CRAC_SUPPORT)
@@ -469,6 +471,12 @@ enum INIT_STAGE {
 #define VMOPT_XXSHOWUNMOUNTEDTHREADSTACKS "-XX:+ShowUnmountedThreadStacks"
 #define VMOPT_XXNOSHOWUNMOUNTEDTHREADSTACKS "-XX:-ShowUnmountedThreadStacks"
 #endif /* JAVA_SPEC_VERSION >= 21 */
+
+#if JAVA_SPEC_VERSION >= 24
+/* Option to toggle on/off the feature to yield pinned virtual threads. */
+#define VMOPT_XXYIELDPINNEDVIRTUALTHREADS "-XX:+YieldPinnedVirtualThreads"
+#define VMOPT_XXNOYIELDPINNEDVIRTUALTHREADS "-XX:-YieldPinnedVirtualThreads"
+#endif /* JAVA_SPEC_VERSION >= 24 */
 
 /* Option to turn on exception on synchronization on instances of value-based classes */
 #define VMOPT_XXDIAGNOSE_SYNC_ON_VALUEBASED_CLASSES_EQUALS1 "-XX:DiagnoseSyncOnValueBasedClasses=1"
@@ -586,6 +594,8 @@ enum INIT_STAGE {
 #define VMOPT_XXFLIGHTRECORDER "-XX:+FlightRecorder"
 #define VMOPT_XXNOFLIGHTRECORDER "-XX:-FlightRecorder"
 
+#define VMOPT_XXSTARTFLIGHTRECORDING "-XX:StartFlightRecording"
+
 #define VMOPT_XXCONTINUATIONCACHE "-XX:ContinuationCache:"
 
 #if JAVA_SPEC_VERSION >= 22
@@ -661,6 +671,9 @@ enum INIT_STAGE {
 #define VMOPT_XXPRINTFLAGSFINALENABLE "-XX:+PrintFlagsFinal"
 #define VMOPT_XXPRINTFLAGSFINALDISABLE "-XX:-PrintFlagsFinal"
 
+#define VMOPT_XXCACHEMAPS "-XX:+CacheMaps"
+#define VMOPT_XXNOCACHEMAPS "-XX:-CacheMaps"
+
 #define VMOPT_XXLEGACYXLOGOPTION "-XX:+LegacyXlogOption"
 #define VMOPT_XXNOLEGACYXLOGOPTION "-XX:-LegacyXlogOption"
 #define MAPOPT_XLOG_OPT "-Xlog"
@@ -682,6 +695,7 @@ enum INIT_STAGE {
 #define VMOPT_PATCH_MODULE "--patch-module"
 #define VMOPT_ILLEGAL_ACCESS "--illegal-access="
 #define VMOPT_ENABLE_NATIVE_ACCESS "--enable-native-access"
+#define VMOPT_ILLEGAL_NATIVE_ACCESS "--illegal-native-access="
 
 /* JEP 421: Deprecate Finalization for Removal */
 #define VMOPT_DISABLE_FINALIZATION "--finalization="
@@ -721,6 +735,7 @@ enum INIT_STAGE {
 #if JAVA_SPEC_VERSION >= 23
 #define SYSPROP_SUN_MISC_UNSAFE_MEMORY_ACCESS "sun.misc.unsafe.memory.access"
 #endif /* JAVA_SPEC_VERSION >= 23 */
+#define SYSPROP_JDK_MODULE_ILLEGALNATIVEACCESS "jdk.module.illegal.native.access"
 #define JAVA_BASE_MODULE "java.base"
 
 #define SYSPROP_COM_SUN_MANAGEMENT "-Dcom.sun.management."

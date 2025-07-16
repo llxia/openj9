@@ -2164,7 +2164,7 @@ J9NLS_VM_CRIU_RESTORE_RESET_VIRTUALTHREAD_FORKJOINPOOL_PARALLELISM_INVALID_PARAL
 J9NLS_VM_CRIU_RESTORE_RESET_VIRTUALTHREAD_FORKJOINPOOL_PARALLELISM_INVALID_PARALLELISM_OFFSET.user_response=View CRIU documentation to determine how to resolve the exception.
 # END NON-TRANSLATABLE
 
-# NullRestricted/value/implicit is not translatable
+# NullRestricted is not translatable
 J9NLS_VM_NULLRESTRICTED_MUST_BE_IN_DEFAULT_IMPLICITCREATION_VALUE_CLASS=Un campo de instancia con un atributo NullRestricted debe estar en una clase de valor con un constructor impl\u00edcito
 # START NON-TRANSLATABLE
 J9NLS_VM_NULLRESTRICTED_MUST_BE_IN_DEFAULT_IMPLICITCREATION_VALUE_CLASS.explanation=Please consult the Java Virtual Machine Specification for a detailed explanation.
@@ -2172,7 +2172,7 @@ J9NLS_VM_NULLRESTRICTED_MUST_BE_IN_DEFAULT_IMPLICITCREATION_VALUE_CLASS.system_a
 J9NLS_VM_NULLRESTRICTED_MUST_BE_IN_DEFAULT_IMPLICITCREATION_VALUE_CLASS.user_response=Contact the provider of the classfile for a corrected version.
 # END NON-TRANSLATABLE
 
-# NullRestricted/value/implicit is not translatable
+# NullRestricted is not translatable
 J9NLS_VM_STATIC_NULLRESTRICTED_MUST_BE_IN_DEFAULT_IMPLICITCREATION_VALUE_CLASS=Un campo est\u00e1tico con un atributo NullRestricted debe estar en una clase de valor con un constructor impl\u00edcito
 # START NON-TRANSLATABLE
 J9NLS_VM_STATIC_NULLRESTRICTED_MUST_BE_IN_DEFAULT_IMPLICITCREATION_VALUE_CLASS.explanation=Please consult the Java Virtual Machine Specification for a detailed explanation.
@@ -2181,7 +2181,7 @@ J9NLS_VM_STATIC_NULLRESTRICTED_MUST_BE_IN_DEFAULT_IMPLICITCREATION_VALUE_CLASS.u
 # END NON-TRANSLATABLE
 
 # Note: -XX:Compatibility= is a command-line option and should not be translated.
-J9NLS_VM_COMPATIBILITY_REPEATED=La opci\u00f3n de l\u00ednea de comandos -XX:Compatibilidad=[modo] s\u00f3lo se permite una vez.
+J9NLS_VM_COMPATIBILITY_REPEATED=La opci\u00f3n de l\u00ednea de comandos -XX:Compatibility=[modo] s\u00f3lo se permite una vez.
 # START NON-TRANSLATABLE
 J9NLS_VM_COMPATIBILITY_REPEATED.explanation=The specified command-line option may not be repeated.
 J9NLS_VM_COMPATIBILITY_REPEATED.system_action=The JVM will fail to start.
@@ -2422,4 +2422,81 @@ J9NLS_VM_CLASS_NAME_EXCEEDS_MAX_LENGTH=El nombre de la clase excede la longitud 
 J9NLS_VM_CLASS_NAME_EXCEEDS_MAX_LENGTH.explanation=Class name cannot be longer than 65535 characters.
 J9NLS_VM_CLASS_NAME_EXCEEDS_MAX_LENGTH.system_action=The JVM will throw a ClassNotFoundException.
 J9NLS_VM_CLASS_NAME_EXCEEDS_MAX_LENGTH.user_response=Shorten the class name.
+# END NON-TRANSLATABLE
+
+J9NLS_VM_OPENJ9_JFR_METADATA_FILE_NOT_LOAD=O bien $java.home/lib/metadata.blob no existe, o bien el archivo no puede cargarse.
+# START NON-TRANSLATABLE
+J9NLS_VM_OPENJ9_JFR_METADATA_FILE_NOT_LOAD.explanation=Couldn't find or load JFR metadata blob file.
+J9NLS_VM_OPENJ9_JFR_METADATA_FILE_NOT_LOAD.system_action=The JVM will not generate a JFR file.
+J9NLS_VM_OPENJ9_JFR_METADATA_FILE_NOT_LOAD.user_response=Contact your service representative.
+# END NON-TRANSLATABLE
+
+# Note: "java.compiler" is a system property name and should not be translated.
+# Note: "-Xjit" is a command line parameter and should not be translated.
+J9NLS_VM_JAVA_COMPILER_WARNING_XJIT=Establecer la propiedad del sistema java.compiler es obsoleto en la versi\u00f3n 21 y posteriores, utilice -Xjit en su lugar.
+# START NON-TRANSLATABLE
+J9NLS_VM_JAVA_COMPILER_WARNING_XJIT.explanation=The java.compiler system property can no longer be used to enable or disable the JIT.
+J9NLS_VM_JAVA_COMPILER_WARNING_XJIT.system_action=Setting the java.compiler system property is ignored.
+J9NLS_VM_JAVA_COMPILER_WARNING_XJIT.user_response=Use the -Xjit option to enable the JIT.
+# END NON-TRANSLATABLE
+
+# Note: "java.compiler" is a system property name and should not be translated.
+# Note: "-Xint" is a command line parameter and should not be translated.
+J9NLS_VM_JAVA_COMPILER_WARNING_XINT=Establecer la propiedad de sistema java.compiler es obsoleto en la versi\u00f3n 21 y posteriores, utilice -Xint en su lugar.
+# START NON-TRANSLATABLE
+J9NLS_VM_JAVA_COMPILER_WARNING_XINT.explanation=The java.compiler system property can no longer be used to enable or disable the JIT.
+J9NLS_VM_JAVA_COMPILER_WARNING_XINT.system_action=Setting the java.compiler system property is ignored.
+J9NLS_VM_JAVA_COMPILER_WARNING_XINT.user_response=Use the -Xint option to disable the JIT.
+# END NON-TRANSLATABLE
+
+# Java 8 message for an IllegalAccessError when the class or interface can't access its super class or interface.
+# argument 1 is "class" or "interface"
+# arguments 2 and 3 are the class or interface name
+# arguments 4 and 5 are the classloader name of the class or interface
+# argument 6 is "superclass" or "superinterface"
+# arguments 7 and 8 are the super class or interface name
+# arguments 9 and 10 are the classloader name of the super class or interface
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8=%1$s %3$.*2$s (del cargador %5$.*4$s ) no puede acceder a su %6$s %8$.*7$s (del cargador %10$.*9$s )
+# START NON-TRANSLATABLE
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_1=class
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_2=59
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_3=org/openj9/test/illegalAccessError/ExtendsDefaultVisibility
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_4=23
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_5=java/net/URLClassLoader
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_6=superclass
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_7=52
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_8=org/openj9/test/illegalAccessError/DefaultVisibility
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_9=47
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.sample_input_10=jdk/internal/loader/ClassLoaders$AppClassLoader
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.explanation=The specified class or interface is not visible
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.system_action=The JVM will throw an IllegalAccessError.
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA8.user_response=Contact the provider of the classfile for a corrected version.
+# END NON-TRANSLATABLE
+
+# Java 11+ message for an IllegalAccessError when the class or interface can't access its super class or interface.
+# argument 1 is "class" or "interface"
+# arguments 2 and 3 are the class or interface name
+# argument 4 is the module name of the class or interface
+# arguments 5 and 6 are the classloader name of the class or interface
+# argument 7 is "superclass" or "superinterface"
+# arguments 8 and 9 are the super class or interface name
+# argument 10 is the module name of the super class or interface
+# arguments 11 and 12 are the classloader name of the super class or interface
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS=%1$s %3$.*2$s (en %4$s desde el cargador %6$.*5$s ) no puede acceder a su %7$s %9$.*8$s (en %10$s desde el cargador %12$.*11$s )
+# START NON-TRANSLATABLE
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_1=class
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_2=59
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_3=org/openj9/test/illegalAccessError/ExtendsDefaultVisibility
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_4=unnamed module 0x0000000000000000
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_5=23
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_6=java/net/URLClassLoader
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_7=superclass
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_8=52
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_9=org/openj9/test/illegalAccessError/DefaultVisibility
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_10=unnamed module 0x0000000000000000
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_11=47
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.sample_input_12=jdk/internal/loader/ClassLoaders$AppClassLoader
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.explanation=The specified class or interface is not visible
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.system_action=The JVM will throw an IllegalAccessError.
+J9NLS_VM_CLASS_LOADING_ERROR_INVISIBLE_SUPERCLASS_OR_INTERFACE_JAVA11_PLUS.user_response=Contact the provider of the classfile for a corrected version.
 # END NON-TRANSLATABLE

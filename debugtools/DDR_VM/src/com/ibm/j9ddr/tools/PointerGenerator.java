@@ -145,6 +145,8 @@ public class PointerGenerator {
 			return;
 		}
 
+		structureReader.removeReservedTypeNames();
+
 		String auxFieldInfo = opts.get("-a");
 
 		if (auxFieldInfo != null) {
@@ -511,7 +513,7 @@ public class PointerGenerator {
 	}
 
 	private void writeGeneratedWarning(PrintWriter writer) {
-		writer.println("/**");
+		writer.println("/*");
 		writer.println(" * WARNING!!! GENERATED FILE");
 		writer.println(" *");
 		writer.println(" * This class is generated.");

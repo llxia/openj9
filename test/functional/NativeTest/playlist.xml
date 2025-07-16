@@ -20,7 +20,7 @@ OpenJDK Assembly Exception [2].
 
 SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0 OR GPL-2.0-only WITH OpenJDK-assembly-exception-1.0
 -->
-<playlist xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../TKG/playlist.xsd">
+<playlist xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../TKG/resources/playlist.xsd">
 	<include>nativeTestSettings.mk</include>
 	<test>
 		<testCaseName>algotest2</testCaseName>
@@ -244,7 +244,6 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 			<impl>ibm</impl>
 		</impls>
 		<versions>
-			<version>9</version>
 			<version>11+</version>
 		</versions>
 		<features>
@@ -277,7 +276,6 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 			<impl>ibm</impl>
 		</impls>
 		<versions>
-			<version>9</version>
 			<version>11+</version>
 		</versions>
 		<features>
@@ -310,7 +308,6 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 			<impl>ibm</impl>
 		</impls>
 		<versions>
-			<version>9</version>
 			<version>11+</version>
 		</versions>
 		<features>
@@ -342,7 +339,6 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 			<impl>ibm</impl>
 		</impls>
 		<versions>
-			<version>9</version>
 			<version>11+</version>
 		</versions>
 		<features>
@@ -355,6 +351,12 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 			<variation>Mode110</variation>
 			<variation>Mode610</variation>
 		</variations>
+		<disables>
+			<disable>
+				<comment>ibm_git/runtimes/backlog/issues/1659</comment>
+				<impl>ibm</impl>
+			</disable>
+		</disables>
 		<command>perl $(JVM_TEST_ROOT)$(D)TestConfig$(D)scripts$(D)tools$(D)sysvcleanup.pl all ; \
 	$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
 	$(SQ)$(JAVA_SHARED_LIBRARIES_DIR)$(D)shrtest$(SQ) $(JVM_OPTIONS) -Djava.home=$(SQ)$(TEST_JDK_HOME)$(D)jre$(D)$(SQ) ; \
@@ -488,8 +490,15 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 			<variation>Mode110</variation>
 			<variation>Mode610</variation>
 		</variations>
+		<disables>
+			<disable>
+				<comment>ibm_git/runtimes/backlog/issues/1659</comment>
+				<version>8</version>
+				<impl>ibm</impl>
+			</disable>
+		</disables>
 		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-			$(SQ)$(JAVA_SHARED_LIBRARIES_DIR)$(D)thrstatetest$(SQ) $(JVM_OPTIONS) -Djava.home=$(SQ)$(TEST_JDK_HOME)$(D)jre$(D)$(SQ) -Dcom.ibm.tools.attach.enable=no -Dibm.java9.forceCommonCleanerShutdown=true ; \
+			$(SQ)$(JAVA_SHARED_LIBRARIES_DIR)$(D)thrstatetest$(SQ) $(JVM_OPTIONS) -Djava.home=$(THRSTATETEST_JRE_HOME) -Dcom.ibm.tools.attach.enable=no -Dibm.java9.forceCommonCleanerShutdown=true ; \
 			$(TEST_STATUS)
 		</command>
 		<levels>
@@ -501,37 +510,6 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 		<types>
 			<type>native</type>
 		</types>
-		<versions>
-			<version>8</version>
-		</versions>
-		<impls>
-			<impl>openj9</impl>
-			<impl>ibm</impl>
-		</impls>
-	</test>
-	<test>
-		<testCaseName>thrstatetest</testCaseName>
-		<variations>
-			<variation>Mode110</variation>
-			<variation>Mode610</variation>
-		</variations>
-		<command>$(ADD_JVM_LIB_DIR_TO_LIBPATH) \
-			$(SQ)$(JAVA_SHARED_LIBRARIES_DIR)$(D)thrstatetest$(SQ) $(JVM_OPTIONS) -Djava.home=$(SQ)$(TEST_JDK_HOME)$(D)$(SQ) -Dcom.ibm.tools.attach.enable=no -Dibm.java9.forceCommonCleanerShutdown=true ; \
-			$(TEST_STATUS)
-		</command>
-		<levels>
-			<level>sanity</level>
-		</levels>
-		<groups>
-			<group>functional</group>
-		</groups>
-		<types>
-			<type>native</type>
-		</types>
-		<versions>
-			<version>9</version>
-			<version>11+</version>
-		</versions>
 		<impls>
 			<impl>openj9</impl>
 			<impl>ibm</impl>
@@ -600,7 +578,6 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 			<type>native</type>
 		</types>
 		<versions>
-			<version>9</version>
 			<version>11+</version>
 		</versions>
 	</test>

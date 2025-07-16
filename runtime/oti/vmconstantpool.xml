@@ -231,7 +231,7 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 
 	<!-- Common field references shared between OpenJ9 and OpenJDK Thread. -->
 	<fieldref class="java/lang/Thread" name="contextClassLoader" signature="Ljava/lang/ClassLoader;"/>
-	<fieldref class="java/lang/Thread" name="inheritedAccessControlContext" signature="Ljava/security/AccessControlContext;"/>
+	<fieldref class="java/lang/Thread" name="inheritedAccessControlContext" signature="Ljava/security/AccessControlContext;" versions="8-23"/>
 	<fieldref class="java/lang/Thread" name="name" signature="Ljava/lang/String;"/>
 	<fieldref class="java/lang/Thread" name="parkBlocker" signature="Ljava/lang/Object;"/>
 	<fieldref class="java/lang/Thread" name="tid" signature="J"/>
@@ -265,6 +265,13 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 	<fieldref class="java/lang/VirtualThread" name="carrierThread" signature="Ljava/lang/Thread;" versions="19-"/>
 	<fieldref class="java/lang/VirtualThread" name="cont" signature="Ljdk/internal/vm/Continuation;" versions="19-"/>
 
+	<!-- Field references for Synchronize Virtual Threads without Pinning (JEP491). -->
+	<fieldref class="java/lang/VirtualThread" name="blockPermit" signature="Z" versions="24-"/>
+	<fieldref class="java/lang/VirtualThread" name="next" signature="Ljava/lang/VirtualThread;" versions="24-"/>
+	<fieldref class="java/lang/VirtualThread" name="notified" signature="Z" versions="24-"/>
+	<fieldref class="java/lang/VirtualThread" name="onWaitingList" signature="Z" versions="24-"/>
+	<fieldref class="java/lang/VirtualThread" name="timeout" signature="J" versions="24-"/>
+
 	<fieldref class="java/lang/Throwable" name="cause" signature="Ljava/lang/Throwable;"/>
 	<fieldref class="java/lang/Throwable" name="detailMessage" signature="Ljava/lang/String;"/>
 	<fieldref class="java/lang/Throwable" name="walkback" signature="Ljava/lang/Object;"/>
@@ -283,9 +290,8 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 	<fieldref class="java/lang/reflect/Field" name="type" signature="Ljava/lang/Class;"/>
 	<fieldref class="java/lang/reflect/Field" name="signature" signature="Ljava/lang/String;"/>
 	<fieldref class="java/lang/reflect/Field" name="modifiers" signature="I"/>
-	<fieldref class="java/lang/reflect/Field" name="trustedFinal" signature="Z" versions="15-">
-		<fieldalias name="flags" signature="I" flags="opt_valhallaValueTypes"/>
-	</fieldref>
+	<fieldref class="java/lang/reflect/Field" name="trustedFinal" signature="Z" versions="15-" flags="!opt_valhallaValueTypes"/>
+	<fieldref class="java/lang/reflect/Field" name="flags" signature="I" flags="opt_valhallaValueTypes"/>
 	<fieldref class="java/lang/reflect/Field" name="annotations" signature="[B"/>
 	<fieldref class="java/lang/reflect/Field" name="slot" signature="I"/>
 	<fieldref class="java/lang/reflect/Field" name="clazz" signature="Ljava/lang/Class;"/>
@@ -427,6 +433,9 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 	<fieldref class="jdk/internal/vm/Continuation" name="vthread" signature="Ljava/lang/Thread;" versions="19-"/>
 	<fieldref class="jdk/internal/vm/Continuation" name="scopedValueCache" signature="[Ljava/lang/Object;" versions="19-"/>
 
+	<!-- Field references for Synchronize Virtual Threads without Pinning (JEP491). -->
+	<fieldref class="jdk/internal/vm/Continuation" name="blocker" signature="Ljava/lang/Object;" versions="24-"/>
+
 	<!-- Field references needed to support Foreign Linker API. -->
 	<fieldref class="java/lang/invoke/NativeMethodHandle" name="invokeCache" signature="[Ljava/lang/Object;" flags="opt_openjdkFfi" versions="22-"/>
 	<fieldref class="java/lang/invoke/NativeMethodHandle" name="nep" signature="Ljava/lang/invoke/MethodHandle;" flags="opt_openjdkFfi" versions="22-"/>
@@ -463,7 +472,7 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 	for each combination of method flags.
 -->
 	<staticmethodref class="java/lang/J9VMInternals" name="completeInitialization" signature="()V"/>
-	<staticmethodref class="java/lang/J9VMInternals" name="checkPackageAccess" signature="(Ljava/lang/Class;Ljava/security/ProtectionDomain;)V"/>
+	<staticmethodref class="java/lang/J9VMInternals" name="checkPackageAccess" signature="(Ljava/lang/Class;Ljava/security/ProtectionDomain;)V" versions="8-23"/>
 	<staticmethodref class="java/lang/J9VMInternals" name="threadCleanup" signature="(Ljava/lang/Thread;)V"/>
 	<staticmethodref class="java/lang/J9VMInternals" name="newInstanceImpl" signature="(Ljava/lang/Class;)Ljava/lang/Object;" flags="jit_newInstancePrototype"/>
 	<staticmethodref class="java/lang/J9VMInternals" name="formatNoSuchMethod" signature="(Ljava/lang/String;Ljava/lang/Class;Ljava/lang/String;Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/String;"/>
@@ -475,7 +484,8 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 	<virtualmethodref class="java/lang/ClassLoader" name="loadClass" signature="(Ljava/lang/String;)Ljava/lang/Class;"/>
 	<specialmethodref class="java/lang/Thread" name="uncaughtException" signature="(Ljava/lang/Throwable;)V"/>
 	<specialmethodref class="java/lang/Thread" name="&lt;init>" signature="(Ljava/lang/String;Ljava/lang/Object;IZ)V"/>
-	<staticmethodref class="java/lang/ClassLoader" name="findNative" signature="(Ljava/lang/ClassLoader;Ljava/lang/String;)J" versions="17-"/>
+	<staticmethodref class="java/lang/ClassLoader" name="findNative0" signature="(Ljava/lang/ClassLoader;Ljava/lang/String;)J" versions="17-23"/>
+	<staticmethodref class="java/lang/ClassLoader" name="findNative1" signature="(Ljava/lang/ClassLoader;Ljava/lang/String;Ljava/lang/Class;Ljava/lang/String;)J" versions="24-"/>
 
 	<fieldref class="java/lang/J9VMInternals$ClassInitializationLock" name="theClass" signature="Ljava/lang/Class;"/>
 
@@ -502,7 +512,7 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 	<!-- Static method references needed to support VirtualThread/Continuation. -->
 	<staticmethodref class="jdk/internal/vm/Continuation" name="enter" signature="(Ljdk/internal/vm/Continuation;)V" versions="19-"/>
 	<!-- Security manager check -->
-	<staticfieldref class="java/lang/System" name="security" signature="Ljava/lang/SecurityManager;"/>
+	<staticfieldref class="java/lang/System" name="security" signature="Ljava/lang/SecurityManager;" versions="8-23"/>
 
 	<!-- VM constants in java -->
 	<staticfieldref class="com/ibm/oti/vm/VM" name="J9_GC_WRITE_BARRIER_TYPE" signature="I"/>

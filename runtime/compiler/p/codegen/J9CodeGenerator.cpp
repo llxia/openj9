@@ -79,9 +79,6 @@ J9::Power::CodeGenerator::initialize()
 
    static bool disableInlineVectorizedMismatch = feGetEnv("TR_disableInlineVectorizedMismatch") != NULL;
    if (cg->getSupportsArrayCmpLen() &&
-#if defined(J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
-         !TR::Compiler->om.isOffHeapAllocationEnabled() &&
-#endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
          !disableInlineVectorizedMismatch)
       {
       cg->setSupportsInlineVectorizedMismatch();
@@ -98,7 +95,7 @@ J9::Power::CodeGenerator::initialize()
 
    if (comp->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P8) && comp->target().cpu.supportsFeature(OMR_FEATURE_PPC_HAS_VSX) &&
       comp->target().is64Bit() && !comp->getOption(TR_DisableFastStringIndexOf) &&
-      !TR::Compiler->om.canGenerateArraylets() && !TR::Compiler->om.isOffHeapAllocationEnabled())
+      !TR::Compiler->om.canGenerateArraylets())
       cg->setSupportsInlineStringIndexOf();
 
    static bool disableStringInflateIntrinsic = feGetEnv("TR_DisableStringInflateIntrinsic") != NULL;
@@ -108,8 +105,33 @@ J9::Power::CodeGenerator::initialize()
       !disableStringInflateIntrinsic)
       cg->setSupportsInlineStringLatin1Inflate();
 
+   static bool disableCASInlining = feGetEnv("TR_DisableCASInlining") != NULL;
+   if (!disableCASInlining)
+      {
+      cg->setSupportsInlineUnsafeCompareAndSet();
+      }
+
+   static bool disableCAEInlining = feGetEnv("TR_DisableCAEInlining") != NULL;
+   if (!disableCAEInlining)
+      {
+      cg->setSupportsInlineUnsafeCompareAndExchange();
+      }
+
    if (!comp->getOption(TR_DisableReadMonitors))
       cg->setSupportsReadOnlyLocks();
+
+   if (!TR::Compiler->om.canGenerateArraylets()
+         && comp->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P8)
+         && comp->target().cpu.supportsFeature(OMR_FEATURE_PPC_HAS_VSX)
+         && !comp->compileRelocatableCode()
+#ifdef J9VM_OPT_JITSERVER
+         && !comp->isOutOfProcessCompilation()
+#endif
+      )
+      {
+      cg->setSupportsInlineStringHashCode();
+      cg->setSupportsInlineVectorizedHashCode();
+      }
 
    static bool disableTLHPrefetch = (feGetEnv("TR_DisableTLHPrefetch") != NULL);
 
@@ -133,6 +155,12 @@ J9::Power::CodeGenerator::initialize()
    if (!disableDualTLH && !comp->getOption(TR_DisableDualTLH) && !comp->compileRelocatableCode() && !comp->getOptions()->realTimeGC())
       {
       cg->setIsDualTLH();
+      }
+
+   static bool disableInlineMath_MaxMin_FD = feGetEnv("TR_disableInlineMaxMin") != NULL;
+   if (!disableInlineMath_MaxMin_FD && comp->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P7))
+      {
+      cg->setSupportsInlineMath_MaxMin_FD();
       }
 
    /*

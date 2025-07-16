@@ -79,14 +79,11 @@ J9::ARM64::CodeGenerator::initialize()
 
    static bool disableInlineVectorizedMismatch = feGetEnv("TR_disableInlineVectorizedMismatch") != NULL;
    if (cg->getSupportsArrayCmpLen() &&
-#if defined(J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
-         !TR::Compiler->om.isOffHeapAllocationEnabled() &&
-#endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
          !disableInlineVectorizedMismatch)
       {
       cg->setSupportsInlineVectorizedMismatch();
       }
-   if ((!TR::Compiler->om.canGenerateArraylets()) && (!comp->getOption(TR_DisableSIMDStringHashCode)) && !TR::Compiler->om.isOffHeapAllocationEnabled())
+   if ((!TR::Compiler->om.canGenerateArraylets()) && (!comp->getOption(TR_DisableSIMDStringHashCode)))
       {
       cg->setSupportsInlineStringHashCode();
       }
@@ -94,13 +91,30 @@ J9::ARM64::CodeGenerator::initialize()
       {
       cg->setSupportsInlineStringIndexOf();
       }
+   static bool disableInlineStrIdxOfStr = feGetEnv("TR_disableInlineStrIdxOfStr") != NULL;
+   if ((!TR::Compiler->om.canGenerateArraylets()) && (!comp->getOption(TR_DisableFastStringIndexOf)) && !disableInlineStrIdxOfStr)
+      {
+      cg->setSupportsInlineStringIndexOfString();
+      }
    static bool disableInlineStringLatin1Inflate = feGetEnv("TR_disableInlineStringLatin1Inflate") != NULL;
-   if ((!TR::Compiler->om.canGenerateArraylets()) && (!disableInlineStringLatin1Inflate) && !TR::Compiler->om.isOffHeapAllocationEnabled())
+   if ((!TR::Compiler->om.canGenerateArraylets()) && (!disableInlineStringLatin1Inflate))
       {
       cg->setSupportsInlineStringLatin1Inflate();
       }
    if (comp->fej9()->hasFixedFrameC_CallingConvention())
       cg->setHasFixedFrameC_CallingConvention();
+
+   static bool disableCASInlining = feGetEnv("TR_DisableCASInlining") != NULL;
+   if (!disableCASInlining)
+      {
+      cg->setSupportsInlineUnsafeCompareAndSet();
+      }
+
+   static bool disableCAEInlining = feGetEnv("TR_DisableCAEInlining") != NULL;
+   if (!disableCAEInlining)
+      {
+      cg->setSupportsInlineUnsafeCompareAndExchange();
+      }
    }
 
 TR::Linkage *

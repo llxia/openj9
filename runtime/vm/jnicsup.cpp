@@ -589,7 +589,7 @@ UDATA JNICALL pushArguments(J9VMThread *vmThread, J9Method* method, void *args) 
 				break;
 			case ')':
 				vmThread->sp = sp;
-				return (IS_REF_OR_VAL_SIGNATURE(*sigChar) || *sigChar == '[') ? J9_SSF_RETURNS_OBJECT : 0;
+				return (IS_CLASS_SIGNATURE(*sigChar) || *sigChar == '[') ? J9_SSF_RETURNS_OBJECT : 0;
 		}
 	}
 }
@@ -839,7 +839,7 @@ static jobject JNICALL newDirectByteBuffer(JNIEnv *env, void *address, jlong cap
 	}
 #endif /* JAVA_SPEC_VERSION < 21 */
 
-	result = env->NewObject(javaVM->java_nio_DirectByteBuffer, javaVM->java_nio_DirectByteBuffer_init, (jlong)(UDATA)address, actualCapacity);
+	result = env->NewObject(javaVM->java_nio_DirectByteBuffer, javaVM->java_nio_DirectByteBuffer_init, JLONG_FROM_POINTER(address), actualCapacity);
 	Trc_VM_JNI_NewDirectByteBuffer_Exit(env, result);
 	return result;
 }
@@ -1427,10 +1427,10 @@ struct JNINativeInterface_ EsJNIFunctions = {
 
 	getFieldID,
 	getObjectField,
- 	getBooleanField,
- 	getByteField,
- 	getCharField,
- 	getShortField,
+	getBooleanField,
+	getByteField,
+	getCharField,
+	getShortField,
 	getIntField,
 	getLongField,
 	getFloatField,
@@ -1480,10 +1480,10 @@ struct JNINativeInterface_ EsJNIFunctions = {
 
 	getStaticFieldID,
 	getStaticObjectField,
- 	(jboolean (JNICALL *)(JNIEnv *env, jclass clazzj, jfieldID fieldID))getStaticIntField,
- 	(jbyte (JNICALL *)(JNIEnv *env, jclass clazzj, jfieldID fieldID))getStaticIntField,
- 	(jchar (JNICALL *)(JNIEnv *env, jclass clazzj, jfieldID fieldID))getStaticIntField,
- 	(jshort (JNICALL *)(JNIEnv *env, jclass clazzj, jfieldID fieldID))getStaticIntField,
+	(jboolean (JNICALL *)(JNIEnv *env, jclass clazzj, jfieldID fieldID))getStaticIntField,
+	(jbyte (JNICALL *)(JNIEnv *env, jclass clazzj, jfieldID fieldID))getStaticIntField,
+	(jchar (JNICALL *)(JNIEnv *env, jclass clazzj, jfieldID fieldID))getStaticIntField,
+	(jshort (JNICALL *)(JNIEnv *env, jclass clazzj, jfieldID fieldID))getStaticIntField,
 	getStaticIntField,
 	getStaticLongField,
 	getStaticFloatField,
@@ -1573,6 +1573,9 @@ struct JNINativeInterface_ EsJNIFunctions = {
 #if JAVA_SPEC_VERSION >= 19
 	isVirtualThread,
 #endif /* JAVA_SPEC_VERSION >= 19 */
+#if JAVA_SPEC_VERSION >= 24
+	getStringUTFLengthAsLong,
+#endif /* JAVA_SPEC_VERSION >= 24 */
 };
 
 void  initializeJNITable(J9JavaVM *vm)
@@ -2604,10 +2607,10 @@ defineClass(JNIEnv *env, const char *name, jobject loader, const jbyte *buf, jsi
 
 			classLoader = J9VMJAVALANGCLASSLOADER_VMREF(currentThread, loaderObject);
 			if (NULL == classLoader) {
-			  classLoader = internalAllocateClassLoader(vm, loaderObject);
-			  if (NULL == classLoader) {
-				  goto done;
-			  }
+				classLoader = internalAllocateClassLoader(vm, loaderObject);
+				if (NULL == classLoader) {
+					goto done;
+				}
 			}
 		}
 
@@ -2646,7 +2649,7 @@ defineClass(JNIEnv *env, const char *name, jobject loader, const jbyte *buf, jsi
 					msgChars = (char *)j9mem_allocate_memory(msgCharLength + 1, J9MEM_CATEGORY_JNI);
 
 					if (NULL != msgChars) {
-						j9str_printf(PORTLIB, msgChars, msgCharLength, nlsMsgFormat, classNameLength, className, JAVA_PACKAGE_NAME_LENGTH, javaPackageName);
+						j9str_printf(msgChars, msgCharLength, nlsMsgFormat, classNameLength, className, JAVA_PACKAGE_NAME_LENGTH, javaPackageName);
 					}
 				}
 

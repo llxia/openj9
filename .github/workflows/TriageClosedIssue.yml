@@ -21,10 +21,10 @@ jobs:
               repo: context.repo.repo
             });
 
+            const sandboxIssueNumber = 19673;
             const commentsUrl = issueData.comments_url;
             const { data: commentsData } = await github.request(commentsUrl);
 
-            const sandboxIssueNumber = 19673;
             const sandboxOwner = context.repo.owner;
             const sandboxRepo = context.repo.repo;
 
@@ -68,7 +68,8 @@ jobs:
             }
 
             if (prAssignees.length > 0) {
-              resultString += `PR Assignees: ${prAssignees.join(', ')}`;
+              let prUniqueAssignees = [...new Set(prAssignees)];
+              resultString += `PR Assignees: ${prUniqueAssignees.join(', ')}`;
             } else {
               resultString += `PR Assignees: No one :(`;
             }

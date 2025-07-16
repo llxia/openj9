@@ -167,13 +167,8 @@ Java_com_ibm_oti_vm_VM_markCurrentThreadAsSystemImpl(JNIEnv *env)
 jlong JNICALL
 Java_com_ibm_oti_vm_VM_getJ9ConstantPoolFromJ9Class(JNIEnv *env, jclass unused, jlong j9clazz)
 {
-	J9Class *clazz = (J9Class *)(IDATA)j9clazz;
-	/*
-	 * Casting to UDATA first means the value will be zero-extended
-	 * instead of sign-extended on platforms where jlong and UDATA
-	 * are different sizes.
-	 */
-	return (jlong)(UDATA)clazz->ramConstantPool;
+	J9Class *clazz = (J9Class *)JLONG_TO_POINTER(j9clazz);
+	return JLONG_FROM_POINTER(clazz->ramConstantPool);
 }
 
 /**
@@ -194,8 +189,95 @@ Java_com_ibm_oti_vm_VM_isJVMInSingleThreadedMode(JNIEnv *env, jclass unused)
 }
 
 #if defined(J9VM_OPT_JFR)
+jboolean JNICALL
+Java_com_ibm_oti_vm_VM_isJFREnabled(JNIEnv *env, jclass unused)
+{
+	J9JavaVM *vm = ((J9VMThread *)env)->javaVM;
+
+	return vm->internalVMFunctions->isJFREnabled(vm) ? JNI_TRUE : JNI_FALSE;
+}
+
+jboolean JNICALL
+Java_com_ibm_oti_vm_VM_isJFRRecordingStarted(JNIEnv *env, jclass unused)
+{
+	J9JavaVM *vm = ((J9VMThread *)env)->javaVM;
+
+	return vm->internalVMFunctions->isJFRRecordingStarted(vm) ? JNI_TRUE : JNI_FALSE;
+}
+
 void JNICALL
-Java_com_ibm_oti_vm_VM_triggerExecutionSample(JNIEnv *env, jclass unused) {
+Java_com_ibm_oti_vm_VM_jfrDump(JNIEnv *env, jclass unused)
+{
+	J9VMThread *currentThread = (J9VMThread *)env;
+	J9JavaVM *vm = currentThread->javaVM;
+	J9InternalVMFunctions *vmFuncs = vm->internalVMFunctions;
+
+	vmFuncs->internalEnterVMFromJNI(currentThread);
+	vmFuncs->acquireExclusiveVMAccess(currentThread);
+
+	vmFuncs->jfrDump(currentThread, FALSE);
+
+	vmFuncs->releaseExclusiveVMAccess(currentThread);
+	vmFuncs->internalExitVMToJNI(currentThread);
+}
+
+jboolean JNICALL
+Java_com_ibm_oti_vm_VM_setJFRRecordingFileName(JNIEnv *env, jclass unused, jstring fileNameString)
+{
+	J9VMThread *currentThread = (J9VMThread *)env;
+	J9JavaVM *vm = currentThread->javaVM;
+	J9InternalVMFunctions *vmFuncs = vm->internalVMFunctions;
+	jboolean result = JNI_FALSE;
+
+	vmFuncs->internalEnterVMFromJNI(currentThread);
+	j9object_t fileNameObject = J9_JNI_UNWRAP_REFERENCE(fileNameString);
+	char *fileName = vmFuncs->copyStringToUTF8WithMemAlloc(currentThread, fileNameObject, J9_STR_NULL_TERMINATE_RESULT, "", 0, NULL, 0, NULL);
+	if (NULL == fileName) {
+		vmFuncs->setNativeOutOfMemoryError(currentThread, 0, 0);
+	} else {
+		result = vmFuncs->setJFRRecordingFileName(vm, fileName);
+	}
+	vmFuncs->internalExitVMToJNI(currentThread);
+
+	return result;
+}
+
+jint JNICALL
+Java_com_ibm_oti_vm_VM_startJFR(JNIEnv *env, jclass unused)
+{
+	jint rc = JNI_OK;
+	J9VMThread *currentThread = (J9VMThread *)env;
+	J9JavaVM *vm = currentThread->javaVM;
+	J9InternalVMFunctions *vmFuncs = vm->internalVMFunctions;
+
+	if (!vmFuncs->isJFRRecordingStarted(vm)) {
+		/* this is to initalize JFR late after VM startup */
+		rc = vmFuncs->initializeJFR(vm, TRUE);
+	}
+
+	return rc;
+}
+
+void JNICALL
+Java_com_ibm_oti_vm_VM_stopJFR(JNIEnv *env, jclass unused)
+{
+	J9VMThread *currentThread = (J9VMThread *)env;
+	J9JavaVM *vm = currentThread->javaVM;
+	J9InternalVMFunctions *vmFuncs = vm->internalVMFunctions;
+
+	if (vmFuncs->isJFRRecordingStarted(vm)) {
+		vmFuncs->internalEnterVMFromJNI(currentThread);
+		vmFuncs->acquireExclusiveVMAccess(currentThread);
+		vmFuncs->jfrDump(currentThread, TRUE);
+		vmFuncs->releaseExclusiveVMAccess(currentThread);
+		vmFuncs->tearDownJFR(vm);
+		vmFuncs->internalExitVMToJNI(currentThread);
+	}
+}
+
+void JNICALL
+Java_com_ibm_oti_vm_VM_triggerExecutionSample(JNIEnv *env, jclass unused)
+{
 	J9VMThread *currentThread = (J9VMThread *)env;
 	J9JavaVM *vm = currentThread->javaVM;
 	J9InternalVMFunctions *vmFuncs = vm->internalVMFunctions;
@@ -218,4 +300,21 @@ Java_com_ibm_oti_vm_VM_triggerExecutionSample(JNIEnv *env, jclass unused) {
 }
 #endif /* defined(J9VM_OPT_JFR) */
 
+#if JAVA_SPEC_VERSION >= 24
+/**
+ * Queries whether -XX:+YieldPinnedVirtualThreads is enabled.
+ * By default, this method returns true, i.e., not in legacy locking mode.
+ *
+ * @return JNI_TRUE if -XX:+YieldPinnedVirtualThreads is enabled, JNI_FALSE otherwise
+ */
+jboolean JNICALL
+Java_com_ibm_oti_vm_VM_isYieldBlockedVirtualThreadsEnabled(JNIEnv *env, jclass unused)
+{
+	jboolean result = JNI_FALSE;
+	if (J9_ARE_ANY_BITS_SET(((J9VMThread *)env)->javaVM->extendedRuntimeFlags3, J9_EXTENDED_RUNTIME3_YIELD_PINNED_CONTINUATION)) {
+		result = JNI_TRUE;
+	}
+	return result;
+}
+#endif /* JAVA_SPEC_VERSION >= 24 */
 } /* extern "C" */

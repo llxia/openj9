@@ -47,6 +47,9 @@
 
 #if defined(J9VM_GC_MODRON_COMPACTION)
 
+#if JAVA_SPEC_VERSION >= 24
+class GC_ContinuationSlotIterator;
+#endif /* JAVA_SPEC_VERSION >= 24 */
 class MM_AllocateDescription;
 class MM_WriteOnceCompactor;
 class MM_ParallelDispatcher;
@@ -254,7 +257,7 @@ private:
 	/**
 	 * Fix up the spine pointers of any arraylet leaf regions
 	 */
-	void fixupArrayletLeafRegionSpinePointers();
+	void fixupArrayletLeafRegionSpinePointers(MM_EnvironmentVLHGC *env);
 	
 	/**
 	 * Fix up the data in required arraylet leaf regions, unfinalized lists and ownable synchronizer lists.
@@ -547,6 +550,14 @@ private:
 	void clearClassLoaderRememberedSetsForCompactSet(MM_EnvironmentVLHGC *env);
 	
 	/**
+	 * Determine whether the object pointer is found within the heap proper.
+	 * @return Boolean indicating if the object pointer is within the heap boundaries.
+	 */
+	MMINLINE bool isHeapObject(J9Object *objectPtr)
+	{
+		return (_heapBase <= (uint8_t *)objectPtr) && (_heapTop > (uint8_t *)objectPtr);
+	}
+	/**
 	 * Create a WriteOnceCompactor object.
 	 */
 	MM_WriteOnceCompactor(MM_EnvironmentVLHGC *env);
@@ -600,7 +611,11 @@ public:
 	 * @param workStackBaseHighPriority[in/out] The "high priority" work stack base.  This reference parameter will be updated before the function returns is region is high priority
 	 */
 	void pushRegionOntoWorkStack(MM_HeapRegionDescriptorVLHGC **workStackBase, MM_HeapRegionDescriptorVLHGC **workStackBaseHighPriority, MM_HeapRegionDescriptorVLHGC *region);
-	void doStackSlot(MM_EnvironmentVLHGC *env, J9Object *fromObject, J9Object** slot);
+	MMINLINE void doSlot(MM_EnvironmentVLHGC *env, J9Object *fromObject, J9Object** slotPtr);
+#if JAVA_SPEC_VERSION >= 24
+	void doContinuationSlot(MM_EnvironmentVLHGC *env, J9Object *fromObject, J9Object** slotPtr, GC_ContinuationSlotIterator *continuationSlotIterator);
+#endif /* JAVA_SPEC_VERSION >= 24 */
+	void doStackSlot(MM_EnvironmentVLHGC *env, J9Object *fromObject, J9Object** slotPtr, J9StackWalkState *walkState, const void *stackLocation);
 
 	friend class MM_WriteOnceCompactFixupRoots;
 	friend class MM_ParallelWriteOnceCompactTask;

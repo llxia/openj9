@@ -243,6 +243,7 @@ public:
    virtual bool needsContiguousCodeAndDataCacheAllocation() { return false; }
    virtual bool supportsJitMethodEntryAlignment() { return true; }
    virtual bool canUseSymbolValidationManager() { return false; }
+   virtual bool canTrackAOTDependencies() { return false; }
 
 /////
    // Inlining optimization
@@ -443,6 +444,16 @@ public:
       }
 
    /**
+    * @brief Get the int32 value in the VarHandle$AccessDescriptor's mode field. This value is used as the index of the MethodHandle for
+    * the access mode in the MethodHandle table.
+    *
+    * @param comp the compilation
+    * @param adIndex the AccessDescriptor known object index
+    * @return int32_t the value in the mode field. -1 if unsuccessful.
+    */
+   virtual int32_t getVarHandleAccessDescriptorMode(TR::Compilation *comp, TR::KnownObjectTable::Index adIndex);
+
+   /**
     * @brief Get the known object index of a MethodHandle cached in a VarHandle's MH table
     * corresponding to the access descriptor. When the VarHandle is known, we can evaluate
     * the result of java/lang/invoke/Invokers.checkVarHandleGenericType at compile time and
@@ -454,6 +465,18 @@ public:
     * @return TR::KnownObjectTable::Index the MH object index if success, TR::KnownObjectTable::UNKNOWN otherwise
     */
    virtual TR::KnownObjectTable::Index getMethodHandleTableEntryIndex(TR::Compilation *comp, TR::KnownObjectTable::Index vhIndex, TR::KnownObjectTable::Index adIndex);
+
+   /**
+    * @brief Get the known object index of a cached MemorySegmentView VarHandle belonging to a value Layout object.
+    * When the Layout object is known, we can evaluate the result of
+    * jdk/internal/foreign/layout/ValueLayouts$AbstractValueLayout.accessHandle()Ljava/lang/invoke/VarHandle;
+    * as long as the layout object's handle field is not null.
+    *
+    * @param comp the compilation
+    * @param layoutIndex the ValueLayout$AbstractValueLayout object index
+    * @return TR::KnownObjectTable::Index the known object index of the MemorySegmentView VarHandle, TR::KnownObjectTable::UNKNOWN otherwise
+    */
+   virtual TR::KnownObjectTable::Index getLayoutVarHandle(TR::Compilation *comp, TR::KnownObjectTable::Index layoutIndex);
 
    virtual TR::Method * createMethod(TR_Memory *, TR_OpaqueClassBlock *, int32_t);
    virtual TR_ResolvedMethod * createResolvedMethod(TR_Memory *, TR_OpaqueMethodBlock *, TR_ResolvedMethod * = 0, TR_OpaqueClassBlock * = 0);
@@ -622,12 +645,27 @@ public:
    virtual TR_OpaqueClassBlock *getObjectClass(uintptr_t objectPointer);
    virtual TR_OpaqueClassBlock *getObjectClassAt(uintptr_t objectAddress);
    virtual TR_OpaqueClassBlock *getObjectClassFromKnownObjectIndex(TR::Compilation *comp, TR::KnownObjectTable::Index idx);
+   virtual TR_OpaqueClassBlock *getObjectClassFromKnownObjectIndex(TR::Compilation *comp, TR::KnownObjectTable::Index idx, bool *isJavaLangClass);
    virtual uintptr_t           getReferenceFieldAt(uintptr_t objectPointer, uintptr_t offsetFromHeader);
    virtual uintptr_t           getVolatileReferenceFieldAt(uintptr_t objectPointer, uintptr_t offsetFromHeader);
    virtual uintptr_t           getReferenceFieldAtAddress(uintptr_t fieldAddress);
    virtual uintptr_t           getReferenceFieldAtAddress(void *fieldAddress){ return getReferenceFieldAtAddress((uintptr_t)fieldAddress); }
    virtual uintptr_t           getStaticReferenceFieldAtAddress(uintptr_t fieldAddress);
    virtual int32_t              getInt32FieldAt(uintptr_t objectPointer, uintptr_t fieldOffset);
+
+   /* Used to contain all information needed for getObjectClassInfoFromObjectReferenceLocation
+    * to create a VPKnownObject constraint.
+    */
+   struct ObjectClassInfo
+      {
+      TR_OpaqueClassBlock *clazz;
+      TR_OpaqueClassBlock *jlClass;
+      bool isFixedJavaLangClass;
+      bool isString;
+      TR::KnownObjectTable::Index knownObjectIndex;
+      };
+   virtual ObjectClassInfo getObjectClassInfoFromObjectReferenceLocation
+                                    (TR::Compilation *comp, uintptr_t objectReferenceLocation);
 
    int32_t getInt32Field(uintptr_t objectPointer, const char *fieldName)
       {
@@ -657,6 +695,8 @@ public:
 
    virtual TR_OpaqueClassBlock *getClassFromJavaLangClass(uintptr_t objectPointer);
    virtual TR_arrayTypeCode    getPrimitiveArrayTypeCode(TR_OpaqueClassBlock* clazz);
+   virtual TR::DataType        getClassPrimitiveDataType(TR_OpaqueClassBlock* clazz);
+   virtual TR_OpaqueClassBlock *getArrayClassFromDataType(TR::DataType type, bool booleanClass);
    virtual TR_OpaqueClassBlock * getSystemClassFromClassName(const char * name, int32_t length, bool callSiteVettedForAOT=false) { return 0; }
    virtual TR_OpaqueClassBlock * getByteArrayClass();
 
@@ -808,7 +848,6 @@ public:
    virtual bool               isBeingCompiled(TR_OpaqueMethodBlock *methodInfo, void *startPC);
    virtual uint32_t           virtualCallOffsetToVTableSlot(uint32_t offset);
    virtual int32_t            vTableSlotToVirtualCallOffset(uint32_t vTableSlot);
-   virtual void *             addressOfFirstClassStatic(TR_OpaqueClassBlock *);
 
    virtual TR_ResolvedMethod * getDefaultConstructor(TR_Memory *, TR_OpaqueClassBlock *);
 
@@ -860,7 +899,8 @@ public:
    virtual TR_ResolvedMethod    *createMethodHandleArchetypeSpecimen(TR_Memory *, TR_OpaqueMethodBlock *archetype, uintptr_t *methodHandleLocation, TR_ResolvedMethod *owningMethod = 0); // more efficient if you already know the archetype
 
    virtual uintptr_t mutableCallSiteCookie(uintptr_t mutableCallSite, uintptr_t potentialCookie=0);
-   TR::KnownObjectTable::Index mutableCallSiteEpoch(TR::Compilation *comp, uintptr_t mutableCallSite);
+   virtual TR::KnownObjectTable::Index mutableCallSiteEpoch(
+      TR::Compilation *comp, TR::KnownObjectTable::Index mcs);
 
    struct MethodOfHandle
       {
@@ -1031,7 +1071,6 @@ public:
     */
    virtual bool isMethodHandleExpectedType(TR::Compilation *comp, TR::KnownObjectTable::Index mhIndex, TR::KnownObjectTable::Index expectedTypeIndex);
 
-   virtual uintptr_t getFieldOffset( TR::Compilation * comp, TR::SymbolReference* classRef, TR::SymbolReference* fieldRef);
    /*
     * \brief
     *    tell whether it's possible to dereference a field given the field symbol reference at compile time
@@ -1052,8 +1091,7 @@ public:
     *    the method accessing the field
     *
     */
-   virtual bool isStable(int cpIndex, TR_ResolvedMethod *owningMethod, TR::Compilation *comp);
-   virtual bool isStable(J9Class *fieldClass, int cpIndex);
+   virtual bool isStable(J9Class *fieldClass, int32_t cpIndex);
 
    /*
     * \brief
@@ -1089,7 +1127,7 @@ public:
     */
    virtual bool isChangesCurrentThread(TR_ResolvedMethod *method);
 
-   /*
+   /**
     * \brief
     *    tell whether it's possible to dereference a field given the field symbol at compile time
     *
@@ -1110,8 +1148,29 @@ public:
    virtual bool      isJavaLangObject(TR_OpaqueClassBlock *clazz);
    virtual int32_t   getStringLength(uintptr_t objectPointer);
    virtual uint16_t  getStringCharacter(uintptr_t objectPointer, int32_t index);
-   virtual intptr_t getStringUTF8Length(uintptr_t objectPointer);
-   virtual char     *getStringUTF8      (uintptr_t objectPointer, char *buffer, intptr_t bufferSize);
+
+   /**
+    * \brief Returns the number of UTF-8 encoded bytes needed to represent a Java String object.
+    *        The number of bytes needed to UTF-8 encode the String is representable as
+    *        a \c uint64_t, in general, but this method returns a length of type \c int32_t.
+    *        If the length might exceed the range of \c int32_t, use
+    *        \ref getStringUTF8UnabbreviatedLength instead.
+    *
+    * \param[in] objectPointer A pointer to a Java String object
+    *
+    * \return The number of UTF-8 encoded bytes needed to represent the String
+    */
+   virtual int32_t getStringUTF8Length(uintptr_t objectPointer);
+
+   /**
+    * \brief Returns the number of UTF-8 encoded bytes needed to represent a Java String object.
+    *
+    * \param[in] objectPointer A pointer to a Java String object
+    *
+    * \return The number of UTF-8 encoded bytes needed to represent the String
+    */
+   virtual uint64_t  getStringUTF8UnabbreviatedLength(uintptr_t objectPointer);
+   virtual char     *getStringUTF8(uintptr_t objectPointer, char *buffer, uintptr_t bufferSize);
 
    virtual uint32_t getVarHandleHandleTableOffset(TR::Compilation *);
 
@@ -1168,16 +1227,9 @@ public:
    uint32_t *getAllocationProfilingDataPointer(TR_ByteCodeInfo &bcInfo, TR_OpaqueClassBlock *clazz, TR_OpaqueMethodBlock *method,  TR::Compilation *comp);
    uint32_t *getGlobalAllocationDataPointer();
    virtual TR_ExternalProfiler   *hasIProfilerBlockFrequencyInfo(TR::Compilation& comp);
-   virtual int32_t getCGEdgeWeight(TR::Node *callerNode, TR_OpaqueMethodBlock *callee,  TR::Compilation *comp);
-   virtual int32_t getIProfilerCallCount(TR_OpaqueMethodBlock *caller, int32_t bcIndex,  TR::Compilation *);
-   virtual int32_t getIProfilerCallCount(TR_OpaqueMethodBlock *callee, TR_OpaqueMethodBlock *caller, int32_t bcIndex,  TR::Compilation *);
-   virtual void setIProfilerCallCount(TR_OpaqueMethodBlock *caller, int32_t bcIndex, int32_t count,  TR::Compilation *);
-   virtual int32_t getIProfilerCallCount(TR_ByteCodeInfo &bcInfo,  TR::Compilation *comp);
-   virtual void    setIProfilerCallCount(TR_ByteCodeInfo &bcInfo, int32_t count,  TR::Compilation *comp);
    virtual bool    isCallGraphProfilingEnabled();
    virtual bool    isClassLibraryMethod(TR_OpaqueMethodBlock *method, bool vettedForAOT = false);
    virtual bool    isClassLibraryClass(TR_OpaqueClassBlock *clazz);
-   virtual int32_t getMaxCallGraphCallCount();
 
    virtual bool    getSupportsRecognizedMethods();
 
@@ -1310,6 +1362,15 @@ public:
    TR::Node * testIsClassArrayType(TR::Node *j9ClassRefNode);
 
    /**
+    * \brief Generate IL to test whether the array's class is null-restricted
+    * \param j9ClassRefNode A node representing a reference to a \ref J9Class
+    * \return \ref TR::Node that tests whether the array's class flags has the
+    *         \ref J9ClassArrayIsNullRestricted flag set, yielding a non-zero result if the
+    *         flag is set, or zero otherwise.
+    */
+   TR::Node * testIsArrayClassNullRestrictedType(TR::Node *j9ClassRefNode);
+
+   /**
     * \brief Test whether any of the specified flags is set on the array's component class
     * \param arrayBaseAddressNode A node representing a reference to the array base address
     * \param ifCmpOp If comparison opCode such as ificmpeq or ificmpne
@@ -1325,14 +1386,6 @@ public:
     * \return \ref TR::Node that compares the array component class J9ClassIsValueType flag to a zero integer
     */
    TR::Node * checkArrayCompClassValueType(TR::Node *arrayBaseAddressNode, TR::ILOpCodes ifCmpOp);
-
-   /**
-    * \brief Check whether or not the array component class is a primitive value type
-    * \param arrayBaseAddressNode A node representing a reference to the array base address
-    * \param ifCmpOp If comparison opCode such as ificmpeq or ificmpne
-    * \return \ref TR::Node that compares the array component class J9ClassIsPrimitiveValueType flag to a zero integer
-    */
-   TR::Node * checkArrayCompClassPrimitiveValueType(TR::Node *arrayBaseAddressNode, TR::ILOpCodes ifCmpOp);
 
    virtual J9JITConfig *getJ9JITConfig() { return _jitConfig; }
 
@@ -1410,6 +1463,12 @@ public:
 
 #if defined(J9VM_OPT_JITSERVER)
    TR_J9DeserializerSharedCache *deserializerSharedCache() const { return _deserializerSharedCache; }
+
+   bool                      getDeserializerWasReset() const { return _deserializerWasReset; }
+   // Called externally by a compilation thread that is resetting the JITServer AOT deserializer
+   void                      setDeserializerWasReset() { _deserializerWasReset = true; }
+   // Called by the current compilation thread at the beginning of a remote compilation to clear the _deserializerWasReset flag
+   void                      clearDeserializerWasReset() { _deserializerWasReset = false; }
 #endif /* defined(J9VM_OPT_JITSERVER) */
 
    const char *getByteCodeName(uint8_t opcode);
@@ -1452,6 +1511,8 @@ public:
    virtual void markHotField( TR::Compilation *, TR::SymbolReference *, TR_OpaqueClassBlock *, bool);
    virtual void reportHotField(int32_t reducedCpuUtil, J9Class* clazz, uint8_t fieldOffset,  uint32_t reducedFrequency);
    virtual bool isHotReferenceFieldRequired();
+   virtual bool isIndexableDataAddrPresent();
+   virtual bool isOffHeapAllocationEnabled();
    virtual void markClassForTenuredAlignment( TR::Compilation *comp, TR_OpaqueClassBlock *opclazz, uint32_t alignFromStart);
 
    virtual bool shouldDelayAotLoad() { return false; }
@@ -1511,6 +1572,10 @@ protected:
 
    flags32_t _flags;
 
+#if defined(J9VM_OPT_JITSERVER)
+   // A flag notifying this thread that the JITServer AOT deserializer was reset.
+   bool _deserializerWasReset;
+#endif // defined(J9VM_OPT_JITSERVER)
    };
 
 class TR_J9VM : public TR_J9VMBase
@@ -1544,10 +1609,22 @@ public:
 
    virtual TR_OpaqueClassBlock * getComponentClassFromArrayClass(TR_OpaqueClassBlock * arrayClass);
    virtual TR_OpaqueClassBlock * getArrayClassFromComponentClass(TR_OpaqueClassBlock *componentClass);
+   /** \brief
+     *     Retrieves the nullRestrictedArrayClass from the array component class.
+     *
+     *  \param componentClass
+     *     The array component class
+     *
+     *  \return
+     *     A pointer to nullRestrictedArrayClass if it exists, otherwise NULL
+     */
+   virtual TR_OpaqueClassBlock * getNullRestrictedArrayClassFromComponentClass(TR_OpaqueClassBlock *componentClass);
    virtual TR_OpaqueClassBlock * getLeafComponentClassFromArrayClass(TR_OpaqueClassBlock * arrayClass);
    virtual int32_t               getNewArrayTypeFromClass(TR_OpaqueClassBlock *clazz);
-   virtual TR_OpaqueClassBlock * getClassFromSignature(const char * sig, int32_t length, TR_ResolvedMethod *method, bool isVettedForAOT=false);
-   virtual TR_OpaqueClassBlock * getClassFromSignature(const char * sig, int32_t length, TR_OpaqueMethodBlock *method, bool isVettedForAOT=false);
+   virtual TR_OpaqueClassBlock *getClassFromSignature(const char * sig, int32_t sigLength, TR_ResolvedMethod *method, bool isVettedForAOT=false);
+   virtual TR_OpaqueClassBlock *getClassFromSignature(const char * sig, int32_t sigLength, TR_OpaqueMethodBlock *method, bool isVettedForAOT=false);
+   virtual TR_OpaqueClassBlock *getClassFromSignature(const char * sig, int32_t sigLength, TR_OpaqueClassBlock *clazz, bool isVettedForAOT=false);
+   virtual TR_OpaqueClassBlock *getClassFromSignature(const char * sig, int32_t sigLength, J9ConstantPool * constantPool, bool isVettedForAOT=false);
 
    virtual TR_OpaqueClassBlock *getBaseComponentClass(TR_OpaqueClassBlock *clazz, int32_t &numDims)
       {
@@ -1588,8 +1665,6 @@ public:
 
    virtual TR_StaticFinalData dereferenceStaticFinalAddress(void *staticAddress, TR::DataType addressType);
 
-   TR_OpaqueClassBlock * getClassFromSignature(const char * sig, int32_t sigLength, J9ConstantPool * constantPool);
-
 private:
    void transformJavaLangClassIsArrayOrIsPrimitive( TR::Compilation *, TR::Node * callNode,  TR::TreeTop * treeTop, int32_t andMask);
    void transformJavaLangClassIsArray( TR::Compilation *, TR::Node * callNode,  TR::TreeTop * treeTop);
@@ -1606,6 +1681,7 @@ public:
 
    // replacing calls to isAOT
    virtual bool               canUseSymbolValidationManager() { return true; }
+   virtual bool               canTrackAOTDependencies()                       { return true; }
    virtual bool               supportsCodeCacheSnippets()                     { return false; }
    virtual bool               needClassAndMethodPointerRelocations()          { return true; }
    virtual bool               inlinedAllocationsMustBeVerified()              { return true; }
@@ -1628,8 +1704,8 @@ public:
    virtual bool               supportsJitMethodEntryAlignment()               { return false; }
    virtual bool               isBenefitInliningCheckIfFinalizeObject()        { return true; }
    virtual bool               needsContiguousCodeAndDataCacheAllocation()     { return true; }
-   virtual bool               needRelocatableTarget()                          { return true; }
-   virtual bool               isStable(int cpIndex, TR_ResolvedMethod *owningMethod, TR::Compilation *comp) { return false; }
+   virtual bool               needRelocatableTarget()                         { return true; }
+   virtual bool               isStable(J9Class *fieldClass, int32_t cpIndex)  { return false; }
 
    virtual bool               isResolvedDirectDispatchGuaranteed(TR::Compilation *comp);
    virtual bool               isResolvedVirtualDispatchGuaranteed(TR::Compilation *comp);
@@ -1666,10 +1742,20 @@ public:
    virtual bool               hasFinalizer(TR_OpaqueClassBlock * classPointer);
    virtual uintptr_t         getClassDepthAndFlagsValue(TR_OpaqueClassBlock * classPointer);
    virtual uintptr_t         getClassFlagsValue(TR_OpaqueClassBlock * classPointer);
-   virtual TR_OpaqueMethodBlock * getMethodFromClass(TR_OpaqueClassBlock *, char *, char *, TR_OpaqueClassBlock * = NULL);
+   virtual TR_OpaqueMethodBlock * getMethodFromClass(TR_OpaqueClassBlock *, const char *, const char *, TR_OpaqueClassBlock * = NULL);
    virtual bool               isPrimitiveClass(TR_OpaqueClassBlock *clazz);
    virtual TR_OpaqueClassBlock * getComponentClassFromArrayClass(TR_OpaqueClassBlock * arrayClass);
    virtual TR_OpaqueClassBlock * getArrayClassFromComponentClass(TR_OpaqueClassBlock *componentClass);
+   /** \brief
+     *     Retrieves the nullRestrictedArrayClass from the array component class.
+     *
+     *  \param componentClass
+     *     The array component class
+     *
+     *  \return
+     *     A pointer to nullRestrictedArrayClass if it exists, otherwise NULL
+     */
+   virtual TR_OpaqueClassBlock * getNullRestrictedArrayClassFromComponentClass(TR_OpaqueClassBlock *componentClass);
    virtual TR_OpaqueClassBlock * getLeafComponentClassFromArrayClass(TR_OpaqueClassBlock * arrayClass);
    virtual TR_OpaqueClassBlock * getBaseComponentClass(TR_OpaqueClassBlock * clazz, int32_t & numDims);
    virtual TR_OpaqueClassBlock * getClassFromNewArrayType(int32_t arrayType);
@@ -1677,8 +1763,7 @@ public:
    virtual bool               isClassVisible(TR_OpaqueClassBlock * sourceClass, TR_OpaqueClassBlock * destClass);
    virtual bool               isPrimitiveArray(TR_OpaqueClassBlock *);
    virtual bool               isReferenceArray(TR_OpaqueClassBlock *);
-   virtual TR_OpaqueClassBlock * getClassFromSignature(const char * sig, int32_t length, TR_ResolvedMethod *method, bool isVettedForAOT=false);
-   virtual TR_OpaqueClassBlock * getClassFromSignature(const char * sig, int32_t length, TR_OpaqueMethodBlock *method, bool isVettedForAOT=false);
+   virtual TR_OpaqueClassBlock * getClassFromSignature(const char * sig, int32_t length, J9ConstantPool *constantPool, bool isVettedForAOT=false);
    virtual TR_OpaqueClassBlock * getSystemClassFromClassName(const char * name, int32_t length, bool isVettedForAOT=false);
 
    virtual intptr_t          methodTrampolineLookup( TR::Compilation *, TR::SymbolReference *symRef, void *callSite);

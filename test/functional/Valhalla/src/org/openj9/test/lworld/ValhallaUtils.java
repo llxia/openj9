@@ -25,12 +25,12 @@ import org.objectweb.asm.*;
 
 public class ValhallaUtils {
 	/**
-	 * Currently value type is built on JDK24, so use java file major version 68 for now.
-	 * If moved this needs to be incremented to the next class file version. The check in j9bcutil_readClassFileBytes()
-	 * against BCT_JavaMajorVersionShifted needs to be updated as well.
+	 * Currently value type is built on JDK25, so use java file major version 69 for now.
+	 * If moved this needs to be incremented to the next class file version.
+	 * VALUE_TYPES_MAJOR_VERSION in oti/j9consts.h needs to be updated as well.
 	 * Minor version is in 16 most significant bits for asm.
 	 */
-	static final int VALUE_TYPE_CLASS_FILE_VERSION = (65535 << 16) | 68;
+	static final int VALUE_TYPE_CLASS_FILE_VERSION = (65535 << 16) | 69;
 
 	/* workaround till the new ASM is released */
 	static final int ACC_IDENTITY = 0x20;
@@ -39,11 +39,11 @@ public class ValhallaUtils {
 	static final int ACC_DEFAULT = 0x1;
 	static final int ACC_NON_ATOMIC = 0x2;
 
-	final static class PreloadAttribute extends Attribute {
+	static final class LoadableDescriptorsAttribute extends Attribute {
 		private final String[] classes;
 
-		public PreloadAttribute(String[] classes) {
-			super("Preload");
+		public LoadableDescriptorsAttribute(String[] classes) {
+			super("LoadableDescriptors");
 			this.classes = classes;
 		}
 
@@ -65,15 +65,15 @@ public class ValhallaUtils {
 			b.putShort(classes.length);
 
 			int cpIndex;
-			for (int i = 0; i < classes.length; i++) {
-				cpIndex = cw.newClass(classes[i].replace('.', '/'));
+			for (String clazz : classes) {
+				cpIndex = cw.newUTF8(clazz.replace('.', '/'));
 				b.putShort(cpIndex);
 			}
 			return b;
 		}
 	}
 
-	final static class ImplicitCreationAttribute extends Attribute {
+	static final class ImplicitCreationAttribute extends Attribute {
 		private final int flags;
 
 		public ImplicitCreationAttribute() {
@@ -106,7 +106,7 @@ public class ValhallaUtils {
 		}
 	}
 
-	final static class NullRestrictedAttribute extends Attribute {
+	static final class NullRestrictedAttribute extends Attribute {
 		public NullRestrictedAttribute() {
 			super("NullRestricted");
 		}

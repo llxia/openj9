@@ -20,6 +20,8 @@
  * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0 OR GPL-2.0-only WITH OpenJDK-assembly-exception-1.0
  *******************************************************************************/
 
+#include <string.h>
+#include <string>
 #include <cstdio> // for rename()
 #include "control/CompilationRuntime.hpp"
 #include "env/J9SegmentProvider.hpp"
@@ -27,6 +29,7 @@
 #include "env/SystemSegmentProvider.hpp"
 #include "infra/CriticalSection.hpp"
 #include "runtime/JITServerAOTCache.hpp"
+#include "runtime/JITServerProfileCache.hpp"
 #include "runtime/JITServerSharedROMClassCache.hpp"
 #include "net/CommunicationStream.hpp"
 
@@ -415,22 +418,26 @@ AOTCacheThunkRecord::create(uintptr_t id, const uint8_t *signature, uint32_t sig
 
 
 SerializedAOTMethod::SerializedAOTMethod(uintptr_t definingClassChainId, uint32_t index,
-                                         TR_Hotness optLevel, uintptr_t aotHeaderId, size_t numRecords,
-                                         const void *code, size_t codeSize, const void *data, size_t dataSize) :
-   _size(size(numRecords, codeSize, dataSize)),
+                                         TR_Hotness optLevel, uintptr_t aotHeaderId,
+                                         size_t numRecords,
+                                         const void *code, size_t codeSize,
+                                         const void *data, size_t dataSize,
+                                         const char *signature, size_t signatureSize) :
+   _size(size(numRecords, codeSize, dataSize, signatureSize)),
    _definingClassChainId(definingClassChainId), _index(index),
    _optLevel(optLevel), _aotHeaderId(aotHeaderId),
-   _numRecords(numRecords), _codeSize(codeSize), _dataSize(dataSize)
+   _numRecords(numRecords), _codeSize(codeSize), _dataSize(dataSize), _signatureSize(signatureSize)
    {
    memcpy((void *)this->code(), code, codeSize);
    memcpy((void *)this->data(), data, dataSize);
+   memcpy((void *)this->signature(), signature, signatureSize);
    }
 
 SerializedAOTMethod::SerializedAOTMethod() :
    _size(0),
    _definingClassChainId(0), _index(0),
    _optLevel(TR_Hotness::numHotnessLevels), _aotHeaderId(0),
-   _numRecords(0), _codeSize(0), _dataSize(0)
+   _numRecords(0), _codeSize(0), _dataSize(0), _signatureSize(0)
    {
    }
 
@@ -444,13 +451,18 @@ SerializedAOTMethod::isValidHeader(const JITServerAOTCacheReadContext &context) 
           context._aotHeaderRecords[aotHeaderId()];
    }
 
-CachedAOTMethod::CachedAOTMethod(const AOTCacheClassChainRecord *definingClassChainRecord, uint32_t index,
-                                 TR_Hotness optLevel, const AOTCacheAOTHeaderRecord *aotHeaderRecord,
+CachedAOTMethod::CachedAOTMethod(const AOTCacheClassChainRecord *definingClassChainRecord,
+                                 uint32_t index,
+                                 TR_Hotness optLevel,
+                                 const AOTCacheAOTHeaderRecord *aotHeaderRecord,
                                  const Vector<std::pair<const AOTCacheRecord *, uintptr_t>> &records,
-                                 const void *code, size_t codeSize, const void *data, size_t dataSize) :
+                                 const void *code, size_t codeSize,
+                                 const void *data, size_t dataSize,
+                                 const char *signature, size_t signatureSize) :
    _nextRecord(NULL),
    _data(definingClassChainRecord->data().id(), index, optLevel,
-         aotHeaderRecord->data().id(), records.size(), code, codeSize, data, dataSize),
+         aotHeaderRecord->data().id(), records.size(), code, codeSize, data, dataSize,
+         signature, signatureSize),
    _definingClassChainRecord(definingClassChainRecord)
    {
    for (size_t i = 0; i < records.size(); ++i)
@@ -471,11 +483,15 @@ CachedAOTMethod *
 CachedAOTMethod::create(const AOTCacheClassChainRecord *definingClassChainRecord, uint32_t index,
                         TR_Hotness optLevel, const AOTCacheAOTHeaderRecord *aotHeaderRecord,
                         const Vector<std::pair<const AOTCacheRecord *, uintptr_t>> &records,
-                        const void *code, size_t codeSize, const void *data, size_t dataSize)
+                        const void *code, size_t codeSize,
+                        const void *data, size_t dataSize,
+                        const char * signature)
    {
-   void *ptr = AOTCacheRecord::allocate(size(records.size(), codeSize, dataSize));
+   size_t signatureSize = strlen(signature);
+   void *ptr = AOTCacheRecord::allocate(size(records.size(), codeSize, dataSize, signatureSize));
    return new (ptr) CachedAOTMethod(definingClassChainRecord, index, optLevel, aotHeaderRecord,
-                                    records, code, codeSize, data, dataSize);
+                                    records, code, codeSize, data, dataSize,
+                                    signature, signatureSize);
    }
 
 bool
@@ -711,8 +727,9 @@ freeMapValues(const PersistentUnorderedMap<K, V *, H> &map)
    }
 
 
-JITServerAOTCache::JITServerAOTCache(const std::string &name) :
+JITServerAOTCache::JITServerAOTCache(const std::string &name, J9JavaVM *javaVM) :
    _name(name),
+   _sharedProfileCache(new (TR::Compiler->persistentGlobalMemory()) JITServerSharedProfileCache(this, javaVM)),
    _classLoaderMap(decltype(_classLoaderMap)::allocator_type(TR::Compiler->persistentGlobalAllocator())),
    _classLoaderHead(NULL),
    _classLoaderTail(NULL),
@@ -768,6 +785,9 @@ JITServerAOTCache::JITServerAOTCache(const std::string &name) :
 
 JITServerAOTCache::~JITServerAOTCache()
    {
+   _sharedProfileCache->~JITServerSharedProfileCache();
+   TR::Compiler->persistentGlobalMemory()->freePersistentMemory(_sharedProfileCache);
+
    freeMapValues(_classLoaderMap);
    freeMapValues(_classMap);
    freeMapValues(_methodMap);
@@ -797,13 +817,6 @@ JITServerAOTCacheReadContext::JITServerAOTCacheReadContext(const JITServerAOTCac
    _thunkRecords(header._nextThunkId, NULL, stackMemoryRegion)
    {
    }
-
-// Helper macros to make the code for printing class and method names to vlog more concise
-#define RECORD_NAME(record) (int)(record).nameLength(), (const char *)(record).name()
-#define LENGTH_AND_DATA(str) J9UTF8_LENGTH(str), (const char *)J9UTF8_DATA(str)
-#define ROMMETHOD_NAS(romMethod) \
-   LENGTH_AND_DATA(J9ROMMETHOD_NAME(romMethod)), LENGTH_AND_DATA(J9ROMMETHOD_SIGNATURE(romMethod))
-
 
 const AOTCacheClassLoaderRecord *
 JITServerAOTCache::getClassLoaderRecord(const uint8_t *name, size_t nameLength)
@@ -914,10 +927,10 @@ JITServerAOTCache::getClassRecord(const AOTCacheClassLoaderRecord *classLoaderRe
 
    if (TR::Options::getVerboseOption(TR_VerboseJITServer))
       {
-      const ClassSerializationRecord &c = record->data();
+      const ClassSerializationRecord *c = &record->data();
       char buffer[ROMCLASS_HASH_BYTES * 2 + 1];
       TR_VerboseLog::writeLineLocked(TR_Vlog_JITServer,
-         "AOT cache %s: created class ID %zu -> %.*s size %u hash %s class loader ID %zu", _name.c_str(), c.id(),
+         "AOT cache %s: created class ID %zu -> %.*s size %u hash %s class loader ID %zu", _name.c_str(), c->id(),
          RECORD_NAME(c), romClass->romSize, hash.toString(buffer, sizeof(buffer)), classLoaderRecord->data().id()
       );
       }
@@ -947,10 +960,10 @@ JITServerAOTCache::getMethodRecord(const AOTCacheClassRecord *definingClassRecor
 
    if (TR::Options::getVerboseOption(TR_VerboseJITServer))
       {
-      const ClassSerializationRecord &c = definingClassRecord->data();
+      const ClassSerializationRecord *c = &definingClassRecord->data();
       TR_VerboseLog::writeLineLocked(TR_Vlog_JITServer,
          "AOT cache %s: created method ID %zu -> %.*s.%.*s%.*s index %u class ID %zu",
-         _name.c_str(), record->data().id(), RECORD_NAME(c), ROMMETHOD_NAS(romMethod), index, c.id()
+         _name.c_str(), record->data().id(), RECORD_NAME(c), ROMMETHOD_NAS(romMethod), index, c->id()
       );
       }
 
@@ -977,10 +990,10 @@ JITServerAOTCache::getClassChainRecord(const AOTCacheClassRecord *const *classRe
 
    if (TR::Options::getVerboseOption(TR_VerboseJITServer))
       {
-      const ClassSerializationRecord &c = classRecords[0]->data();
+      const ClassSerializationRecord *c = &classRecords[0]->data();
       TR_VerboseLog::writeLineLocked(TR_Vlog_JITServer,
          "AOT cache %s: created class chain ID %zu -> %.*s ID %zu length %zu",
-         _name.c_str(), record->data().id(), RECORD_NAME(c), c.id(), length
+         _name.c_str(), record->data().id(), RECORD_NAME(c), c->id(), length
       );
       }
 
@@ -1090,9 +1103,11 @@ JITServerAOTCache::createAndStoreThunk(const uint8_t *signature, uint32_t signat
 bool
 JITServerAOTCache::storeMethod(const AOTCacheClassChainRecord *definingClassChainRecord, uint32_t index,
                                TR_Hotness optLevel, const AOTCacheAOTHeaderRecord *aotHeaderRecord,
-                               const Vector<std::pair<const AOTCacheRecord *, uintptr_t/*reloDataOffset*/>> &records,
+                               const Vector<std::pair<const AOTCacheRecord *,
+                               uintptr_t/*reloDataOffset*/>> &records,
                                const void *code, size_t codeSize, const void *data, size_t dataSize,
-                               const char *signature, uint64_t clientUID, const CachedAOTMethod *&methodRecord)
+                               const char *signature, uint64_t clientUID,
+                               const CachedAOTMethod *&methodRecord)
    {
    uintptr_t definingClassId = definingClassChainRecord->records()[0]->data().id();
    const char *levelName = TR::Compilation::getHotnessName(optLevel);
@@ -1125,7 +1140,8 @@ JITServerAOTCache::storeMethod(const AOTCacheClassChainRecord *definingClassChai
       }
 
    auto method = CachedAOTMethod::create(definingClassChainRecord, index, optLevel, aotHeaderRecord,
-                                         records, code, codeSize, data, dataSize);
+                                         records, code, codeSize, data, dataSize,
+                                         signature);
    methodRecord = method;
    addToMap(_cachedMethodMap, _cachedMethodHead, _cachedMethodTail, it, key, method);
 
@@ -1179,6 +1195,27 @@ JITServerAOTCache::getSerializationRecords(const CachedAOTMethod *method, const 
       addRecord(method->records()[i], result, newRecords, knownIds);
 
    return result;
+   }
+
+/**
+ * @brief Pack a vector of serialization records into a linear buffer
+ *
+ * @param records Vector of pointers to AOT serialization records
+ * @param buffer  Buffer where the result is going to be stored
+ * @param bufferSize Size of the output buffer
+ */
+void
+JITServerAOTCache::packSerializationRecords(const Vector<const AOTSerializationRecord *> &records,
+                                            uint8_t *buffer, size_t bufferSize)
+   {
+   uint8_t *current = buffer;
+   for (auto record : records)
+      {
+      TR_ASSERT_FATAL(current < buffer + bufferSize, "Serialization records buffer overflow");
+      memcpy(current, record, record->size());
+      current += record->size();
+      }
+   TR_ASSERT_FATAL(current == buffer + bufferSize, "Serialization records buffer underflow");
    }
 
 void
@@ -1418,10 +1455,11 @@ JITServerAOTCache::readCache(FILE *f, const std::string &name, TR_Memory &trMemo
       return NULL;
       }
 
+   TR::CompilationInfo *compInfo = TR::CompilationInfo::get();
    JITServerAOTCache *cache = NULL;
    try
       {
-      cache = new (TR::Compiler->persistentGlobalMemory()) JITServerAOTCache(name);
+      cache = new (TR::Compiler->persistentGlobalMemory()) JITServerAOTCache(name, compInfo->getJITConfig()->javaVM);
       }
    catch (const std::exception &e)
       {
@@ -2044,7 +2082,7 @@ JITServerAOTCacheMap::get(const std::string &name, uint64_t clientUID, bool &pen
          }
       }
    // If we reached this point, we need to create a new (empty) cache
-   auto cache = new (TR::Compiler->persistentGlobalMemory()) JITServerAOTCache(name);
+   auto cache = new (TR::Compiler->persistentGlobalMemory()) JITServerAOTCache(name, compInfo->getJITConfig()->javaVM);
    if (!cache)
       throw std::bad_alloc();
 

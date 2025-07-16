@@ -20,7 +20,7 @@
 
   SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0 OR GPL-2.0-only WITH OpenJDK-assembly-exception-1.0
 -->
-<playlist xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../TKG/playlist.xsd">
+<playlist xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../TKG/resources/playlist.xsd">
 	<test>
 		<testCaseName>TestFlushReflectionCache</testCaseName>
 		<variations>
@@ -44,7 +44,7 @@
 			<group>functional</group>
 		</groups>
 		<versions>
-			<version>11+</version>
+			<version>[11,24]</version>
 		</versions>
 		<impls>
 			<impl>openj9</impl>
@@ -73,7 +73,7 @@
 			<group>functional</group>
 		</groups>
 		<versions>
-			<version>11+</version>
+			<version>[11,24]</version>
 		</versions>
 		<impls>
 			<impl>openj9</impl>
@@ -101,7 +101,7 @@
 			<group>functional</group>
 		</groups>
 		<versions>
-			<version>11+</version>
+			<version>[11,24]</version>
 		</versions>
 		<impls>
 			<impl>openj9</impl>
@@ -132,7 +132,7 @@
 			<group>functional</group>
 		</groups>
 		<versions>
-			<version>11+</version>
+			<version>[11,24]</version>
 		</versions>
 		<impls>
 			<impl>openj9</impl>
@@ -163,7 +163,7 @@
 			<group>functional</group>
 		</groups>
 		<versions>
-			<version>11+</version>
+			<version>[11,24]</version>
 		</versions>
 		<impls>
 			<impl>openj9</impl>
@@ -199,7 +199,7 @@
 			<group>functional</group>
 		</groups>
 		<versions>
-			<version>11+</version>
+			<version>[11,24]</version>
 		</versions>
 		<impls>
 			<impl>openj9</impl>
@@ -234,7 +234,7 @@
 			<group>functional</group>
 		</groups>
 		<versions>
-			<version>11+</version>
+			<version>[11,24]</version>
 		</versions>
 		<impls>
 			<impl>openj9</impl>

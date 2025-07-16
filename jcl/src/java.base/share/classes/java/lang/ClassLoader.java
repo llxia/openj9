@@ -72,6 +72,14 @@ import jdk.internal.loader.NativeLibrary;
 import jdk.internal.reflect.CallerSensitiveAdapter;
 /*[ENDIF] JAVA_SPEC_VERSION >= 18 */
 
+/*[IF JAVA_SPEC_VERSION >= 24]*/
+import jdk.internal.reflect.Reflection;
+/*[ENDIF] JAVA_SPEC_VERSION >= 24 */
+
+/*[IF CRIU_SUPPORT]*/
+import openj9.internal.criu.NotCheckpointSafe;
+/*[ENDIF] CRIU_SUPPORT*/
+
 /**
  * ClassLoaders are used to dynamically load, link and install
  * classes into a running image.
@@ -316,14 +324,21 @@ public abstract class ClassLoader {
  * Constructs a new instance of this class with the system
  * class loader as its parent.
  *
+/*[IF JAVA_SPEC_VERSION < 24]
  * @exception	SecurityException
  *					if a security manager exists and it does not
  *					allow the creation of new ClassLoaders.
+/*[ENDIF] JAVA_SPEC_VERSION < 24
  */
 protected ClassLoader() {
+	/*[IF JAVA_SPEC_VERSION >= 24]*/
+	this(null, null, applicationClassLoader);
+	/*[ELSE] JAVA_SPEC_VERSION >= 24 */
 	this(checkSecurityPermission(), null, applicationClassLoader);
+	/*[ENDIF] JAVA_SPEC_VERSION >= 24 */
 }
 
+/*[IF JAVA_SPEC_VERSION < 24]*/
 /**
  * This is a static helper method to perform security check earlier such that current ClassLoader object
  * can't be resurrected when there is a SecurityException thrown.
@@ -338,6 +353,7 @@ private static Void checkSecurityPermission() {
 	}
 	return null;
 }
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 /**
  * Constructs a new instance of this class with the given
@@ -346,12 +362,18 @@ private static Void checkSecurityPermission() {
  * @param		parentLoader ClassLoader
  *					the ClassLoader to use as the new class
  *					loaders parent.
+/*[IF JAVA_SPEC_VERSION < 24]
  * @exception	SecurityException
  *					if a security manager exists and it does not
  *					allow the creation of new ClassLoaders.
+/*[ENDIF] JAVA_SPEC_VERSION < 24
  */
 protected ClassLoader(ClassLoader parentLoader) {
+	/*[IF JAVA_SPEC_VERSION >= 24]*/
+	this(null, null, parentLoader);
+	/*[ELSE] JAVA_SPEC_VERSION >= 24 */
 	this(checkSecurityPermission(), null, parentLoader);
+	/*[ENDIF] JAVA_SPEC_VERSION >= 24 */
 }
 
 /*[IF JAVA_SPEC_VERSION >= 9]*/
@@ -366,13 +388,19 @@ protected ClassLoader(ClassLoader parentLoader) {
  *					loaders parent.
  * @exception	IllegalArgumentException
  *					if the name of this class loader is empty.
+/*[IF JAVA_SPEC_VERSION < 24]
  * @exception	SecurityException
  *					if a security manager exists and it does not
  *					allow the creation of new ClassLoaders.
+/*[ENDIF] JAVA_SPEC_VERSION < 24
  *@since 9
  */
 protected ClassLoader(String classLoaderName, ClassLoader parentLoader) {
+	/*[IF JAVA_SPEC_VERSION >= 24]*/
+	this(null, classLoaderName, parentLoader);
+	/*[ELSE] JAVA_SPEC_VERSION >= 24 */
 	this(checkSecurityPermission(), classLoaderName, parentLoader);
+	/*[ENDIF] JAVA_SPEC_VERSION >= 24 */
 }
 /*[ENDIF] JAVA_SPEC_VERSION >= 9 */
 
@@ -826,12 +854,15 @@ protected final Class<?> findSystemClass (String className) throws ClassNotFound
  *
  * @return 		java.lang.ClassLoader
  *					the class or null.
+/*[IF JAVA_SPEC_VERSION < 24]
  * @exception	SecurityException
  *					if a security manager exists and it does not
  *					allow the parent loader to be retrieved.
+/*[ENDIF] JAVA_SPEC_VERSION < 24
  */
 @CallerSensitive
 public final ClassLoader getParent() {
+/*[IF JAVA_SPEC_VERSION < 24]*/
 	if (parent == null) {
 		return null;
 	}
@@ -844,6 +875,7 @@ public final ClassLoader getParent() {
 			security.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
 		}
 	}
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 	return parent;
 }
 
@@ -1039,8 +1071,8 @@ static void completeInitialization() {
 	initSystemClassLoader = true;
 }
 
-/*[IF Sidecar18-SE-OpenJ9]*/
-//Returns incoming class's classloader without going through security checking
+/*[IF !VENDOR_UMA]*/
+// Returns incoming class's classloader without going through security checking.
 static ClassLoader getClassLoader(Class<?> clz) {
 	if (null != clz) {
 		return clz.getClassLoader0();
@@ -1048,7 +1080,7 @@ static ClassLoader getClassLoader(Class<?> clz) {
 		return null;
 	}
 }
-/*[ENDIF] Sidecar18-SE-OpenJ9 */
+/*[ENDIF] !VENDOR_UMA */
 
 /*[IF JAVA_SPEC_VERSION >= 9]*/
 /**
@@ -1058,19 +1090,23 @@ static ClassLoader getClassLoader(Class<?> clz) {
  * allow access a SecurityException will be thrown.
  *
  * @return the platformClassLoader
+/*[IF JAVA_SPEC_VERSION < 24]
  * @throws SecurityException if access to the platform classloader is denied
+/*[ENDIF] JAVA_SPEC_VERSION < 24
  */
 @CallerSensitive
 public static ClassLoader getPlatformClassLoader() {
+	ClassLoader platformClassLoader = ClassLoaders.platformClassLoader();
+/*[IF JAVA_SPEC_VERSION < 24]*/
 	@SuppressWarnings("removal")
 	SecurityManager security = System.getSecurityManager();
-	ClassLoader platformClassLoader = ClassLoaders.platformClassLoader();
 	if (security != null) {
 		ClassLoader callersClassLoader = callerClassLoader();
 		if (needsClassLoaderPermissionCheck(callersClassLoader, platformClassLoader)) {
 			security.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
 		}
 	}
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 	return platformClassLoader;
 }
 
@@ -1104,9 +1140,11 @@ public String getName() {
  * same <code>ClassLoader</code> as that used to launch an application.
  *
  * @return java.lang.ClassLoader the system classLoader.
+/*[IF JAVA_SPEC_VERSION < 24]
  * @exception SecurityException
  *                if a security manager exists and it does not permit the
  *                caller to access the system class loader.
+/*[ENDIF] JAVA_SPEC_VERSION < 24
  */
 @CallerSensitive
 public static ClassLoader getSystemClassLoader () {
@@ -1143,6 +1181,7 @@ public static ClassLoader getSystemClassLoader () {
 	}
 
 	ClassLoader sysLoader = applicationClassLoader;
+/*[IF JAVA_SPEC_VERSION < 24]*/
 	@SuppressWarnings("removal")
 	SecurityManager security = System.getSecurityManager();
 	if (security != null) {
@@ -1151,7 +1190,7 @@ public static ClassLoader getSystemClassLoader () {
 			security.checkPermission(SecurityConstants.GET_CLASSLOADER_PERMISSION);
 		}
 	}
-
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 	return sysLoader;
 }
 
@@ -1460,6 +1499,9 @@ private static boolean registerAsParallelCapable(Class<?> callerCls) {
  * @see			java.lang.ClassLoader
  *
  */
+/*[IF CRIU_SUPPORT]*/
+@NotCheckpointSafe
+/*[ENDIF] CRIU_SUPPORT */
 protected Object getClassLoadingLock(final String className) {
 	Object lock = this;
 	if (isParallelCapable)	{
@@ -1482,7 +1524,6 @@ protected Object getClassLoadingLock(final String className) {
 	}
 	return lock;
 }
-
 
 /**
  * Forces a class to be linked (initialized).  If the class has
@@ -1559,7 +1600,6 @@ final boolean isAncestorOf (ClassLoader child) {
 	}
 	return false;
 }
-
 
 /**
  * A class loader 'callerClassLoader' can access class loader 'requested' without permission check
@@ -2085,13 +2125,27 @@ static void loadLibrary(Class<?> caller, String libName) {
 	}
 }
 
-static long findNative(ClassLoader loader, String entryName) {
+/*[IF JAVA_SPEC_VERSION >= 24]*/
+static long findNative1(ClassLoader loader, String entryName, Class<?> cls, String javaName) {
+	long address = findNative0(loader, entryName);
+
+	if ((loader != null) && (address != 0)) {
+		Reflection.ensureNativeAccess(cls, cls, javaName, true);
+	}
+
+	return address;
+}
+/*[ENDIF] JAVA_SPEC_VERSION >= 24 */
+
+static long findNative0(ClassLoader loader, String entryName) {
 	NativeLibraries nativelib;
+
 	if ((loader == null) || (loader == bootstrapClassLoader)) {
 		nativelib = BootLoader.getNativeLibraries();
 	} else {
 		nativelib = loader.nativelibs;
 	}
+
 	return nativelib.find(entryName);
 }
 /*[ENDIF] JAVA_SPEC_VERSION >= 15 */
@@ -2250,7 +2304,6 @@ private boolean getClassAssertionStatusHelper(String cname) {
 	}
 	return getDefaultAssertionStatus();
 }
-
 
 /**
  * Answers the assertion status of the named package
@@ -2574,7 +2627,7 @@ public final boolean isRegisteredAsParallelCapable() {
 }
 /*[ENDIF] JAVA_SPEC_VERSION >= 9 */
 
-/*[IF JAVA_SPEC_VERSION >= 19]*/
+/*[IF (19 <= JAVA_SPEC_VERSION) & (JAVA_SPEC_VERSION < 24)]*/
 static void checkClassLoaderPermission(ClassLoader classLoader, Class<?> caller) {
 	@SuppressWarnings("removal")
 	SecurityManager security = System.getSecurityManager();
@@ -2586,7 +2639,7 @@ static void checkClassLoaderPermission(ClassLoader classLoader, Class<?> caller)
 		}
 	}
 }
-/*[ENDIF] JAVA_SPEC_VERSION >= 19 */
+/*[ENDIF] (19 <= JAVA_SPEC_VERSION) & (JAVA_SPEC_VERSION < 24) */
 
 /*[IF JAVA_SPEC_VERSION >= 24]*/
 static NativeLibraries nativeLibrariesFor(ClassLoader loader) {

@@ -81,6 +81,9 @@ J9::CodeGenerator::CodeGenerator(TR::Compilation *comp) :
    _jniCallSites(getTypedAllocator<TR_Pair<TR_ResolvedMethod,TR::Instruction> *>(comp->allocator())),
    _monitorMapping(std::less<ncount_t>(), MonitorMapAllocator(comp->trMemory()->heapMemoryRegion())),
    _dummyTempStorageRefNode(NULL)
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+   , _invokeBasicCallSites(comp->region())
+#endif
    {
    /**
     * Do not add CodeGenerator initialization logic here.
@@ -257,11 +260,11 @@ J9::CodeGenerator::lowerCompressedRefs(
     and compression:
     compress = actual - heap_base
 
-    iaload f      l2a
+    aloadi f      l2a
       aload O       ladd
                       lshl
                         i2l
-                          iiload f
+                          iloadi f
                             aload O
                         iconst shftKonst
                       lconst HB
@@ -269,11 +272,11 @@ J9::CodeGenerator::lowerCompressedRefs(
     -or- if the field is known to be null
     l2a
       i2l
-        iiload f
+        iloadi f
           aload O
 
 
-    iastore f     iistore f
+    astorei f     istorei f
       aload O       aload O
       value         l2i
                       lshr
@@ -284,7 +287,7 @@ J9::CodeGenerator::lowerCompressedRefs(
                         iconst shftKonst
 
     -or- if the field is known to be null
-    iistore f
+    istorei f
       aload O
       l2i
         a2l      <- nop on most platforms
@@ -297,16 +300,16 @@ J9::CodeGenerator::lowerCompressedRefs(
     compress = actual - heapBase + shadowBase = actual + disp
     actual = compress - disp
 
-    iaload f     i2a
+    aloadi f     i2a
        aload O      isub
-                      iiload f
+                      iloadi f
                        aload O
                       iconst HB
 
-    iastore f    iistore f
+    astorei f    istorei f
        aload O      aload O
                    iushr            // iushr only there to distinguish between
-                     iadd           // real iistores with iadds as the value
+                     iadd           // real istoreis with iadds as the value
                        a2i
                          value
                        iconst HB
@@ -650,18 +653,34 @@ J9::CodeGenerator::lowerTreesPreChildrenVisit(TR::Node *parent, TR::TreeTop *tre
 
    if (parent->getOpCode().isFunctionCall())
       {
-      // J9
-      //
-      // Hiding compressedref logic from CodeGen doesn't seem a good practise, the evaluator always need the uncompressedref node for write barrier,
-      // therefore, this part is deprecated. It'll be removed once P and Z update their corresponding evaluators.
-      static bool UseOldCompareAndSwapObject = (bool)feGetEnv("TR_UseOldCompareAndSwapObject");
-      if (self()->comp()->useCompressedPointers() && (UseOldCompareAndSwapObject || !(self()->comp()->target().cpu.isX86() || self()->comp()->target().cpu.isARM64())))
+      /* J9
+       *
+       * Hiding compressedref logic from CodeGen isn't a good practice, and the evaluator still needs the uncompressedref node for write barriers.
+       * Therefore, this part is deprecated. It can only be activated on X, P or Z with the TR_UseOldCompareAndSwapObject envvar.
+       *
+       * If TR_DisableCAEInlining is set to disable inlining of compareAndExchange, compressedref logic will not be hidden for compareAndExchange
+       * calls even if TR_UseOldCompareAndSwapObject is set. The reason is that TR_DisableCAEInlining takes priority over TR_UseOldCompareAndSwapObject
+       * so neither the old nor new version of the inlined compareAndExchange are used and the non-inlined version expects that the compressedrefs are
+       * not hidden.
+       *
+       * Similarly, TR_DisableCASInlining can be used to disable inlining of compareAndSet. This also takes priority over TR_UseOldCompareAndSwapObject.
+       * Once again, the compressedrefs logic will not be hidden since it is expected by the non-inlined version.
+       */
+      static bool useOldCompareAndSwapObject = (bool)feGetEnv("TR_UseOldCompareAndSwapObject");
+      if ((self()->comp()->target().cpu.isX86() || self()->comp()->target().cpu.isPower() || self()->comp()->target().cpu.isZ()) &&
+          self()->comp()->useCompressedPointers() && useOldCompareAndSwapObject)
          {
          TR::MethodSymbol *methodSymbol = parent->getSymbol()->castToMethodSymbol();
+
+         bool disableCASInlining = !self()->getSupportsInlineUnsafeCompareAndSet();
+         bool disableCAEIntrinsic = !self()->getSupportsInlineUnsafeCompareAndExchange();
+
          // In Java9 Unsafe could be the jdk.internal JNI method or the sun.misc ordinary method wrapper,
          // while in Java8 it can only be the sun.misc package which will itself contain the JNI method.
          // Test for isNative to distinguish between them.
-         if ((methodSymbol->getRecognizedMethod() == TR::sun_misc_Unsafe_compareAndSwapObject_jlObjectJjlObjectjlObject_Z) &&
+         if ((((methodSymbol->getRecognizedMethod() == TR::sun_misc_Unsafe_compareAndSwapObject_jlObjectJjlObjectjlObject_Z) && !disableCASInlining) ||
+              ((methodSymbol->getRecognizedMethod() == TR::jdk_internal_misc_Unsafe_compareAndExchangeObject) && !disableCAEIntrinsic) ||
+              ((methodSymbol->getRecognizedMethod() == TR::jdk_internal_misc_Unsafe_compareAndExchangeReference) && !disableCAEIntrinsic)) &&
                methodSymbol->isNative() &&
                (!TR::Compiler->om.canGenerateArraylets() || parent->isUnsafeGetPutCASCallOnNonArray()) && parent->isSafeForCGToFastPathUnsafeCall())
             {
@@ -781,15 +800,16 @@ J9::CodeGenerator::lowerTreeIfNeeded(
       {
       TR::RecognizedMethod rm = node->getSymbol()->castToMethodSymbol()->getMandatoryRecognizedMethod();
 
-      if(rm == TR::java_lang_invoke_MethodHandle_invokeBasic ||
-        rm == TR::java_lang_invoke_MethodHandle_linkToStatic ||
+      // There's no need to set tempSlot for invokeBasic(). The number of stack
+      // slots for the arguments will be available from the JIT body metadata.
+
+      if(rm == TR::java_lang_invoke_MethodHandle_linkToStatic ||
         rm == TR::java_lang_invoke_MethodHandle_linkToSpecial ||
         rm == TR::java_lang_invoke_MethodHandle_linkToVirtual ||
         rm == TR::java_lang_invoke_MethodHandle_linkToInterface)
          {
-         // invokeBasic and linkTo* are signature-polymorphic, so the VM needs to know the number of argument slots
-         // for the INL call in order to locate the start of the arguments on the stack. The arg slot count is stored
-         // in vmThread.tempSlot.
+         // linkTo* is signature-polymorphic, so the VM needs to know the number of argument slots for the INL call in order to
+         // locate the start of the arguments on the stack. The arg slot count is stored in vmThread.tempSlot.
          //
          // Furthermore, for unresolved invokedynamic and invokehandle bytecodes, we create a dummy TR_ResolvedMethod call to
          // linkToStatic. The appendix object in the invoke cache array entry could be NULL, which we cannot determine at compile
@@ -876,11 +896,11 @@ J9::CodeGenerator::lowerTreeIfNeeded(
             performTransformation(self()->comp(), "O^O Call arraycopy instead of Unsafe.copyMemory: %s\n", self()->getDebug()->getName(node)))
          {
 
-#if defined(J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
          if (TR::Compiler->om.isOffHeapAllocationEnabled())
             TR::TransformUtil::transformUnsafeCopyMemorytoArrayCopyForOffHeap(self()->comp(), tt, node);
          else
-#endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
          {
             TR::Node *src = node->getChild(1);
             TR::Node *srcOffset = node->getChild(2);
@@ -917,18 +937,6 @@ J9::CodeGenerator::lowerTreeIfNeeded(
 
          return;
          }
-      }
-
-   // J9
-   if (node->getOpCode().isCall() &&
-       node->isUnsafePutOrderedCall() &&
-       node->isDontInlinePutOrderedCall())
-      {
-      // Remove this treetop
-      tt->getPrevTreeTop()->setNextTreeTop(tt->getNextTreeTop());
-      tt->getNextTreeTop()->setPrevTreeTop(tt->getPrevTreeTop());
-      tt->getNode()->recursivelyDecReferenceCount();
-      return;
       }
 
    // J9
@@ -1036,7 +1044,8 @@ J9::CodeGenerator::lowerTreeIfNeeded(
       {
       TR::SymbolReference *symRef = node->getSymbolReference();
       TR::Symbol *symbol = symRef->getSymbol();
-      if (symbol->isVolatile() && node->getDataType() == TR::Int64 && !symRef->isUnresolved() && self()->comp()->target().is32Bit() &&
+      // bitwise atomicity is required for opaque or stronger memory semantics
+      if (symbol->isAtLeastOrStrongerThanOpaque() && node->getDataType() == TR::Int64 && !symRef->isUnresolved() && self()->comp()->target().is32Bit() &&
           !self()->getSupportsInlinedAtomicLongVolatiles())
          {
          bool isLoad = false;
@@ -1368,7 +1377,7 @@ J9::CodeGenerator::lowerTreeIfNeeded(
       {
       if ((node->getFirstChild()->getReferenceCount() == 1) &&
           node->getFirstChild()->getOpCode().isLoadVar() &&
-          !node->getFirstChild()->getSymbolReference()->getSymbol()->isVolatile())
+          node->getFirstChild()->getSymbolReference()->getSymbol()->isTransparent())
          {
          TR::Node::recreate(node->getFirstChild(), TR::PassThrough);
          }
@@ -5273,3 +5282,111 @@ J9::CodeGenerator::stressJitDispatchJ9MethodJ2I()
    static const bool stress = feGetEnv("TR_stressJitDispatchJ9MethodJ2I") != NULL;
    return stress;
    }
+
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+void
+J9::CodeGenerator::addInvokeBasicCallSiteImpl(
+   TR::Node *callNode, TR::Instruction *instr, uint8_t *retAddr)
+   {
+   TR_ASSERT_FATAL_WITH_NODE(
+      callNode,
+      (instr != NULL) != (retAddr != NULL),
+      "expected exactly one of TR::Instruction or return address");
+
+   if (comp()->getOption(TR_TraceCG))
+      {
+      traceMsg(comp(), "Call instruction ");
+      if (instr != NULL)
+         {
+         traceMsg(comp(), "%p", instr);
+         }
+      else
+         {
+         traceMsg(comp(), "with return address %p", retAddr);
+         }
+
+      traceMsg(
+         comp(),
+         " for n%un [%p] may target VM MethodHandle.invokeBasic\n",
+         callNode->getGlobalIndex(),
+         callNode);
+      }
+
+   TR_J9VMBase *fej9 = comp()->fej9();
+   TR::Node *j2iCallNode = callNode;
+   TR::MethodSymbol *methodSymbol = callNode->getSymbol()->castToMethodSymbol();
+   TR::RecognizedMethod rm = methodSymbol->getMandatoryRecognizedMethod();
+   switch (rm)
+      {
+      case TR::java_lang_invoke_MethodHandle_invokeBasic:
+         break; // ok
+
+      case TR::com_ibm_jit_JITHelpers_dispatchVirtual:
+         j2iCallNode =
+            fej9->getEquivalentVirtualCallNodeForDispatchVirtual(callNode, comp());
+         break;
+
+      default:
+         TR_ASSERT_FATAL_WITH_NODE(
+            callNode,
+            false,
+            "expected MethodHandle.invokeBasic or JITHelpers.dispatchVirtual");
+         break;
+      }
+
+   int32_t numChildren = j2iCallNode->getNumChildren();
+   int32_t firstArgIndex = j2iCallNode->getFirstArgumentIndex();
+   uint32_t numArgSlots32 = 0;
+   for (int32_t i = firstArgIndex; i < numChildren; i++)
+      {
+      TR::Node *child = j2iCallNode->getChild(i);
+
+      // PassThrough nodes will appear to have type TR::NoType. The actual type
+      // of the resulting value is the same as the type of the child.
+      while (child->getOpCodeValue() == TR::PassThrough)
+         {
+         child = child->getChild(0);
+         }
+
+      TR::DataTypes dt = child->getDataType().getDataType();
+      numArgSlots32 += 1 + (uint32_t)(dt == TR::Int64 || dt == TR::Double);
+      }
+
+   if (comp()->getOption(TR_TraceCG))
+      {
+      traceMsg(comp(), "  arg slots: %u\n", numArgSlots32);
+      }
+
+   TR_ASSERT_FATAL_WITH_NODE(
+      callNode,
+      numArgSlots32 <= UINT8_MAX,
+      "too many argument slots (%u)",
+      numArgSlots32);
+
+   uint8_t numArgSlots = (uint8_t)numArgSlots32;
+
+   void *j2iThunk = NULL;
+   if (rm == TR::com_ibm_jit_JITHelpers_dispatchVirtual)
+      {
+      TR::Method *m = methodSymbol->getMethod();
+      char *sig = fej9->getJ2IThunkSignatureForDispatchVirtual(
+         m->signatureChars(), m->signatureLength(), comp());
+
+      int32_t sigLen = strlen(sig);
+      j2iThunk = fej9->getJ2IThunk(sig, sigLen, comp());
+      TR_ASSERT_FATAL_WITH_NODE(callNode, j2iThunk != NULL, "missing J2I thunk");
+
+      if (comp()->getOption(TR_TraceCG))
+         {
+         traceMsg(comp(), "  J2I thunk: %p\n", j2iThunk);
+         }
+      }
+
+   InvokeBasicCallSite site = {};
+   site._instr = instr;
+   site._retAddr = retAddr;
+   site._numArgSlots = numArgSlots;
+   site._j2iThunk = j2iThunk;
+   _invokeBasicCallSites.push_back(site);
+   }
+#endif // defined(J9VM_OPT_OPENJDK_METHODHANDLE)

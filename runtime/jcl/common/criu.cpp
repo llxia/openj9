@@ -57,10 +57,10 @@ Java_openj9_internal_criu_InternalCRIUSupport_getProcessRestoreStartTimeImpl(JNI
 jboolean JNICALL
 Java_openj9_internal_criu_InternalCRIUSupport_isCheckpointAllowedImpl(JNIEnv *env, jclass unused)
 {
-	J9VMThread *currentThread = (J9VMThread *)env;
+	J9JavaVM *vm = ((J9VMThread *)env)->javaVM;
 	jboolean res = JNI_FALSE;
 
-	if (currentThread->javaVM->internalVMFunctions->isCheckpointAllowed(currentThread)) {
+	if (vm->internalVMFunctions->isCheckpointAllowed(vm)) {
 		res = JNI_TRUE;
 	}
 
@@ -74,6 +74,19 @@ Java_openj9_internal_criu_InternalCRIUSupport_isCRIUSupportEnabledImpl(JNIEnv *e
 	jboolean res = JNI_FALSE;
 
 	if (currentThread->javaVM->internalVMFunctions->isCRIUSupportEnabled(currentThread)) {
+		res = JNI_TRUE;
+	}
+
+	return res;
+}
+
+jboolean JNICALL
+Java_openj9_internal_criu_InternalCRIUSupport_isTimeCompensationEnabledImpl(JNIEnv *env, jclass unused)
+{
+	J9VMThread *currentThread = (J9VMThread *)env;
+	jboolean res = JNI_FALSE;
+
+	if (currentThread->javaVM->internalVMFunctions->isTimeCompensationEnabled(currentThread)) {
 		res = JNI_TRUE;
 	}
 
@@ -120,9 +133,29 @@ Java_openj9_internal_criu_InternalCRIUSupport_checkpointJVMImpl(JNIEnv *env,
 		jboolean unprivileged,
 		jstring optionsFile,
 		jstring environmentFile,
-		jlong ghostFileLimit)
+		jlong ghostFileLimit,
+		jboolean tcpClose,
+		jboolean tcpSkipInFlight)
 {
-	((J9VMThread*)env)->javaVM->internalVMFunctions->criuCheckpointJVMImpl(env, imagesDir, leaveRunning, shellJob, extUnixSupport, logLevel, logFile, fileLocks, workDir, tcpEstablished, autoDedup, trackMemory, unprivileged, optionsFile, environmentFile, ghostFileLimit);
+	((J9VMThread *)env)->javaVM->internalVMFunctions->criuCheckpointJVMImpl(
+		env,
+		imagesDir,
+		leaveRunning,
+		shellJob,
+		extUnixSupport,
+		logLevel,
+		logFile,
+		fileLocks,
+		workDir,
+		tcpEstablished,
+		autoDedup,
+		trackMemory,
+		unprivileged,
+		optionsFile,
+		environmentFile,
+		ghostFileLimit,
+		tcpClose,
+		tcpSkipInFlight);
 }
 
 jobject JNICALL

@@ -40,6 +40,7 @@ namespace J9 { typedef J9::CodeGenerator CodeGeneratorConnector; }
 #include "env/jittypes.h"
 #include "infra/List.hpp"
 #include "infra/HashTab.hpp"
+#include "infra/TRlist.hpp"
 #include "codegen/RecognizedMethods.hpp"
 #if defined(J9VM_OPT_JITSERVER)
 #include "control/CompilationRuntime.hpp"
@@ -47,7 +48,6 @@ namespace J9 { typedef J9::CodeGenerator CodeGeneratorConnector; }
 #include "control/Recompilation.hpp"
 #include "control/RecompilationInfo.hpp"
 #include "optimizer/Dominators.hpp"
-#include "cs2/arrayof.h"
 
 class NVVMIRBuffer;
 class TR_BitVector;
@@ -442,14 +442,24 @@ public:
    void setSupportsInlineStringCaseConversion() { _j9Flags.set(SupportsInlineStringCaseConversion);}
 
    /** \brief
-    *    Determines whether the code generator supports inlining of java/lang/String.indexOf()
+    *    Determines whether the code generator supports inlining of java/lang/String.indexOf(int)
     */
    bool getSupportsInlineStringIndexOf() { return _j9Flags.testAny(SupportsInlineStringIndexOf);}
 
    /** \brief
-    *    The code generator supports inlining of java/lang/String.indexOf()
+    *    The code generator supports inlining of java/lang/String.indexOf(int)
     */
    void setSupportsInlineStringIndexOf() { _j9Flags.set(SupportsInlineStringIndexOf);}
+
+   /** \brief
+    *    Determines whether the code generator supports inlining of java/lang/String.indexOf(String)
+    */
+   bool getSupportsInlineStringIndexOfString() { return _j9Flags.testAny(SupportsInlineStringIndexOfString);}
+
+   /** \brief
+    *    The code generator supports inlining of java/lang/String.indexOf(String)
+    */
+   void setSupportsInlineStringIndexOfString() { _j9Flags.set(SupportsInlineStringIndexOfString);}
 
    /** \brief
    *    Determines whether the code generator supports inlining of java/lang/String.hashCode()
@@ -460,6 +470,26 @@ public:
    *    The code generator supports inlining of java/lang/String.hashCode()
    */
    void setSupportsInlineStringHashCode() { _j9Flags.set(SupportsInlineStringHashCode); }
+
+   /** \brief
+   *    Determines whether the code generator supports inlining of java/lang/StringCoding.countPositives
+   */
+   bool getSupportsInlineStringCodingCountPositives() { return _j9Flags.testAny(SupportsInlineStringCodingCountPositives); }
+
+   /** \brief
+   *    The code generator supports inlining of java/lang/StringCoding.countPositives
+   */
+   void setSupportsInlineStringCodingCountPositives() { _j9Flags.set(SupportsInlineStringCodingCountPositives); }
+
+   /** \brief
+   *    Determines whether the code generator supports inlining of java/lang/StringCoding.hasNegatives
+   */
+   bool getSupportsInlineStringCodingHasNegatives() { return _j9Flags.testAny(SupportsInlineStringCodingHasNegatives); }
+
+   /** \brief
+   *    The code generator supports inlining of java/lang/StringCoding.hasNegatives
+   */
+   void setSupportsInlineStringCodingHasNegatives() { _j9Flags.set(SupportsInlineStringCodingHasNegatives); }
 
    /** \brief
    *    Determines whether the code generator supports inlining of java/lang/StringLatin1.inflate
@@ -481,6 +511,16 @@ public:
    *    The code generator supports inlining of java_util_concurrent_ConcurrentLinkedQueue_tm* methods
    */
    void setSupportsInlineConcurrentLinkedQueue() { _j9Flags.set(SupportsInlineConcurrentLinkedQueue); }
+
+   /** \brief
+	*   Determines whether the code generator supports inlining of sun/nio/cs/SingleByte$Decoder.decodeToLatin1Impl
+	*/
+   bool getSupportsInlineDecodeToLatin1Impl() { return _j9Flags.testAny(SupportsInlineDecodeToLatin1Impl); }
+
+   /** \brief
+	*   The code generator supports inlining of sun/nio/cs/SingleByte$Decoder.decodeToLatin1Impl
+	*/
+   void setSupportsInlineDecodeToLatin1Impl() { _j9Flags.set(SupportsInlineDecodeToLatin1Impl); }
 
    /** \brief
 	*   Determines whether the code generator supports inlining of java/lang/StringCoding.encodeASCII
@@ -511,6 +551,36 @@ public:
    *   The code generator supports inlining of jdk/internal/util/ArraysSupport.vectorizedHashCode
    */
    void setSupportsInlineVectorizedHashCode() { _j9Flags.set(SupportsInlineVectorizedHashCode); }
+
+   /** \brief
+   *   Determines whether the code generator supports inlining of java_lang_Math_max/min_F/D
+   */
+   bool getSupportsInlineMath_MaxMin_FD() { return _j9Flags.testAny(SupportsInlineMath_MaxMin_FD); }
+
+   /** \brief
+   *   The code generator supports inlining of java_lang_Math_max/min_F/D
+   */
+   void setSupportsInlineMath_MaxMin_FD() { _j9Flags.set(SupportsInlineMath_MaxMin_FD); }
+
+   /** \brief
+   *    Determines whether the code generator supports inlining of jdk/internal/misc/Unsafe.CompareAndSet[Object|Reference|Int|Long]
+   */
+   bool getSupportsInlineUnsafeCompareAndSet() { return _j9Flags.testAny(SupportsInlineUnsafeCompareAndSet); }
+
+   /** \brief
+   *    The code generator supports inlining of jdk/internal/misc/Unsafe.CompareAndSet[Object|Reference|Int|Long]
+   */
+   void setSupportsInlineUnsafeCompareAndSet() { _j9Flags.set(SupportsInlineUnsafeCompareAndSet); }
+
+   /** \brief
+   *    Determines whether the code generator supports inlining of jdk/internal/misc/Unsafe.CompareAndExchange[Object|Reference|Int|Long]
+   */
+   bool getSupportsInlineUnsafeCompareAndExchange() { return _j9Flags.testAny(SupportsInlineUnsafeCompareAndExchange); }
+
+   /** \brief
+   *    The code generator supports inlining of jdk/internal/misc/Unsafe.CompareAndExchange[Object|Reference|Int|Long]
+   */
+   void setSupportsInlineUnsafeCompareAndExchange() { _j9Flags.set(SupportsInlineUnsafeCompareAndExchange); }
 
    /**
     * \brief
@@ -659,7 +729,39 @@ public:
    /// Determine whether to stress the J2I path for \c jitDispatchJ9Method.
    bool stressJitDispatchJ9MethodJ2I();
 
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+   void addInvokeBasicCallSite(TR::Node *callNode, TR::Instruction *instr)
+      {
+      addInvokeBasicCallSiteImpl(callNode, instr, NULL);
+      }
+
+   void addInvokeBasicCallSite(TR::Node *callNode, uint8_t *retAddr)
+      {
+      addInvokeBasicCallSiteImpl(callNode, NULL, retAddr);
+      }
+
+   struct InvokeBasicCallSite
+      {
+      TR::Instruction *_instr; // for call instruction from an evaluator
+      void *_retAddr; // for call instruction from a snippet
+      uint8_t _numArgSlots;
+      void *_j2iThunk; // for JITHelpers.dispatchVirtual()
+      };
+
+   typedef TR::list<InvokeBasicCallSite, TR::Region&> InvokeBasicCallSiteList;
+
+   const InvokeBasicCallSiteList &invokeBasicCallSites()
+      {
+      return _invokeBasicCallSites;
+      }
+#endif
+
 private:
+
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+   void addInvokeBasicCallSiteImpl(
+      TR::Node *callNode, TR::Instruction *instr, uint8_t *retAddr);
+#endif
 
    enum // Flags
       {
@@ -677,9 +779,20 @@ private:
       SavesNonVolatileGPRsForGC                           = 0x00000800,
       SupportsInlineVectorizedMismatch                    = 0x00001000,
       SupportsInlineVectorizedHashCode                    = 0x00002000,
+      SupportsInlineStringCodingHasNegatives              = 0x00004000,
+      SupportsInlineStringCodingCountPositives            = 0x00008000,
+      SupportsInlineMath_MaxMin_FD                        = 0x00010000,
+      SupportsInlineUnsafeCompareAndSet                   = 0x00020000,
+      SupportsInlineUnsafeCompareAndExchange              = 0x00040000,
+      SupportsInlineStringIndexOfString                   = 0x00080000, /*! codegen inlining of Java string index of string */
+      SupportsInlineDecodeToLatin1Impl                    = 0x00100000,
       };
 
    flags32_t _j9Flags;
+
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+   InvokeBasicCallSiteList _invokeBasicCallSites;
+#endif
    };
 }
 

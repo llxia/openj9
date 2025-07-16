@@ -241,6 +241,7 @@ JIT_PRODUCT_BACKEND_SOURCES+=\
     omr/compiler/optimizer/TranslateTable.cpp \
     omr/compiler/optimizer/TrivialDeadBlockRemover.cpp \
     omr/compiler/optimizer/UnionBitVectorAnalysis.cpp \
+    omr/compiler/optimizer/UnsafeSubexpressionRemover.cpp \
     omr/compiler/optimizer/UseDefInfo.cpp \
     omr/compiler/optimizer/ValueNumberInfo.cpp \
     omr/compiler/optimizer/ValuePropagationCommon.cpp \
@@ -292,6 +293,7 @@ JIT_PRODUCT_SOURCE_FILES+=\
     compiler/control/rossa.cpp \
     compiler/env/ClassLoaderTable.cpp \
     compiler/env/CpuUtilization.cpp \
+    compiler/env/DependencyTable.cpp \
     compiler/env/FilePointer.cpp \
     compiler/env/J2IThunk.cpp \
     compiler/env/J9ArithEnv.cpp \
@@ -416,6 +418,7 @@ JIT_PRODUCT_SOURCE_FILES+=\
     compiler/runtime/JITServerAOTCache.cpp \
     compiler/runtime/JITServerAOTDeserializer.cpp \
     compiler/runtime/JITServerIProfiler.cpp \
+    compiler/runtime/JITServerProfileCache.cpp \
     compiler/runtime/JITServerROMClassHash.cpp \
     compiler/runtime/JITServerSharedROMClassCache.cpp \
     compiler/runtime/JITServerStatisticsThread.cpp \

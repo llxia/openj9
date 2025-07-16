@@ -37,9 +37,18 @@ def get_source() {
         OMR_BRANCH_OPTION = (OMR_BRANCH != "")? "-omr-branch=${OMR_BRANCH}" : ""
         OMR_SHA_OPTION = (OMR_SHA != "") ? "-omr-sha=${OMR_SHA}" : ""
 
+        VENDOR_CODE_REPO_OPTION = (VENDOR_CODE_REPO != "") ? "-vendor-repo=${VENDOR_CODE_REPO}" : ""
+        VENDOR_CODE_BRANCH_OPTION = (VENDOR_CODE_BRANCH != "") ? "-vendor-branch=${VENDOR_CODE_BRANCH}" : ""
+        VENDOR_CODE_SHA_OPTION = (VENDOR_CODE_SHA != "") ? "-vendor-sha=${VENDOR_CODE_SHA}" : ""
+
         if (OPENJDK_REFERENCE_REPO) {
             OPENJ9_REFERENCE = "-openj9-reference=${OPENJDK_REFERENCE_REPO}"
             OMR_REFERENCE = "-omr-reference=${OPENJDK_REFERENCE_REPO}"
+            if (SDK_VERSION == "8" || SPEC.contains('zos')) {
+                VENDOR_CODE_REFERENCE = "-vendor-reference=${OPENJDK_REFERENCE_REPO}"
+            } else {
+                VENDOR_CODE_REFERENCE = ""
+            }
         }
 
         // use sshagent with Jenkins credentials ID for all platforms except zOS
@@ -59,7 +68,7 @@ def get_sources_with_authentication() {
 }
 
 def get_source_call(gskit_cred="") {
-    sh "bash get_source.sh ${EXTRA_GETSOURCE_OPTIONS} ${gskit_cred} ${OPENJ9_REPO_OPTION} ${OPENJ9_BRANCH_OPTION} ${OPENJ9_SHA_OPTION} ${OPENJ9_REFERENCE} ${OMR_REPO_OPTION} ${OMR_BRANCH_OPTION} ${OMR_SHA_OPTION} ${OMR_REFERENCE}"
+    sh "bash get_source.sh ${EXTRA_GETSOURCE_OPTIONS} ${gskit_cred} ${OPENJ9_REPO_OPTION} ${OPENJ9_BRANCH_OPTION} ${OPENJ9_SHA_OPTION} ${OPENJ9_REFERENCE} ${OMR_REPO_OPTION} ${OMR_BRANCH_OPTION} ${OMR_SHA_OPTION} ${OMR_REFERENCE} ${VENDOR_CODE_REPO_OPTION} ${VENDOR_CODE_BRANCH_OPTION} ${VENDOR_CODE_SHA_OPTION} ${VENDOR_CODE_REFERENCE}"
 }
 
 def get_source_call_optional_gskit() {
@@ -254,9 +263,9 @@ def checkout_pullrequest() {
     if (omr_bool) {
         dir ('omr') {
             if (omr_upstream) {
-                sh "git config remote.origin.url https://github.com/eclipse/omr.git"
+                sh "git config remote.origin.url https://github.com/eclipse-omr/omr.git"
             }
-            checkout_pullrequest(OMR_PR, 'eclipse/omr')
+            checkout_pullrequest(OMR_PR, 'eclipse-omr/omr')
         }
     }
 }
@@ -817,12 +826,18 @@ def _build_all() {
 // TODO: remove this workaround when https://github.com/adoptium/infrastructure/issues/3597 resolved. related: infra 9292
 def create_docker_image_locally()
 {
-    new_image_name=DOCKER_IMAGE.split(':')[0]+'_cuda'
+    new_image_name = DOCKER_IMAGE.split(':')[0] + '_cuda'
+    // check and return if image is already exists on node
+    CUDA_DOCKER_IMAGE_ID = get_docker_image_id(new_image_name)
+    if (CUDA_DOCKER_IMAGE_ID) {
+        DOCKER_IMAGE = new_image_name
+        return
+    }
     sh '''
         echo 'ARG image
             ARG cuda_ver=12.2.0
             ARG cuda_distro=ubi8
-            FROM nvidia/cuda:${cuda_ver}-devel-${cuda_distro} as cuda
+            FROM nvcr.io/nvidia/cuda:${cuda_ver}-devel-${cuda_distro} as cuda
             FROM $image
             RUN mkdir -p /usr/local/cuda/nvvm
             COPY --from=cuda /usr/local/cuda/include         /usr/local/cuda/include
@@ -843,19 +858,19 @@ def build_all() {
         timeout(time: 10, unit: 'HOURS') {
             node("${NODE}") {
                 timeout(time: 5, unit: 'HOURS') {
-                    if ("${DOCKER_IMAGE}") {
-                        // TODO: Remove this workaround when https://github.com/adoptium/infrastructure/issues/3597 is resolved. Related: infra 9292.
-                        if ((PLATFORM ==~ /ppc64le_linux.*/)
-                        || ((PLATFORM ==~ /x86-64_linux.*/) && (!SDK_VERSION.isInteger() || (SDK_VERSION.toInteger() >= 17)))
-                        ) {
-                            create_docker_image_locally()
-                        }
-                        prepare_docker_environment()
-                        docker.image(DOCKER_IMAGE_ID).inside("-v /home/jenkins/openjdk_cache:/home/jenkins/openjdk_cache:rw,z -v /home/jenkins/.ssh:/home/jenkins/.ssh:rw,z") {
+                    stage('Setup') {
+                        if ("${DOCKER_IMAGE}") {
+                            // TODO: Remove this workaround when https://github.com/adoptium/infrastructure/issues/3597 is resolved. Related: infra 9292.
+                            if ((PLATFORM ==~ /ppc64le_linux.*/) || (PLATFORM ==~ /x86-64_linux.*/)) {
+                                create_docker_image_locally()
+                            }
+                            prepare_docker_environment()
+                            docker.image(DOCKER_IMAGE_ID).inside("-v /home/jenkins/openjdk_cache:/home/jenkins/openjdk_cache:rw,z -v /home/jenkins/.ssh:/home/jenkins/.ssh:rw,z") {
+                                _build_all()
+                            }
+                        } else {
                             _build_all()
                         }
-                    } else {
-                        _build_all()
                     }
                 }
             }

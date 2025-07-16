@@ -57,27 +57,39 @@ j9gc_initialize_parse_gc_colon(J9JavaVM *javaVM, char **scan_start)
 	PORT_ACCESS_FROM_JAVAVM(javaVM);
 
 #if defined(J9VM_GC_THREAD_LOCAL_HEAP)
-	if(try_scan(scan_start, "tlhInitialSize=")) {
-		if(!scan_udata_helper(javaVM, scan_start, &extensions->tlhInitialSize, "tlhInitialSize=")) {
+	if (try_scan(scan_start, "tlhInitialSize=")) {
+		if (!scan_udata_helper(javaVM, scan_start, &extensions->tlhInitialSize, "tlhInitialSize=")) {
+			goto _error;
+		}
+		if (MINIMUM_TLH_SIZE > extensions->tlhInitialSize) {
+			j9nls_printf(PORTLIB, J9NLS_ERROR, J9NLS_GC_OPTIONS_VALUE_MUST_BE_ABOVE, "tlhInitialSize=", (UDATA)MINIMUM_TLH_SIZE);
 			goto _error;
 		}
 		goto _exit;
 	}
-	if(try_scan(scan_start, "tlhMinimumSize=")) {
-		if(!scan_udata_helper(javaVM, scan_start, &extensions->tlhMinimumSize, "tlhMinimumSize=")) {
+	if (try_scan(scan_start, "tlhMinimumSize=")) {
+		if (!scan_udata_helper(javaVM, scan_start, &extensions->tlhMinimumSize, "tlhMinimumSize=")) {
+			goto _error;
+		}
+		if (MINIMUM_TLH_SIZE > extensions->tlhMinimumSize) {
+			j9nls_printf(PORTLIB, J9NLS_ERROR, J9NLS_GC_OPTIONS_VALUE_MUST_BE_ABOVE, "tlhMinimumSize=", (UDATA)MINIMUM_TLH_SIZE);
 			goto _error;
 		}
 		goto _exit;
 	}
-	if(try_scan(scan_start, "tlhMaximumSize=")) {
-		if(!scan_udata_helper(javaVM, scan_start, &extensions->tlhMaximumSize, "tlhMaximumSize=")) {
+	if (try_scan(scan_start, "tlhMaximumSize=")) {
+		if (!scan_udata_helper(javaVM, scan_start, &extensions->tlhMaximumSize, "tlhMaximumSize=")) {
+			goto _error;
+		}
+		if (MINIMUM_TLH_SIZE > extensions->tlhMaximumSize) {
+			j9nls_printf(PORTLIB, J9NLS_ERROR, J9NLS_GC_OPTIONS_VALUE_MUST_BE_ABOVE, "tlhMaximumSize=", (UDATA)MINIMUM_TLH_SIZE);
 			goto _error;
 		}
 		extensions->tlhMaximumSizeSpecified = true;
 		goto _exit;
 	}
-	if(try_scan(scan_start, "tlhIncrementSize=")) {
-		if(!scan_udata_helper(javaVM, scan_start, &extensions->tlhIncrementSize, "tlhIncrementSize=")) {
+	if (try_scan(scan_start, "tlhIncrementSize=")) {
+		if (!scan_udata_helper(javaVM, scan_start, &extensions->tlhIncrementSize, "tlhIncrementSize=")) {
 			goto _error;
 		}
 		goto _exit;
@@ -290,16 +302,6 @@ j9gc_initialize_parse_gc_colon(J9JavaVM *javaVM, char **scan_start)
 		if(!scan_udata_helper(javaVM, scan_start, &extensions->concurrentScavengerSlack, "concurrentScavengeSlack=")) {
 			goto _error;
 		}
-		goto _exit;
-	}
-
-	if(try_scan(scan_start, "concurrentScavengeAllocDeviationBoost=")) {
-		UDATA value;
-		if(!scan_udata_helper(javaVM, scan_start, &value, "concurrentScavengeAllocDeviationBoost=")) {
-			goto _error;
-		}
-
-		extensions->concurrentScavengerAllocDeviationBoost = value / (float)10.0;
 		goto _exit;
 	}
 
@@ -1445,6 +1447,32 @@ gcParseXgcArguments(J9JavaVM *vm, char *optArg)
 				returnValue = JNI_EINVAL;
 				break;
 			}
+			continue;
+		}
+
+		/* Check if there is a request to set the suballocator reservation increment size. */
+		if (try_scan(&scan_start, "suballocatorIncrementSize=")) {
+			if (!scan_udata_memory_size_helper(vm, &scan_start, &extensions->suballocatorIncrementSize, "suballocatorIncrementSize=")) {
+				returnValue = JNI_EINVAL;
+				break;
+			}
+			if (0 == extensions->suballocatorIncrementSize) {
+				j9nls_printf(PORTLIB, J9NLS_ERROR, J9NLS_GC_OPTIONS_VALUE_MUST_BE_ABOVE, "-Xgc:suballocatorIncrementSize=", (UDATA)0);
+				returnValue = JNI_EINVAL;
+				break;
+			}
+			continue;
+		}
+
+		/* Check if there is a request to enable the mmap-based allocation for the suballocator (Linux only). */
+		if (try_scan(&scan_start, "suballocatorQuickAllocEnable")) {
+			extensions->suballocatorQuickAlloc = true;
+			continue;
+		}
+
+		/* Check if there is a request to disable the mmap-based allocation for the suballocator (Linux only). */
+		if (try_scan(&scan_start, "suballocatorQuickAllocDisable")) {
+			extensions->suballocatorQuickAlloc = false;
 			continue;
 		}
 

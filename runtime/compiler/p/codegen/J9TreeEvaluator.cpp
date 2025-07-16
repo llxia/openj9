@@ -436,11 +436,6 @@ TR::Register *outlinedHelperWrtbarEvaluator(TR::Node *node, TR::CodeGenerator *c
    TR::Register *dstObjectReg = cg->gprClobberEvaluate(node->getSecondChild());
    TR::Compilation* comp = cg->comp();
 
-   TR::Symbol *storeSym = node->getSymbolReference()->getSymbol();
-   const bool isOrderedShadowStore = storeSym->isShadow() && storeSym->isOrdered();
-   const bool needSync = comp->target().isSMP() && (storeSym->isSyncVolatile() || isOrderedShadowStore);
-   const bool lazyVolatile = comp->target().isSMP() && isOrderedShadowStore;
-
    // Under real-time, store happens after the wrtbar
    // For other GC modes, store happens before the wrtbar
    if (comp->getOptions()->realTimeGC())
@@ -1536,7 +1531,7 @@ TR::Register *iGenerateSoftwareReadBarrier(TR::Node *node, TR::CodeGenerator *cg
    generateDepLabelInstruction(cg, TR::InstOpCode::label, node, endLabel, deps);
 
    // TODO: Allow this to be patched or skipped at runtime for unresolved symrefs
-   if (node->getSymbol()->isSyncVolatile() && comp->target().isSMP())
+   if (node->getSymbol()->isAtLeastOrStrongerThanAcquireRelease() && comp->target().isSMP())
       {
       generateInstruction(cg, comp->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P7) ? TR::InstOpCode::lwsync : TR::InstOpCode::isync, node);
       }
@@ -1633,7 +1628,7 @@ TR::Register *aGenerateSoftwareReadBarrier(TR::Node *node, TR::CodeGenerator *cg
    generateDepLabelInstruction(cg, TR::InstOpCode::label, node, endLabel, deps);
 
    // TODO: Allow this to be patched or skipped at runtime for unresolved symrefs
-   if (node->getSymbol()->isSyncVolatile() && comp->target().isSMP())
+   if (node->getSymbol()->isAtLeastOrStrongerThanAcquireRelease() && comp->target().isSMP())
       {
       generateInstruction(cg, comp->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P7) ? TR::InstOpCode::lwsync : TR::InstOpCode::isync, node);
       }
@@ -2487,14 +2482,14 @@ static TR::Register *genDecompressPointerNonNull2RegsWithTempReg(TR::CodeGenerat
       }
    }
 
-static void genCompressPointerWithTempReg(TR::CodeGenerator *cg, TR::Node *node, TR::Register *ptrReg, TR::Register *tempReg, TR::Register *condReg = NULL, bool nullCheck = true)
+static void genCompressPointerWithTempReg(TR::CodeGenerator *cg, TR::Node *node, TR::Register *tempReg, TR::Register *ptrReg, TR::Register *condReg = NULL, bool nullCheck = true)
    {
    TR_J9VMBase *fej9 = (TR_J9VMBase *) (cg->comp()->fe());
    int32_t shiftAmount = TR::Compiler->om.compressedReferenceShift();
 
    if (shiftAmount != 0)
       {
-      generateShiftRightLogicalImmediateLong(cg, node, ptrReg, ptrReg, shiftAmount);
+      generateShiftRightLogicalImmediateLong(cg, node, tempReg, ptrReg, shiftAmount);
       }
    }
 
@@ -2603,7 +2598,7 @@ TR::Register *J9::Power::TreeEvaluator::BNDCHKwithSpineCHKEvaluator(TR::Node *no
       TR_ASSERT(
             arrayLengthChild->getOpCode().isConversion() || arrayLengthChild->getOpCodeValue() == TR::iloadi || arrayLengthChild->getOpCodeValue() == TR::iload
                   || arrayLengthChild->getOpCodeValue() == TR::iRegLoad || arrayLengthChild->getOpCode().isLoadConst(),
-            "Expecting array length child under BNDCHKwithSpineCHK to be a conversion, iiload, iload, iRegLoad or iconst");
+            "Expecting array length child under BNDCHKwithSpineCHK to be a conversion, iloadi, iload, iRegLoad or iconst");
 
       TR::Register *condReg = srm->findOrCreateScratchRegister(TR_CCR);
 
@@ -3352,20 +3347,25 @@ TR::Register *J9::Power::TreeEvaluator::flushEvaluator(TR::Node *node, TR::CodeG
          TR::Node *child = (node->getNumChildren() >= 1) ? node->getFirstChild() : NULL;
          if (!child || (node->getOpCodeValue() != TR::monexit && child->getOpCodeValue() != TR::monexit))
             {
-            // Iterate the next tree to see if there is a resolved volatile load/store node that has yet to be evaluated
-            // An unresolved volatile might not actually be a volatile access, and therefore can not replace the AllocationFence
-            // An node that is already evaluated will not actually emit an 'lwsync' so it can not replace the AllocationFence
-            bool volatileAccessFound = false;
+            // Iterate the next tree to see if there is a resolved acquire/release load/store node that has yet to be evaluated
+            // An unresolved acquire/release might not actually be an acquire/release access, and therefore can not replace the AllocationFence
+            // A node that is already evaluated will not actually emit an 'lwsync' so it can not replace the AllocationFence
+            // NOTE: As things currently stand, we won't ever encounter an unresolved symref that is strictly acquire/release,
+            // but the following code will handle unresolved volatile symrefs as well
+            bool fencedAccessFound = false;
             for (TR::PreorderNodeIterator it(tt, cg->comp()); it.currentTree() == tt; ++it)
                {
                node = it.currentNode();
-               if (node->getOpCode().hasSymbolReference() && !node->hasUnresolvedSymbolReference() && node->getSymbolReference()->getSymbol()->isVolatile() && !node->getRegister())
+               if (node->getOpCode().hasSymbolReference() &&
+                   !node->hasUnresolvedSymbolReference() &&
+                   node->getSymbolReference()->getSymbol()->isAtLeastOrStrongerThanAcquireRelease() &&
+                   !node->getRegister())
                   {
-                  volatileAccessFound = true;
+                  fencedAccessFound = true;
                   break;
                   }
                }
-            if (!volatileAccessFound)
+            if (!fencedAccessFound)
                generateInstruction(cg, TR::InstOpCode::lwsync, node);
             }
          }
@@ -6484,7 +6484,7 @@ TR::Register *J9::Power::TreeEvaluator::VMnewEvaluator(TR::Node *node, TR::CodeG
             genInitArrayHeader(node, iCursor, isVariableLen, clazz, NULL, resReg, zeroReg, condReg, enumReg, dataSizeReg,
                   tmp5Reg, tmp4Reg, conditions, needZeroInit, cg);
 
-#ifdef J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION
+#ifdef J9VM_GC_SPARSE_HEAP_ALLOCATION
          if (TR::Compiler->om.isOffHeapAllocationEnabled())
             {
             /* Here we'll update dataAddr slot for both fixed and variable length arrays. Fixed length arrays are
@@ -6492,69 +6492,88 @@ TR::Register *J9::Power::TreeEvaluator::VMnewEvaluator(TR::Node *node, TR::CodeG
              * runtime size checks are needed to determine whether to use contiguous or discontiguous header layout.
              *
              * In both scenarios, arrays of non-zero size use contiguous header layout while zero size arrays use
-             * discontiguous header layout.
+             * discontiguous header layout. DataAddr field of zero size arrays is intialized to NULL because they
+             * don't have any data elements.
              */
             TR::Register *offsetReg = tmp5Reg;
             TR::Register *firstDataElementReg = tmp4Reg;
             TR::MemoryReference *dataAddrSlotMR = NULL;
 
-            if (isVariableLen && TR::Compiler->om.compressObjectReferences())
+            if (TR::Compiler->om.compressObjectReferences())
                {
-               /* We need to check enumReg at runtime to determine correct offset of dataAddr field.
-                * Here we deal only with compressed refs because dataAddr offset for discontiguous
-                * and contiguous arrays is the same in full refs.
-                */
-               if (comp->getOption(TR_TraceCG))
-                  traceMsg(comp, "Node (%p): Dealing with compressed refs variable length array.\n", node);
-
                TR_ASSERT_FATAL_WITH_NODE(node,
                   (fej9->getOffsetOfDiscontiguousDataAddrField() - fej9->getOffsetOfContiguousDataAddrField()) == 8,
                   "Offset of dataAddr field in discontiguous array is expected to be 8 bytes more than contiguous array. "
                   "But was %d bytes for discontigous and %d bytes for contiguous array.\n",
                   fej9->getOffsetOfDiscontiguousDataAddrField(), fej9->getOffsetOfContiguousDataAddrField());
+               }
+            else
+               {
+               TR_ASSERT_FATAL_WITH_NODE(node,
+                  fej9->getOffsetOfDiscontiguousDataAddrField() == fej9->getOffsetOfContiguousDataAddrField(),
+                  "dataAddr field offset is expected to be same for both contiguous and discontiguous arrays in full refs. "
+                  "But was %d bytes for discontiguous and %d bytes for contiguous array.\n",
+                  fej9->getOffsetOfDiscontiguousDataAddrField(), fej9->getOffsetOfContiguousDataAddrField());
+               }
 
-               iCursor = generateTrg1Src1Instruction(cg, TR::InstOpCode::cntlzd, node, offsetReg, enumReg, iCursor);
-               iCursor = generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rlwinm, node, offsetReg, offsetReg, 29, 8, iCursor);
-               // offsetReg should either be 0 (if enumReg > 0) or 8 (if enumReg == 0)
-               iCursor = generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, offsetReg, resReg, offsetReg, iCursor);
+            if (isVariableLen)
+               {
+               // We need to check enumReg at runtime to determine correct offset of dataAddr field.
+               if (comp->getOption(TR_TraceCG))
+                  traceMsg(comp, "Node (%p): Dealing with full/compressed refs variable length array.\n", node);
 
-               iCursor = generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, firstDataElementReg, offsetReg, TR::Compiler->om.contiguousArrayHeaderSizeInBytes(), iCursor);
-               dataAddrSlotMR = TR::MemoryReference::createWithDisplacement(cg, offsetReg, fej9->getOffsetOfContiguousDataAddrField(), TR::Compiler->om.sizeofReferenceAddress());
+               TR::LabelSymbol *dataAddrInitDoneLabel = generateLabelSymbol(cg);
+               TR::LabelSymbol *zeroArrayLabel = needZeroInit ? generateLabelSymbol(cg) : dataAddrInitDoneLabel;
+
+               iCursor = generateTrg1Src1ImmInstruction(cg,TR::InstOpCode::cmpli4, node, condReg, enumReg, 0, iCursor);
+               iCursor = generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, zeroArrayLabel, condReg, iCursor);
+
+               // Load first data element address
+               iCursor = generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, firstDataElementReg, resReg, TR::Compiler->om.contiguousArrayHeaderSizeInBytes(), iCursor);
+               dataAddrSlotMR = TR::MemoryReference::createWithDisplacement(cg, resReg, fej9->getOffsetOfContiguousDataAddrField(), 8);
+               // Store the first data element address to dataAddr slot
+               iCursor = generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, dataAddrSlotMR, firstDataElementReg, iCursor);
+
+               if (needZeroInit)
+                  {
+                  iCursor = generateLabelInstruction(cg, TR::InstOpCode::b, node, dataAddrInitDoneLabel);
+                  // Init dataAddr field for zero size array
+                  iCursor = generateLabelInstruction(cg, TR::InstOpCode::label, node, zeroArrayLabel, iCursor);
+                  // Clear dataAddr field of 0 size array. Use zeroReg to clear the field
+                  iCursor = generateMemSrc1Instruction(cg, TR::InstOpCode::std, node,
+                     TR::MemoryReference::createWithDisplacement(cg, resReg, fej9->getOffsetOfDiscontiguousDataAddrField(), 8),
+                     zeroReg, iCursor);
+                  }
+
+               iCursor = generateLabelInstruction(cg, TR::InstOpCode::label, node, dataAddrInitDoneLabel, iCursor);
                }
             else if (!isVariableLen && node->getFirstChild()->getOpCode().isLoadConst() && node->getFirstChild()->getInt() == 0)
                {
                if (comp->getOption(TR_TraceCG))
                   traceMsg(comp, "Node (%p): Dealing with full/compressed refs fixed length zero size array.\n", node);
 
-               iCursor = generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, firstDataElementReg, resReg, TR::Compiler->om.discontiguousArrayHeaderSizeInBytes(), iCursor);
-               dataAddrSlotMR = TR::MemoryReference::createWithDisplacement(cg, resReg, fej9->getOffsetOfDiscontiguousDataAddrField(), TR::Compiler->om.sizeofReferenceAddress());
+               if (needZeroInit)
+                  {
+                  dataAddrSlotMR = TR::MemoryReference::createWithDisplacement(cg, resReg, fej9->getOffsetOfDiscontiguousDataAddrField(), 8);
+
+                  // Use zeroReg to NULL dataAddr slot
+                  iCursor = generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, dataAddrSlotMR, zeroReg, iCursor);
+                  }
                }
             else
                {
                if (comp->getOption(TR_TraceCG))
-                  {
-                  traceMsg(comp,
-                     "Node (%p): Dealing with either full/compressed refs fixed length non-zero size array or full refs variable length array.\n",
-                     node);
-                  }
+                  traceMsg(comp, "Node (%p): Dealing with full/compressed refs fixed length non-zero size array.\n", node);
 
-               if (!TR::Compiler->om.compressObjectReferences())
-                  {
-                  TR_ASSERT_FATAL_WITH_NODE(node,
-                     fej9->getOffsetOfDiscontiguousDataAddrField() == fej9->getOffsetOfContiguousDataAddrField(),
-                     "dataAddr field offset is expected to be same for both contiguous and discontiguous arrays in full refs. "
-                     "But was %d bytes for discontiguous and %d bytes for contiguous array.\n",
-                     fej9->getOffsetOfDiscontiguousDataAddrField(), fej9->getOffsetOfContiguousDataAddrField());
-                  }
-
+               // Load first element address into firstDataElementReg
                iCursor = generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, firstDataElementReg, resReg, TR::Compiler->om.contiguousArrayHeaderSizeInBytes(), iCursor);
-               dataAddrSlotMR = TR::MemoryReference::createWithDisplacement(cg, resReg, fej9->getOffsetOfContiguousDataAddrField(), TR::Compiler->om.sizeofReferenceAddress());
-               }
+               dataAddrSlotMR = TR::MemoryReference::createWithDisplacement(cg, resReg, fej9->getOffsetOfContiguousDataAddrField(), 8);
 
-            // store the first data element address to dataAddr slot
-            iCursor = generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, dataAddrSlotMR, firstDataElementReg, iCursor);
+               // Store the first data element address to dataAddr slot
+               iCursor = generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, dataAddrSlotMR, firstDataElementReg, iCursor);
+               }
             }
-#endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
          if (generateArraylets)
             {
             //write arraylet pointer to object header
@@ -6963,7 +6982,7 @@ static bool simpleReadMonitor(TR::Node *node, TR::CodeGenerator *cg, TR::Node *o
    // look for the special case of a read monitor sequence that protects
    // a single fixed-point load, ie:
    //   monenter (object)
-   //   a simple form of iaload or iiload
+   //   a simple form of aloadi or iloadi
    //   monexit (object)
 
    // note: before we make the following checks it is important that the
@@ -7026,8 +7045,8 @@ static bool simpleReadMonitor(TR::Node *node, TR::CodeGenerator *cg, TR::Node *o
       return false;
       }
    // possible TODO: expand the complexity of loads we can handle
-   // iaload and iiload are indirect and have a child
-   // if we don't need to evaluate that child then the iaload or iiload
+   // aloadi and iloadi are indirect and have a child
+   // if we don't need to evaluate that child then the aloadi or iloadi
    // consists of a single hardware instruction and satisfies our current
    // constraint of simple
    if (!nextTopNode->getFirstChild()->getRegister())
@@ -7152,7 +7171,7 @@ static bool simpleReadMonitor(TR::Node *node, TR::CodeGenerator *cg, TR::Node *o
    TR::addDependency(conditions, offsetReg, TR::RealRegister::NoReg, TR_GPR, cg);
    TR::addDependency(conditions, cndReg, TR::RealRegister::cr0, TR_CCR, cg);
 
-   // the following code is derived from the iaload and iiload evaluators
+   // the following code is derived from the aloadi and iloadi evaluators
    TR::Register *loadResultReg;
    OMR::Power::NodeMemoryReference tempMR;
    if (nextTopNode->getOpCodeValue() == TR::aloadi)
@@ -7184,7 +7203,7 @@ static bool simpleReadMonitor(TR::Node *node, TR::CodeGenerator *cg, TR::Node *o
       tempMR = TR::LoadStoreHandler::generateSimpleLoadMemoryReference(cg, nextTopNode, 4);
       loadOpCode = TR::InstOpCode::lwz;
       }
-   // end of code derived from the iaload and iiload evaluators
+   // end of code derived from the aloadi and iloadi evaluators
 
    TR::addDependency(conditions, loadResultReg, TR::RealRegister::NoReg, TR_GPR, cg);
    if (tempMR.getMemoryReference()->getBaseRegister() != objReg)
@@ -8067,10 +8086,39 @@ void J9::Power::TreeEvaluator::genWrtbarForArrayCopy(TR::Node *node, TR::Registe
    }
 
 static TR::Register *genCAS(TR::Node *node, TR::CodeGenerator *cg, TR::Register *objReg, TR::Register *offsetReg, TR::Register *oldVReg, TR::Register *newVReg, TR::Register *cndReg,
-      TR::LabelSymbol *doneLabel, TR::Node *objNode, int32_t oldValue, bool oldValueInReg, bool isLong, bool casWithoutSync = false)
+      TR::LabelSymbol *doneLabel, TR::Node *objNode, int32_t oldValue, bool oldValueInReg, int32_t dataSize, bool isReference, bool isExchange, bool casWithoutSync)
    {
-   TR::Register *resultReg = cg->allocateRegister();
-   TR::Instruction *gcPoint;
+   TR::Compilation *comp = cg->comp();
+   TR::Register *resultReg;
+
+   if (isReference && isExchange)
+      {
+      resultReg = cg->allocateCollectedReferenceRegister();
+      }
+   else
+      {
+      resultReg = cg->allocateRegister();
+      }
+
+   TR::InstOpCode::Mnemonic reservedLoadOpCode, conditionalStoreOpCode, compareOpCode, compareImmOpCode;
+   switch (dataSize)
+      {
+      case 4:
+         reservedLoadOpCode = TR::InstOpCode::lwarx;
+         conditionalStoreOpCode = TR::InstOpCode::stwcx_r;
+         compareOpCode = TR::InstOpCode::cmp4;
+         compareImmOpCode = TR::InstOpCode::cmpi4;
+         break;
+      case 8:
+         reservedLoadOpCode = TR::InstOpCode::ldarx;
+         conditionalStoreOpCode = TR::InstOpCode::stdcx_r;
+         compareOpCode = TR::InstOpCode::cmp8;
+         compareImmOpCode = TR::InstOpCode::cmpi8;
+         break;
+      default:
+         TR_ASSERT_FATAL_WITH_NODE(node, false, "Unknown dataSize: %d\n", dataSize);
+         break;
+      }
 
    // Memory barrier --- NOTE: we should be able to do a test upfront to save this barrier,
    //                          but Hursley advised to be conservative due to lack of specification.
@@ -8079,75 +8127,107 @@ static TR::Register *genCAS(TR::Node *node, TR::CodeGenerator *cg, TR::Register 
    TR::LabelSymbol *loopLabel = generateLabelSymbol(cg);
    generateLabelInstruction(cg, TR::InstOpCode::label, node, loopLabel);
 
-   generateTrg1MemInstruction(cg, isLong ? TR::InstOpCode::ldarx : TR::InstOpCode::lwarx, node, resultReg, TR::MemoryReference::createWithIndexReg(cg, objReg, offsetReg, isLong ? 8 : 4));
+   generateTrg1MemInstruction(cg, reservedLoadOpCode, node, resultReg, TR::MemoryReference::createWithIndexReg(cg, objReg, offsetReg, dataSize));
    if (oldValueInReg)
-      generateTrg1Src2Instruction(cg, isLong ? TR::InstOpCode::cmp8 : TR::InstOpCode::cmp4, node, cndReg, resultReg, oldVReg);
+      generateTrg1Src2Instruction(cg, compareOpCode, node, cndReg, resultReg, oldVReg);
    else
-      generateTrg1Src1ImmInstruction(cg, isLong ? TR::InstOpCode::cmpi8 : TR::InstOpCode::cmpi4, node, cndReg, resultReg, oldValue);
-   generateTrg1ImmInstruction(cg, TR::InstOpCode::li, node, resultReg, 0);
+      generateTrg1Src1ImmInstruction(cg, compareImmOpCode, node, cndReg, resultReg, oldValue);
+
+   if (!isExchange)
+      {
+      generateTrg1ImmInstruction(cg, TR::InstOpCode::li, node, resultReg, 0);
+      }
+   else if (isReference && comp->target().is64Bit() && comp->useCompressedPointers())
+      {
+      genDecompressPointer(cg, node, resultReg);
+      }
 
    // We don't know how the compare will fare such that we don't dictate the prediction
    generateConditionalBranchInstruction(cg, TR::InstOpCode::bne, node, doneLabel, cndReg);
 
-   generateMemSrc1Instruction(cg, isLong ? TR::InstOpCode::stdcx_r : TR::InstOpCode::stwcx_r, node, TR::MemoryReference::createWithIndexReg(cg, objReg, offsetReg, isLong ? 8 : 4), newVReg);
+   generateMemSrc1Instruction(cg, conditionalStoreOpCode, node, TR::MemoryReference::createWithIndexReg(cg, objReg, offsetReg, dataSize), newVReg);
    // We expect this store is usually successful, i.e., the following branch will not be taken
    generateConditionalBranchInstruction(cg, TR::InstOpCode::bne, PPCOpProp_BranchUnlikely, node, loopLabel, cndReg);
 
    // We deviate from the VM helper here: no-store-no-barrier instead of always-barrier
    if (!casWithoutSync)
       generateInstruction(cg, TR::InstOpCode::sync, node);
-   generateTrg1ImmInstruction(cg, TR::InstOpCode::li, node, resultReg, 1);
+
+   if (!isExchange)
+      {
+      generateTrg1ImmInstruction(cg, TR::InstOpCode::li, node, resultReg, 1);
+      }
 
    node->setRegister(resultReg);
    return resultReg;
    }
 
-static TR::Register *VMinlineCompareAndSwap(TR::Node *node, TR::CodeGenerator *cg, bool isLong)
+static TR::Register *VMinlineCompareAndSetOrExchange(TR::Node *node, TR::CodeGenerator *cg, int32_t dataSize, bool isExchange)
    {
    TR::Compilation * comp = cg->comp();
    TR::Register *objReg, *offsetReg, *oldVReg, *newVReg, *resultReg, *cndReg;
-   TR::Node *firstChild, *secondChild, *thirdChild, *fourthChild, *fifthChild;
+   TR::Node *firstChild, *objNode, *offsetNode, *oldVNode, *newVNode;
    TR::RegisterDependencyConditions *conditions;
-   TR::LabelSymbol *doneLabel;
-   intptr_t offsetValue, oldValue;
+   TR::LabelSymbol *startLabel, *doneLabel;
+   int64_t offsetValue, oldValue;
    bool oldValueInReg = true, freeOffsetReg = false;
    TR_J9VMBase *fej9 = (TR_J9VMBase *) (cg->fe());
 
    firstChild = node->getFirstChild();
-   secondChild = node->getSecondChild();
-   thirdChild = node->getChild(2);
-   fourthChild = node->getChild(3);
-   fifthChild = node->getChild(4);
-   objReg = cg->evaluate(secondChild);
+   objNode = node->getSecondChild();
+   offsetNode = node->getChild(2);
+   oldVNode = node->getChild(3);
+   newVNode = node->getChild(4);
+
+   objReg = cg->evaluate(objNode);
 
    // VM helper chops off the value in 32bit, and we don't want the whole long value either
-   if (thirdChild->getOpCode().isLoadConst() && thirdChild->getRegister() == NULL && comp->target().is32Bit())
+   if (offsetNode->getOpCode().isLoadConst() && offsetNode->getRegister() == NULL && comp->target().is32Bit())
       {
-      offsetValue = thirdChild->getLongInt();
+      offsetValue = offsetNode->getLongInt();
       offsetReg = cg->allocateRegister();
       loadConstant(cg, node, (int32_t) offsetValue, offsetReg);
       freeOffsetReg = true;
       }
    else
       {
-      offsetReg = cg->evaluate(thirdChild);
+      offsetReg = cg->evaluate(offsetNode);
+      freeOffsetReg = false;
+
+      // Assume that the offset is positive and not pathologically large (i.e., > 2^31).
       if (comp->target().is32Bit())
          offsetReg = offsetReg->getLowOrder();
       }
 
-   if (fourthChild->getOpCode().isLoadConst() && fourthChild->getRegister() == NULL)
+   if (oldVNode->getOpCode().isLoadConst() && oldVNode->getRegister() == NULL)
       {
-      if (isLong)
-         oldValue = fourthChild->getLongInt();
-      else
-         oldValue = fourthChild->getInt();
+      switch (dataSize)
+         {
+         case 4:
+            oldValue = oldVNode->getInt();
+            break;
+         case 8:
+            oldValue = oldVNode->getLongInt();
+            break;
+         default:
+            TR_ASSERT_FATAL_WITH_NODE(node, false, "Unknown dataSize: %d\n", dataSize);
+            break;
+         }
+
       if (oldValue >= LOWER_IMMED && oldValue <= UPPER_IMMED)
+         {
          oldValueInReg = false;
+         }
       }
+
    if (oldValueInReg)
-      oldVReg = cg->evaluate(fourthChild);
-   newVReg = cg->evaluate(fifthChild);
+      {
+      oldVReg = cg->evaluate(oldVNode);
+      }
+
+   newVReg = cg->evaluate(newVNode);
    cndReg = cg->allocateRegister(TR_CCR);
+   startLabel = generateLabelSymbol(cg);
    doneLabel = generateLabelSymbol(cg);
 
    bool casWithoutSync = false;
@@ -8163,7 +8243,10 @@ static TR::Register *VMinlineCompareAndSwap(TR::Node *node, TR::CodeGenerator *c
          }
       }
 
-   resultReg = genCAS(node, cg, objReg, offsetReg, oldVReg, newVReg, cndReg, doneLabel, secondChild, oldValue, oldValueInReg, isLong, casWithoutSync);
+   generateLabelInstruction(cg, TR::InstOpCode::label, node, startLabel);
+   startLabel->setStartInternalControlFlow();
+
+   resultReg = genCAS(node, cg, objReg, offsetReg, oldVReg, newVReg, cndReg, doneLabel, objNode, oldValue, oldValueInReg, dataSize, false, isExchange, casWithoutSync);
 
    conditions = new (cg->trHeapMemory()) TR::RegisterDependencyConditions(6, 6, cg->trMemory());
    TR::addDependency(conditions, objReg, TR::RealRegister::NoReg, TR_GPR, cg);
@@ -8176,36 +8259,46 @@ static TR::Register *VMinlineCompareAndSwap(TR::Node *node, TR::CodeGenerator *c
    TR::addDependency(conditions, cndReg, TR::RealRegister::cr0, TR_CCR, cg);
 
    generateDepLabelInstruction(cg, TR::InstOpCode::label, node, doneLabel, conditions);
+   doneLabel->setEndInternalControlFlow();
 
    cg->stopUsingRegister(cndReg);
    cg->recursivelyDecReferenceCount(firstChild);
-   cg->decReferenceCount(secondChild);
+   cg->decReferenceCount(objNode);
+
    if (freeOffsetReg)
       {
       cg->stopUsingRegister(offsetReg);
-      cg->recursivelyDecReferenceCount(thirdChild);
+      cg->recursivelyDecReferenceCount(offsetNode);
       }
    else
-      cg->decReferenceCount(thirdChild);
+      {
+      cg->decReferenceCount(offsetNode);
+      }
+
    if (oldValueInReg)
-      cg->decReferenceCount(fourthChild);
+      {
+      cg->decReferenceCount(oldVNode);
+      }
    else
-      cg->recursivelyDecReferenceCount(fourthChild);
-   cg->decReferenceCount(fifthChild);
+      {
+      cg->recursivelyDecReferenceCount(oldVNode);
+      }
+
+   cg->decReferenceCount(newVNode);
+
    return resultReg;
    }
 
-static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenerator *cg)
+static TR::Register *VMinlineCompareAndSetOrExchangeReference(TR::Node *node, TR::CodeGenerator *cg, bool isExchange)
    {
    TR::Compilation *comp = cg->comp();
    TR_J9VMBase *fej9 = (TR_J9VMBase *) (comp->fe());
-   TR::Register *objReg, *offsetReg, *oldVReg, *newVReg, *resultReg, *cndReg;
-   TR::Node *firstChild, *secondChild, *thirdChild, *fourthChild, *fifthChild;
+   TR::Register *objReg, *offsetReg, *oldVReg, *newVReg, *uncompressedNewVReg, *resultReg, *cndReg;
+   TR::Node *firstChild, *objNode, *offsetNode, *oldVNode, *newVNode;
    TR::RegisterDependencyConditions *conditions;
    TR::LabelSymbol *doneLabel, *storeLabel, *wrtBarEndLabel;
    intptr_t offsetValue;
-   bool freeOffsetReg = false;
-   bool needDup = false;
+   bool freeOffsetReg;
 
    auto gcMode = TR::Compiler->om.writeBarrierType();
    bool doWrtBar = (gcMode == gc_modron_wrtbar_satb || gcMode == gc_modron_wrtbar_oldcheck || gcMode == gc_modron_wrtbar_cardmark_and_oldcheck || gcMode == gc_modron_wrtbar_always
@@ -8213,42 +8306,65 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
    bool doCrdMrk = (gcMode == gc_modron_wrtbar_cardmark || gcMode == gc_modron_wrtbar_cardmark_and_oldcheck || gcMode == gc_modron_wrtbar_cardmark_incremental);
 
    firstChild = node->getFirstChild();
-   secondChild = node->getSecondChild();
-   thirdChild = node->getChild(2);
-   fourthChild = node->getChild(3);
-   fifthChild = node->getChild(4);
-   objReg = cg->evaluate(secondChild);
+   objNode = node->getSecondChild();
+   offsetNode = node->getChild(2);
+   oldVNode = node->getChild(3);
+   newVNode = node->getChild(4);
+
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+   bool isObjOffHeapDataAddr = (gcMode == gc_modron_wrtbar_cardmark_incremental && TR::Compiler->om.isOffHeapAllocationEnabled() && objNode->isDataAddrPointer());
+   TR::Register *baseObjReg = NULL;
+   if (isObjOffHeapDataAddr)
+      TR::TreeEvaluator::stopUsingCopyReg(objNode->getFirstChild(), baseObjReg, cg);
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+   objReg = cg->evaluate(objNode);
 
    // VM helper chops off the value in 32bit, and we don't want the whole long value either
-   if (thirdChild->getOpCode().isLoadConst() && thirdChild->getRegister() == NULL && comp->target().is32Bit())
+   if (offsetNode->getOpCode().isLoadConst() && offsetNode->getRegister() == NULL && comp->target().is32Bit())
       {
-      offsetValue = thirdChild->getLongInt();
+      offsetValue = offsetNode->getLongInt();
       offsetReg = cg->allocateRegister();
       loadConstant(cg, node, (int32_t) offsetValue, offsetReg);
       freeOffsetReg = true;
       }
    else
       {
-      offsetReg = cg->evaluate(thirdChild);
+      offsetReg = cg->evaluate(offsetNode);
+      freeOffsetReg = false;
+
+      /* Assume that the offset is positive and not pathologically large (i.e., > 2^31). */
       if (comp->target().is32Bit())
          offsetReg = offsetReg->getLowOrder();
       }
 
-   oldVReg = cg->evaluate(fourthChild);
 
-   TR::Node *translatedNode = fifthChild;
+   static bool useOldCompareAndSwapObject = (bool)feGetEnv("TR_UseOldCompareAndSwapObject");
+   if (!useOldCompareAndSwapObject &&
+       comp->target().is64Bit() &&
+       (TR::Compiler->om.compressedReferenceShiftOffset() != 0) &&
+       ((oldVNode->getOpCodeValue() != TR::aconst) || (oldVNode->getAddress() != 0)))
+      {
+      oldVReg = cg->gprClobberEvaluate(oldVNode);
+      genCompressPointer(cg, node, oldVReg);
+      }
+   else
+      {
+      oldVReg = cg->evaluate(oldVNode);
+      }
+
+   TR::Node *translatedNode = newVNode;
    bool bumpedRefCount = false;
-   if (comp->useCompressedPointers() && (fifthChild->getDataType() != TR::Address))
+   if (useOldCompareAndSwapObject && comp->useCompressedPointers() && (newVNode->getDataType() != TR::Address))
       {
       bool useShiftedOffsets = (TR::Compiler->om.compressedReferenceShiftOffset() != 0);
 
-      translatedNode = fifthChild;
+      translatedNode = newVNode;
       if (translatedNode->getOpCode().isConversion())
          translatedNode = translatedNode->getFirstChild();
       if (translatedNode->getOpCode().isRightShift()) // optional
          translatedNode = translatedNode->getFirstChild();
 
-      translatedNode = fifthChild;
+      translatedNode = newVNode;
       if (useShiftedOffsets)
          {
          while ((translatedNode->getNumChildren() > 0) && (translatedNode->getOpCodeValue() != TR::a2l))
@@ -8264,12 +8380,31 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
          }
       }
 
-   newVReg = cg->evaluate(fifthChild);
+   if (!useOldCompareAndSwapObject)
+      {
+      uncompressedNewVReg = cg->evaluate(newVNode);
+      if (comp->target().is64Bit() &&
+          (TR::Compiler->om.compressedReferenceShiftOffset() != 0) &&
+          ((newVNode->getOpCodeValue() != TR::aconst) || (newVNode->getAddress() != 0)))
+         {
+         newVReg = cg->allocateRegister();
+         genCompressPointerWithTempReg(cg, node, newVReg, uncompressedNewVReg);
+         }
+      else
+         {
+         newVReg = uncompressedNewVReg;
+         }
+      }
+   else
+      {
+      newVReg = cg->evaluate(newVNode);
+      uncompressedNewVReg = nullptr;
+      }
+
    if (objReg == newVReg)
       {
       newVReg = cg->allocateCollectedReferenceRegister();
       generateTrg1Src1Instruction(cg, TR::InstOpCode::mr, node, newVReg, objReg);
-      needDup = true;
       }
    cndReg = cg->allocateRegister(TR_CCR);
    doneLabel = generateLabelSymbol(cg);
@@ -8354,7 +8489,7 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
 #endif //OMR_GC_CONCURRENT_SCAVENGER
 
    if (!comp->getOptions()->realTimeGC())
-      resultReg = genCAS(node, cg, objReg, offsetReg, oldVReg, newVReg, cndReg, doneLabel, secondChild, 0, true, (comp->target().is64Bit() && !comp->useCompressedPointers()));
+      resultReg = genCAS(node, cg, objReg, offsetReg, oldVReg, newVReg, cndReg, doneLabel, objNode, 0, true, TR::Compiler->om.sizeofReferenceField(), true, isExchange, false);
 
    uint32_t numDeps = (doWrtBar || doCrdMrk) ? 13 : 11;
 
@@ -8368,16 +8503,29 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
       TR::Register *temp1Reg = cg->allocateRegister(), *temp2Reg = cg->allocateRegister(), *temp3Reg, *temp4Reg = cg->allocateRegister();
       TR::addDependency(conditions, objReg, TR::RealRegister::gr3, TR_GPR, cg);
       TR::Register *wrtbarSrcReg;
-      if (translatedNode != fifthChild)
+
+      if (!useOldCompareAndSwapObject)
          {
-         TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
-         TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::gr4, TR_GPR, cg);
-         wrtbarSrcReg = translatedNode->getRegister();
+         if (uncompressedNewVReg != newVReg)
+            {
+            TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+            }
+         TR::addDependency(conditions, uncompressedNewVReg, TR::RealRegister::gr4, TR_GPR, cg);
+         wrtbarSrcReg = uncompressedNewVReg;
          }
       else
          {
-         TR::addDependency(conditions, newVReg, TR::RealRegister::gr4, TR_GPR, cg);
-         wrtbarSrcReg = newVReg;
+         if (translatedNode != newVNode)
+            {
+            TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+            TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::gr4, TR_GPR, cg);
+            wrtbarSrcReg = translatedNode->getRegister();
+            }
+         else
+            {
+            TR::addDependency(conditions, newVReg, TR::RealRegister::gr4, TR_GPR, cg);
+            wrtbarSrcReg = newVReg;
+            }
          }
 
       TR::addDependency(conditions, temp1Reg, TR::RealRegister::gr11, TR_GPR, cg);
@@ -8395,7 +8543,7 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
          TR::addDependency(conditions, temp3Reg, TR::RealRegister::NoReg, TR_GPR, cg);
          }
 
-      if (!fifthChild->isNonNull())
+      if (!newVNode->isNonNull())
          {
          generateTrg1Src1ImmInstruction(cg,TR::InstOpCode::Op_cmpi, node, cndReg, newVReg, NULLVALUE);
          generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, doneLabel, cndReg);
@@ -8414,21 +8562,44 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
       {
       TR::Register *temp1Reg = cg->allocateRegister(), *temp2Reg;
       TR::addDependency(conditions, objReg, TR::RealRegister::gr3, TR_GPR, cg);
+      TR::Register *wrtbarSrcReg;
 
-      if (newVReg != translatedNode->getRegister())
+      if (!useOldCompareAndSwapObject)
          {
-         TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+         if (newVReg != uncompressedNewVReg)
+            {
+            TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+            }
+
          if (comp->getOptions()->realTimeGC())
-            TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::gr5, TR_GPR, cg);
+            {
+            TR::addDependency(conditions, uncompressedNewVReg, TR::RealRegister::gr5, TR_GPR, cg);
+            }
          else
-            TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::gr4, TR_GPR, cg);
+            {
+            TR::addDependency(conditions, uncompressedNewVReg, TR::RealRegister::gr4, TR_GPR, cg);
+            }
+
+         wrtbarSrcReg = uncompressedNewVReg;
          }
       else
          {
-         if (comp->getOptions()->realTimeGC())
-            TR::addDependency(conditions, newVReg, TR::RealRegister::gr5, TR_GPR, cg);
+         if (newVReg != translatedNode->getRegister())
+            {
+            TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+            if (comp->getOptions()->realTimeGC())
+               TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::gr5, TR_GPR, cg);
+            else
+               TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::gr4, TR_GPR, cg);
+            }
          else
-            TR::addDependency(conditions, newVReg, TR::RealRegister::gr4, TR_GPR, cg);
+            {
+            if (comp->getOptions()->realTimeGC())
+               TR::addDependency(conditions, newVReg, TR::RealRegister::gr5, TR_GPR, cg);
+            else
+               TR::addDependency(conditions, newVReg, TR::RealRegister::gr4, TR_GPR, cg);
+            }
+         wrtbarSrcReg = translatedNode->getRegister();
          }
 
       TR::addDependency(conditions, temp1Reg, TR::RealRegister::NoReg, TR_GPR, cg);
@@ -8446,7 +8617,7 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
          TR::addDependency(conditions, offsetReg, TR::RealRegister::NoReg, TR_GPR, cg);
          }
 
-      if (!fifthChild->isNonNull())
+      if (!newVNode->isNonNull())
          {
          generateTrg1Src1ImmInstruction(cg,TR::InstOpCode::Op_cmpi, node, cndReg, newVReg, NULLVALUE);
          generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, wrtBarEndLabel, cndReg);
@@ -8461,7 +8632,7 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
          generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, dstAddrReg, objReg, offsetReg);
          }
 
-      VMnonNullSrcWrtBarCardCheckEvaluator(node, comp->useCompressedPointers() ? translatedNode->getRegister() : newVReg, objReg, cndReg, temp1Reg, temp2Reg, dstAddrReg, NULL,
+      VMnonNullSrcWrtBarCardCheckEvaluator(node, comp->useCompressedPointers() ? wrtbarSrcReg : newVReg, objReg, cndReg, temp1Reg, temp2Reg, dstAddrReg, NULL,
             wrtBarEndLabel, conditions, comp->useCompressedPointers(), cg);
 
       if (comp->getOptions()->realTimeGC())
@@ -8473,14 +8644,32 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
       }
    else if (!doWrtBar && doCrdMrk)
       {
-      TR::Register *temp1Reg = cg->allocateRegister(), *temp2Reg = cg->allocateRegister(), *temp3Reg;
+      TR::Register *temp1Reg = cg->allocateRegister(), *temp2Reg, *temp3Reg;
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+      if (isObjOffHeapDataAddr)
+         temp2Reg = baseObjReg; // Use baseObjReg as temp2Reg
+      else
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+         temp2Reg = cg->allocateRegister();
       TR::addDependency(conditions, objReg, TR::RealRegister::NoReg, TR_GPR, cg);
       conditions->getPostConditions()->getRegisterDependency(0)->setExcludeGPR0();
       TR::addDependency(conditions, temp1Reg, TR::RealRegister::NoReg, TR_GPR, cg);
       conditions->getPostConditions()->getRegisterDependency(1)->setExcludeGPR0();
-      if (newVReg != translatedNode->getRegister())
-         TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
-      TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::NoReg, TR_GPR, cg);
+
+      if (!useOldCompareAndSwapObject)
+         {
+         if (newVReg != uncompressedNewVReg)
+            {
+            TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+            }
+         TR::addDependency(conditions, uncompressedNewVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+         }
+      else
+         {
+         if (newVReg != translatedNode->getRegister())
+            TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+         TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::NoReg, TR_GPR, cg);
+         }
 
       TR::addDependency(conditions, temp2Reg, TR::RealRegister::NoReg, TR_GPR, cg);
       TR::addDependency(conditions, offsetReg, TR::RealRegister::NoReg, TR_GPR, cg);
@@ -8494,7 +8683,13 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
          TR::addDependency(conditions, temp3Reg, TR::RealRegister::NoReg, TR_GPR, cg);
          }
 
-      VMCardCheckEvaluator(node, objReg, cndReg, temp1Reg, temp2Reg, temp3Reg, conditions, cg);
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+      if (isObjOffHeapDataAddr)
+         // Given that baseObjReg is trash-able it can be used as the objReg and temp2Reg
+         VMCardCheckEvaluator(node, baseObjReg, cndReg, temp1Reg, temp2Reg, temp3Reg, conditions, cg);
+      else
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+         VMCardCheckEvaluator(node, objReg, cndReg, temp1Reg, temp2Reg, temp3Reg, conditions, cg);
 
       cg->stopUsingRegister(temp1Reg);
       cg->stopUsingRegister(temp2Reg);
@@ -8506,15 +8701,24 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
       TR::addDependency(conditions, objReg, TR::RealRegister::NoReg, TR_GPR, cg);
       conditions->getPostConditions()->getRegisterDependency(0)->setExcludeGPR0();
       TR::addDependency(conditions, offsetReg, TR::RealRegister::NoReg, TR_GPR, cg);
-      if (newVReg != translatedNode->getRegister())
-         TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
-      TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::NoReg, TR_GPR, cg);
+      if (!useOldCompareAndSwapObject)
+         {
+         if (newVReg != uncompressedNewVReg)
+            TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+         TR::addDependency(conditions, uncompressedNewVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+         }
+      else
+         {
+         if (newVReg != translatedNode->getRegister())
+            TR::addDependency(conditions, newVReg, TR::RealRegister::NoReg, TR_GPR, cg);
+         TR::addDependency(conditions, translatedNode->getRegister(), TR::RealRegister::NoReg, TR_GPR, cg);
+         }
       }
 
    generateLabelInstruction(cg, TR::InstOpCode::label, node, storeLabel);
 
    if (comp->getOptions()->realTimeGC())
-      resultReg = genCAS(node, cg, objReg, offsetReg, oldVReg, newVReg, cndReg, doneLabel, secondChild, 0, true, (comp->target().is64Bit() && !comp->useCompressedPointers()));
+      resultReg = genCAS(node, cg, objReg, offsetReg, oldVReg, newVReg, cndReg, doneLabel, objNode, 0, true, TR::Compiler->om.sizeofReferenceField(), true, isExchange, false);
 
    TR::addDependency(conditions, resultReg, TR::RealRegister::NoReg, TR_GPR, cg);
    if (oldVReg != newVReg && oldVReg != objReg)
@@ -8523,20 +8727,30 @@ static TR::Register *VMinlineCompareAndSwapObject(TR::Node *node, TR::CodeGenera
 
    generateDepLabelInstruction(cg, TR::InstOpCode::label, node, doneLabel, conditions);
 
-   if (needDup)
-      cg->stopUsingRegister(newVReg);
+   if (!useOldCompareAndSwapObject)
+      {
+      cg->stopUsingRegister(oldVReg);
+      }
+
+   cg->stopUsingRegister(newVReg);
    cg->stopUsingRegister(cndReg);
+
    cg->recursivelyDecReferenceCount(firstChild);
-   cg->decReferenceCount(secondChild);
+   cg->decReferenceCount(objNode);
+
    if (freeOffsetReg)
       {
       cg->stopUsingRegister(offsetReg);
-      cg->recursivelyDecReferenceCount(thirdChild);
+      cg->recursivelyDecReferenceCount(offsetNode);
       }
    else
-      cg->decReferenceCount(thirdChild);
-   cg->decReferenceCount(fourthChild);
-   cg->decReferenceCount(fifthChild);
+      {
+      cg->decReferenceCount(offsetNode);
+      }
+
+   cg->decReferenceCount(oldVNode);
+   cg->decReferenceCount(newVNode);
+
    if (bumpedRefCount)
       cg->decReferenceCount(translatedNode);
 
@@ -9593,195 +9807,6 @@ static TR::Register *inlineAtomicOperation(TR::Node *node, TR::CodeGenerator *cg
    return resultReg;
    }
 
-static TR::Register *compressStringEvaluator(TR::Node *node, TR::CodeGenerator *cg, bool japaneseMethod)
-   {
-   TR_J9VMBase *fej9 = (TR_J9VMBase *) (cg->comp()->fe());
-   TR::Node *srcObjNode, *dstObjNode, *startNode, *lengthNode;
-   TR::Register *srcObjReg = NULL, *dstObjReg = NULL, *lengthReg = NULL, *startReg = NULL;
-
-   srcObjNode = node->getChild(0);
-   dstObjNode = node->getChild(1);
-   startNode = node->getChild(2);
-   lengthNode = node->getChild(3);
-
-   bool stopUsingCopyReg1, stopUsingCopyReg2, stopUsingCopyReg3, stopUsingCopyReg4;
-
-   stopUsingCopyReg1 = TR::TreeEvaluator::stopUsingCopyReg(srcObjNode, srcObjReg, cg);
-   stopUsingCopyReg2 = TR::TreeEvaluator::stopUsingCopyReg(dstObjNode, dstObjReg, cg);
-   stopUsingCopyReg3 = TR::TreeEvaluator::stopUsingCopyReg(startNode, startReg, cg);
-   stopUsingCopyReg4 = TR::TreeEvaluator::stopUsingCopyReg(lengthNode, lengthReg, cg);
-
-   uintptr_t hdrSize = TR::Compiler->om.contiguousArrayHeaderSizeInBytes();
-   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, srcObjReg, srcObjReg, hdrSize);
-   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstObjReg, dstObjReg, hdrSize);
-
-   TR::RegisterDependencyConditions *conditions = new (cg->trHeapMemory()) TR::RegisterDependencyConditions(12, 12, cg->trMemory());
-   TR::Register *cndRegister = cg->allocateRegister(TR_CCR);
-   TR::Register *resultReg = cg->allocateRegister(TR_GPR);
-   TR::addDependency(conditions, cndRegister, TR::RealRegister::cr0, TR_CCR, cg);
-   TR::addDependency(conditions, lengthReg, TR::RealRegister::gr8, TR_GPR, cg);
-   TR::addDependency(conditions, startReg, TR::RealRegister::gr7, TR_GPR, cg);
-   TR::addDependency(conditions, srcObjReg, TR::RealRegister::gr9, TR_GPR, cg);
-   TR::addDependency(conditions, dstObjReg, TR::RealRegister::gr10, TR_GPR, cg);
-
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr0, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr11, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr6, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr4, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr5, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr12, TR_GPR, cg);
-   TR::addDependency(conditions, resultReg, TR::RealRegister::gr3, TR_GPR, cg);
-
-   if (japaneseMethod)
-      TR::TreeEvaluator::generateHelperBranchAndLinkInstruction(TR_PPCcompressStringJ, node, conditions, cg);
-   else
-      TR::TreeEvaluator::generateHelperBranchAndLinkInstruction(TR_PPCcompressString, node, conditions, cg);
-
-   TR::Register* regs[5] =
-      {
-      lengthReg, startReg, srcObjReg, dstObjReg, resultReg
-      };
-   conditions->stopUsingDepRegs(cg, 5, regs);
-   for (uint16_t i = 0; i < node->getNumChildren(); i++)
-      cg->decReferenceCount(node->getChild(i));
-   if (stopUsingCopyReg1)
-      cg->stopUsingRegister(srcObjReg);
-   if (stopUsingCopyReg2)
-      cg->stopUsingRegister(dstObjReg);
-   if (stopUsingCopyReg3)
-      cg->stopUsingRegister(startReg);
-   if (stopUsingCopyReg4)
-      cg->stopUsingRegister(lengthReg);
-
-   node->setRegister(resultReg);
-
-   cg->machine()->setLinkRegisterKilled(true);
-   cg->setHasCall();
-   return (resultReg);
-   }
-
-static TR::Register *compressStringNoCheckEvaluator(TR::Node *node, TR::CodeGenerator *cg, bool japaneseMethod)
-   {
-   TR_J9VMBase *fej9 = (TR_J9VMBase *) (cg->comp()->fe());
-   TR::Node *srcObjNode, *dstObjNode, *startNode, *lengthNode;
-   TR::Register *srcObjReg = NULL, *dstObjReg = NULL, *lengthReg = NULL, *startReg = NULL;
-
-   srcObjNode = node->getChild(0);
-   dstObjNode = node->getChild(1);
-   startNode = node->getChild(2);
-   lengthNode = node->getChild(3);
-
-   bool stopUsingCopyReg1, stopUsingCopyReg2, stopUsingCopyReg3, stopUsingCopyReg4;
-
-   stopUsingCopyReg1 = TR::TreeEvaluator::stopUsingCopyReg(srcObjNode, srcObjReg, cg);
-   stopUsingCopyReg2 = TR::TreeEvaluator::stopUsingCopyReg(dstObjNode, dstObjReg, cg);
-   stopUsingCopyReg3 = TR::TreeEvaluator::stopUsingCopyReg(startNode, startReg, cg);
-   stopUsingCopyReg4 = TR::TreeEvaluator::stopUsingCopyReg(lengthNode, lengthReg, cg);
-
-   uintptr_t hdrSize = TR::Compiler->om.contiguousArrayHeaderSizeInBytes();
-   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, srcObjReg, srcObjReg, hdrSize);
-   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstObjReg, dstObjReg, hdrSize);
-
-   int numOfRegs = japaneseMethod ? 11 : 12;
-   TR::RegisterDependencyConditions *conditions = new (cg->trHeapMemory()) TR::RegisterDependencyConditions(numOfRegs, numOfRegs, cg->trMemory());
-   TR::Register *cndRegister = cg->allocateRegister(TR_CCR);
-   TR::addDependency(conditions, cndRegister, TR::RealRegister::cr0, TR_CCR, cg);
-   TR::addDependency(conditions, lengthReg, TR::RealRegister::gr8, TR_GPR, cg);
-   TR::addDependency(conditions, startReg, TR::RealRegister::gr7, TR_GPR, cg);
-   TR::addDependency(conditions, srcObjReg, TR::RealRegister::gr9, TR_GPR, cg);
-   TR::addDependency(conditions, dstObjReg, TR::RealRegister::gr10, TR_GPR, cg);
-
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr0, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr11, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr6, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr4, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr5, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr3, TR_GPR, cg);
-   if (!japaneseMethod)
-      TR::addDependency(conditions, NULL, TR::RealRegister::gr12, TR_GPR, cg);
-
-   if (japaneseMethod)
-      TR::TreeEvaluator::generateHelperBranchAndLinkInstruction(TR_PPCcompressStringNoCheckJ, node, conditions, cg);
-   else
-      TR::TreeEvaluator::generateHelperBranchAndLinkInstruction(TR_PPCcompressStringNoCheck, node, conditions, cg);
-
-   TR::Register* regs[4] =
-      {
-      lengthReg, startReg, srcObjReg, dstObjReg
-      };
-   conditions->stopUsingDepRegs(cg, 4, regs);
-   for (uint16_t i = 0; i < node->getNumChildren(); i++)
-      cg->decReferenceCount(node->getChild(i));
-   if (stopUsingCopyReg1)
-      cg->stopUsingRegister(srcObjReg);
-   if (stopUsingCopyReg2)
-      cg->stopUsingRegister(dstObjReg);
-   if (stopUsingCopyReg3)
-      cg->stopUsingRegister(startReg);
-   if (stopUsingCopyReg4)
-      cg->stopUsingRegister(lengthReg);
-
-   cg->machine()->setLinkRegisterKilled(true);
-   cg->setHasCall();
-   return NULL;
-   }
-
-static TR::Register *andORStringEvaluator(TR::Node *node, TR::CodeGenerator *cg)
-   {
-   TR_J9VMBase *fej9 = (TR_J9VMBase *) (cg->comp()->fe());
-   TR::Node *srcObjNode, *startNode, *lengthNode;
-   TR::Register *srcObjReg = NULL, *lengthReg = NULL, *startReg = NULL;
-
-   srcObjNode = node->getChild(0);
-   startNode = node->getChild(1);
-   lengthNode = node->getChild(2);
-
-   bool stopUsingCopyReg1, stopUsingCopyReg2, stopUsingCopyReg3;
-
-   stopUsingCopyReg1 = TR::TreeEvaluator::stopUsingCopyReg(srcObjNode, srcObjReg, cg);
-   stopUsingCopyReg2 = TR::TreeEvaluator::stopUsingCopyReg(startNode, startReg, cg);
-   stopUsingCopyReg3 = TR::TreeEvaluator::stopUsingCopyReg(lengthNode, lengthReg, cg);
-
-   uintptr_t hdrSize = TR::Compiler->om.contiguousArrayHeaderSizeInBytes();
-   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, srcObjReg, srcObjReg, hdrSize);
-
-   TR::RegisterDependencyConditions *conditions = new (cg->trHeapMemory()) TR::RegisterDependencyConditions(8, 8, cg->trMemory());
-   TR::Register *cndRegister = cg->allocateRegister(TR_CCR);
-   TR::Register *resultReg = cg->allocateRegister(TR_GPR);
-   TR::addDependency(conditions, cndRegister, TR::RealRegister::cr0, TR_CCR, cg);
-   TR::addDependency(conditions, lengthReg, TR::RealRegister::gr8, TR_GPR, cg);
-   TR::addDependency(conditions, startReg, TR::RealRegister::gr7, TR_GPR, cg);
-   TR::addDependency(conditions, srcObjReg, TR::RealRegister::gr9, TR_GPR, cg);
-
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr0, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr4, TR_GPR, cg);
-   TR::addDependency(conditions, NULL, TR::RealRegister::gr5, TR_GPR, cg);
-   TR::addDependency(conditions, resultReg, TR::RealRegister::gr3, TR_GPR, cg);
-
-   TR::TreeEvaluator::generateHelperBranchAndLinkInstruction(TR_PPCandORString, node, conditions, cg);
-
-   TR::Register* regs[4] =
-      {
-      lengthReg, startReg, srcObjReg, resultReg
-      };
-   conditions->stopUsingDepRegs(cg, 4, regs);
-
-   for (uint16_t i = 0; i < node->getNumChildren(); i++)
-      cg->decReferenceCount(node->getChild(i));
-   if (stopUsingCopyReg1)
-      cg->stopUsingRegister(srcObjReg);
-   if (stopUsingCopyReg2)
-      cg->stopUsingRegister(startReg);
-   if (stopUsingCopyReg3)
-      cg->stopUsingRegister(lengthReg);
-
-   node->setRegister(resultReg);
-
-   cg->machine()->setLinkRegisterKilled(true);
-   cg->setHasCall();
-   return (resultReg);
-   }
-
 static TR::Register *inlineConcurrentLinkedQueueTMOffer(TR::Node *node, TR::CodeGenerator *cg)
    {
    TR::Compilation *comp = cg->comp();
@@ -10387,227 +10412,763 @@ static TR::Register *inlineIsAssignableFrom(TR::Node *node, TR::CodeGenerator *c
    return resultReg;
    }
 
-static TR::Register *inlineStringHashcode(TR::Node *node, TR::CodeGenerator *cg)
-{
-    TR::Compilation *comp = cg->comp();
-    TR_J9VMBase *fej9 = (TR_J9VMBase *)(comp->fe());
-    bool isLE = comp->target().cpu.isLittleEndian();
+static TR::Register*
+hashCodeHelper(TR::Node *node, TR::CodeGenerator *cg, TR::DataType elementType,
+               TR::Node *hashNode, bool isSigned)
+   {
+   TR::Compilation *comp = cg->comp();
+   TR_J9VMBase *fej9 = (TR_J9VMBase *)(comp->fe());
+   bool isLE = comp->target().cpu.isLittleEndian();
+   const bool nonZeroInitial = hashNode != NULL && !hashNode->isConstZeroValue();
+   int elementSize = TR::DataType::getSize(elementType);
 
-    TR::Node *valueNode = node->getFirstChild();
-    TR::Node *offsetNode = node->getSecondChild();
-    TR::Node *countNode = node->getThirdChild();
+   TR::Node *valueNode = node->getFirstChild();
+   TR::Node *offsetNode = node->getSecondChild();
+   TR::Node *countNode = node->getThirdChild();
 
-    TR::Register *valueReg = cg->gprClobberEvaluate(valueNode);
-    TR::Register *endReg = cg->gprClobberEvaluate(offsetNode);
-    TR::Register *vendReg = cg->gprClobberEvaluate(countNode);
-    TR::Register *hashReg = cg->allocateRegister();
-    TR::Register *tempReg = cg->allocateRegister();
-    TR::Register *constant0Reg = cg->allocateRegister();
-    TR::Register *multiplierAddrReg = cg->allocateRegister();
-    TR::Register *condReg = cg->allocateRegister(TR_CCR);
+   TR::Register *valueReg = cg->gprClobberEvaluate(valueNode);
+   TR::Register *endReg = cg->gprClobberEvaluate(offsetNode);
+   TR::Register *tempReg = cg->gprClobberEvaluate(countNode);
+   TR::Register *multiplierAddrReg = cg->allocateRegister();
+   TR::Register *condReg = cg->allocateRegister(TR_CCR);
 
-    TR::Register *multiplierReg = cg->allocateRegister(TR_VRF);
-    TR::Register *high4Reg = cg->allocateRegister(TR_VRF);
-    TR::Register *low4Reg = cg->allocateRegister(TR_VRF);
-    TR::Register *vtmp1Reg = cg->allocateRegister(TR_VRF);
-    TR::Register *vtmp2Reg = cg->allocateRegister(TR_VRF);
-    TR::Register *vconstant0Reg = cg->allocateRegister(TR_VRF);
-    TR::Register *vconstantNegReg = cg->allocateRegister(TR_VRF);
-    TR::Register *vunpackMaskReg = cg->allocateRegister(TR_VRF);
+   TR::Register *multiplierReg = cg->allocateRegister(TR_VRF);
+   TR::Register *vtmp1Reg = cg->allocateRegister(TR_VRF);
+   TR::Register *vtmp2Reg = cg->allocateRegister(TR_VRF);
+   TR::Register *vconstant0Reg = cg->allocateRegister(TR_VRF);
 
-    TR::LabelSymbol *serialLabel = generateLabelSymbol(cg);
-    TR::LabelSymbol *VSXLabel = generateLabelSymbol(cg);
-    TR::LabelSymbol *POSTVSXLabel = generateLabelSymbol(cg);
-    TR::LabelSymbol *endLabel = generateLabelSymbol(cg);
+   // we can load 16 bytes at once, but each register can only accumulate 4 values
+   // so for smaller datatypes we need more than one register
+   TR::Register *low4Reg = cg->allocateRegister(TR_VRF);
+   TR::Register *high4Reg = NULL;
+   TR::Register *third4Reg = NULL;
+   TR::Register *fourth4Reg = NULL;
+   TR::Register *vtmp3Reg = NULL;
+   TR::Register *vunpackMaskReg = NULL;
+   switch (elementType)
+      {
+      case TR::Int8:
+         vtmp3Reg = cg->allocateRegister(TR_VRF); // a third register for unpacking
+         third4Reg = cg->allocateRegister(TR_VRF);
+         fourth4Reg = cg->allocateRegister(TR_VRF);
+         // fall through
+      case TR::Int16:
+         high4Reg = cg->allocateRegister(TR_VRF);
+         if (!isSigned)
+            vunpackMaskReg = cg->allocateRegister(TR_VRF); // for masking unsigned types
+         // fall through
+      case TR::Int32:
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
 
-    // Skip header of the array
-    // v = v + offset<<1
-    // end = v + count<<1
-    // hash = 0
-    // temp = 0
-    intptr_t hdrSize = TR::Compiler->om.contiguousArrayHeaderSizeInBytes();
-    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, valueReg, valueReg, hdrSize);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, endReg, endReg, endReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, valueReg, valueReg, endReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, vendReg, vendReg, vendReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, endReg, valueReg, vendReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::XOR, node, hashReg, hashReg, hashReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::XOR, node, tempReg, tempReg, tempReg);
-    loadConstant(cg, node, 0x0, constant0Reg);
+   // the hashReg is zero initially, unless specified otherwise
+   TR::Register *hashReg = NULL;
+   if (nonZeroInitial)
+      {
+      hashReg = cg->gprClobberEvaluate(hashNode);
+      }
+   else
+      {
+      hashReg = cg->allocateRegister();
+      generateTrg1Src2Instruction(cg, TR::InstOpCode::XOR, node, hashReg, hashReg, hashReg);
+      }
 
-    // if count<<1 < 16 goto serial
-    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::cmpi4, node, condReg, vendReg, 0x10);
-    generateConditionalBranchInstruction(cg, TR::InstOpCode::blt, node, serialLabel, condReg);
+   TR::LabelSymbol *special1Label = generateLabelSymbol(cg); // for the length-1 special case
+   TR::LabelSymbol *special2Label = generateLabelSymbol(cg); // for the length-2 special case
+   TR::LabelSymbol *special3Label = generateLabelSymbol(cg); // for the length-3 special case
+   TR::LabelSymbol *VSXLabel = generateLabelSymbol(cg);
+   TR::LabelSymbol *vectorLoopLabel = generateLabelSymbol(cg);
+   TR::LabelSymbol *serialLabel = generateLabelSymbol(cg);
+   TR::LabelSymbol *serialUnrollLabel = generateLabelSymbol(cg);
+   TR::LabelSymbol *endLabel = generateLabelSymbol(cg);
 
-    // load multiplier, clear high4 low4
-    static uint32_t multiplierVectors_be[12] = {0x94446F01, 0x94446F01, 0x94446F01, 0x94446F01, 0x67E12CDF, 887503681, 28629151, 923521, 29791, 961, 31, 1};
-    static uint32_t multiplierVectors_le[12] = {0x94446F01, 0x94446F01, 0x94446F01, 0x94446F01, 1, 31, 961, 29791, 923521, 28629151, 887503681, 0x67E12CDF};
+   // Skip header of the array
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+   if (TR::Compiler->om.isOffHeapAllocationEnabled())
+      {
+      generateTrg1MemInstruction(
+         cg, TR::InstOpCode::Op_load, node, valueReg,
+         TR::MemoryReference::createWithDisplacement(
+            cg, valueReg, TR::Compiler->om.offsetOfContiguousDataAddrField(),
+            comp->target().is64Bit() ? 8 : 4)
+         );
+      }
+   else
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
+      {
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, valueReg, valueReg,
+                                     TR::Compiler->om.contiguousArrayHeaderSizeInBytes());
+      }
 
-    if (isLE){
-        loadAddressConstant(cg, false, node, (intptr_t)multiplierVectors_le, multiplierAddrReg);
-    }else{
-        loadAddressConstant(cg, false, node, (intptr_t)multiplierVectors_be, multiplierAddrReg);
-    }
-    generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, multiplierReg, TR::MemoryReference::createWithIndexReg(cg, multiplierAddrReg, constant0Reg, 16));
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vxor, node, high4Reg, high4Reg, high4Reg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vxor, node, low4Reg, low4Reg, low4Reg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vxor, node, vconstant0Reg, vconstant0Reg, vconstant0Reg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vnor, node, vconstantNegReg, vconstant0Reg, vconstant0Reg);
-    generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, vunpackMaskReg, vconstant0Reg, vconstantNegReg, 2);
-    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::vspltw, node, vunpackMaskReg, vunpackMaskReg, 3);
+   // v = v + offset<<lg(elementSize)
+   // end = v + count<<lg(elementSize)
+   switch (elementType)
+      {
+      case TR::Int8:
+         if (comp->target().is64Bit()) // no need to clear garbage bits in 32-bit
+            {
+            generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rldic, node, endReg, endReg, 0,
+                                          CONSTANT64(0x00000000FFFFFFFF));
+            generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rldic, node, tempReg, tempReg, 0,
+                                          CONSTANT64(0x00000000FFFFFFFF));
+            }
+         break;
+      case TR::Int16:
+         generateTrg1Src1Imm2Instruction(cg,
+            comp->target().is64Bit() ? TR::InstOpCode::rldic : TR::InstOpCode::rlwinm,
+            node, endReg, endReg, 1,
+            comp->target().is64Bit() ? CONSTANT64(0x00000001FFFFFFFE) : 0xFFFFFFFE);
+         generateTrg1Src1Imm2Instruction(cg,
+            comp->target().is64Bit() ? TR::InstOpCode::rldic : TR::InstOpCode::rlwinm,
+            node, tempReg, tempReg, 1,
+            comp->target().is64Bit() ? CONSTANT64(0x00000001FFFFFFFE) : 0xFFFFFFFE);
+         break;
+      case TR::Int32:
+         generateTrg1Src1Imm2Instruction(cg,
+            comp->target().is64Bit() ? TR::InstOpCode::rldic : TR::InstOpCode::rlwinm,
+            node, endReg, endReg, 2,
+            comp->target().is64Bit() ? CONSTANT64(0x00000003FFFFFFFC) : 0xFFFFFFFC);
+         generateTrg1Src1Imm2Instruction(cg,
+            comp->target().is64Bit() ? TR::InstOpCode::rldic : TR::InstOpCode::rlwinm,
+            node, tempReg, tempReg, 2,
+            comp->target().is64Bit() ? CONSTANT64(0x00000003FFFFFFFC) : 0xFFFFFFFC);
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, valueReg, valueReg, endReg);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, endReg, valueReg, tempReg);
 
-    // vend = end & (~0xf)
-    // if v is 16byte aligned goto VSX_LOOP
-    generateTrg1ImmInstruction(cg, TR::InstOpCode::li, node, tempReg, 0xFFFFFFF0);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::AND, node, vendReg, endReg, tempReg);
-    loadConstant(cg, node, 0xF, tempReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::AND, node, tempReg, valueReg, tempReg);
-    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::cmpi4, node, condReg, tempReg, 0x0);
-    generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, VSXLabel, condReg);
+   // use the vector loop for 16 bytes or more
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::cmpi4, node, condReg, tempReg, 16);
+   generateConditionalBranchInstruction(cg, TR::InstOpCode::bge, node, VSXLabel, condReg);
 
-    // The reason we don't do VSX loop directly is we want to avoid loading unaligned data and deal it with vperm.
-    // Instead, we load the first unaligned part, let VSX handle the rest aligned part.
-    // load unaligned v, mask out unwanted part
-    // for example, if value = 0x12345, we mask out 0x12340~0x12344, keep 0x12345~0x1234F
-    generateTrg1MemInstruction(cg, TR::InstOpCode::lvx, node, vtmp1Reg, TR::MemoryReference::createWithIndexReg(cg, valueReg, constant0Reg, 16));
-    loadConstant(cg, node, 0xF, tempReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::AND, node, tempReg, valueReg, tempReg);
-    generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rlwinm, node, tempReg, tempReg, 3, 0xFFFFFFFFFFFFFFF8);
-    generateTrg1Src1Instruction(cg, TR::InstOpCode::mtvsrd, node, vtmp2Reg, tempReg);
-    generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, vtmp2Reg, vconstant0Reg, vtmp2Reg, 8);
-    if (isLE) {
-        generateTrg1Src2Instruction(cg, TR::InstOpCode::vslo, node, vtmp2Reg, vconstantNegReg, vtmp2Reg);
-    } else {
-        generateTrg1Src2Instruction(cg, TR::InstOpCode::vsro, node, vtmp2Reg, vconstantNegReg, vtmp2Reg);
-    }
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, vtmp1Reg, vtmp1Reg, vtmp2Reg);
+   // serialLabel:
+   generateLabelInstruction(cg, TR::InstOpCode::label, node, serialLabel);
 
-    // unpack masked v to high4 low4
-    generateTrg1Src1Instruction(cg, TR::InstOpCode::vupkhsh, node, high4Reg, vtmp1Reg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, high4Reg, high4Reg, vunpackMaskReg);
-    generateTrg1Src1Instruction(cg, TR::InstOpCode::vupklsh, node, low4Reg, vtmp1Reg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, low4Reg, low4Reg, vunpackMaskReg);
+   if (elementType != TR::Int32) // for Int32 there could only be 3 items at most
+      {
+      // we have specialised code for cases with 3 or fewer elements
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::cmpi4, node, condReg, tempReg, 3*elementSize);
+      generateConditionalBranchInstruction(cg, TR::InstOpCode::ble, node, special2Label, condReg);
 
-    // advance v to next aligned pointer
-    // if v >= vend goto POST_VSX
-    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, valueReg, valueReg, 0xF);
-    generateTrg1ImmInstruction(cg, TR::InstOpCode::li, node, tempReg, 0xFFFFFFF0);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::AND, node, valueReg, valueReg, tempReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::cmp8, node, condReg, valueReg, vendReg);
-    generateConditionalBranchInstruction(cg, TR::InstOpCode::bge, node, POSTVSXLabel, condReg);
+      const int unrollFactor = 4, lgUnroll = 2;
+      // get the number of times we are going the unroll loop
+      // once we reach here, we will no longer need endReg, so we use it as our temp
+      switch (elementType)
+         {
+         case TR::Int8:
+            generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::srawi, node, endReg, tempReg, lgUnroll);
+            // leave only the last two bits in tempReg
+            generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rlwinm, node, tempReg, tempReg, 0, 0x3);
+            break;
+         case TR::Int16:
+            generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::srawi, node, endReg, tempReg, 1 + lgUnroll);
+            // leave only the last three bits in tempReg
+            generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rlwinm, node, tempReg, tempReg, 0, 0x7);
+            break;
+         default:
+            TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+         }
+      // ctr = temp
+      generateSrc1Instruction(cg, TR::InstOpCode::mtctr, node, endReg);
 
-    //VSX_LOOP:
-    //load v (here v must be aligned)
-    //unpack v to temphigh4 templow4
-    //high4 = high4 * multiplier
-    //low4 = low4 * multiplier
-    //high4 = high4 + temphigh4
-    //low4 = low4 + templow4
-    //v = v + 0x10
-    //if v < vend goto VSX_LOOP
-    generateLabelInstruction(cg, TR::InstOpCode::label, node, VSXLabel);
-    generateTrg1MemInstruction(cg, TR::InstOpCode::lvx, node, vtmp1Reg, TR::MemoryReference::createWithIndexReg(cg, valueReg, constant0Reg, 16));
-    generateTrg1Src1Instruction(cg, TR::InstOpCode::vupkhsh, node, vtmp2Reg, vtmp1Reg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, vtmp2Reg, vtmp2Reg, vunpackMaskReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, high4Reg, high4Reg, multiplierReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, high4Reg, high4Reg, vtmp2Reg);
-    generateTrg1Src1Instruction(cg, TR::InstOpCode::vupklsh, node, vtmp2Reg, vtmp1Reg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, vtmp2Reg, vtmp2Reg, vunpackMaskReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, low4Reg, low4Reg, multiplierReg);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, low4Reg, low4Reg, vtmp2Reg);
-    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, valueReg, valueReg, 0x10);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::cmp8, node, condReg, valueReg, vendReg);
-    generateConditionalBranchInstruction(cg, TR::InstOpCode::blt, node, VSXLabel, condReg);
+//   generateTrg1Src1Instruction(cg, TR::InstOpCode::mr, node, hashReg, endReg);
+//   generateLabelInstruction(cg, TR::InstOpCode::b, node, endLabel);
+      // --- unrolled loop: do it at least once since we must have 4 or more items
+      generateLabelInstruction(cg, TR::InstOpCode::label, node, serialUnrollLabel);
+      // temp = hash << 5
+      // hash = temp - hash
+      // temp = v[i]
+      // hash = hash + temp
+      for (int i = 0; i < unrollFactor; i++)
+         {
+         generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rlwinm, node, endReg, hashReg, 5, 0xFFFFFFFFFFFFFFE0);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::subf, node, hashReg, hashReg, endReg);
+         switch (elementType)
+            {
+            case TR::Int8:
+               generateTrg1MemInstruction(cg, TR::InstOpCode::lbz, node, endReg,
+                     TR::MemoryReference::createWithDisplacement(cg, valueReg, i, 1));
+               if (isSigned)
+                  {
+                  generateTrg1Src1Instruction(cg, TR::InstOpCode::extsb, node, endReg, endReg);
+                  }
+               break;
+            case TR::Int16:
+               generateTrg1MemInstruction(cg, isSigned ? TR::InstOpCode::lha : TR::InstOpCode::lhz, node, endReg,
+                     TR::MemoryReference::createWithDisplacement(cg, valueReg, i*2, 2));
+               break;
+            default:
+               TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+            }
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, hashReg, hashReg, endReg);
+         }
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, valueReg, valueReg, elementSize * unrollFactor);
+      generateConditionalBranchInstruction(cg, TR::InstOpCode::bdnz, node, serialUnrollLabel, condReg);
+      }
 
-    // POST_VSX:
-    // shift and sum low4 and high4
-    // move result to hashReg
-    generateLabelInstruction(cg, TR::InstOpCode::label, node, POSTVSXLabel);
+   // special cases
+   generateLabelInstruction(cg, TR::InstOpCode::label, node, special2Label);
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::cmpi4, node, condReg, tempReg, 2*elementSize);
+   generateConditionalBranchInstruction(cg, TR::InstOpCode::bne, node, special3Label, condReg);
+   // length 2
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::mulli, node, hashReg, hashReg, 961);
+   switch (elementType)
+      {
+      case TR::Int8:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lbzx, node, tempReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 1));
+         if (isSigned)
+            {
+            generateTrg1Src1Instruction(cg, TR::InstOpCode::extsb, node, tempReg, tempReg);
+            }
+         break;
+      case TR::Int16:
+         generateTrg1MemInstruction(cg, isSigned ? TR::InstOpCode::lhax : TR::InstOpCode::lhzx, node, tempReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 2));
+         break;
+      case TR::Int32:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lwzx, node, tempReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 4));
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   // shift then subtract is slightly faster than mul 31; multiplierAddrReg should be free now
+   generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rlwinm, node, multiplierAddrReg, tempReg,
+         5, 0xFFFFFFFFFFFFFFE0);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::subf, node, tempReg, tempReg, multiplierAddrReg);
+   switch (elementType)
+      {
+      case TR::Int8:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lbz, node, endReg,
+               TR::MemoryReference::createWithDisplacement(cg, valueReg, 1, 1));
+         if (isSigned)
+            {
+            generateTrg1Src1Instruction(cg, TR::InstOpCode::extsb, node, endReg, endReg);
+            }
+         break;
+      case TR::Int16:
+         generateTrg1MemInstruction(cg, isSigned ? TR::InstOpCode::lha : TR::InstOpCode::lhz, node, endReg,
+               TR::MemoryReference::createWithDisplacement(cg, valueReg, 2, 2));
+         break;
+      case TR::Int32:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lwz, node, endReg,
+               TR::MemoryReference::createWithDisplacement(cg, valueReg, 4, 4));
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, hashReg, hashReg, tempReg);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, hashReg, hashReg, endReg);
+   generateLabelInstruction(cg, TR::InstOpCode::b, node, endLabel);
 
-    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, multiplierAddrReg, multiplierAddrReg, 0x10);
-    generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, multiplierReg, TR::MemoryReference::createWithIndexReg(cg, multiplierAddrReg, constant0Reg, 16));
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, high4Reg, high4Reg, multiplierReg);
-    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, multiplierAddrReg, multiplierAddrReg, 0x10);
-    generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, multiplierReg, TR::MemoryReference::createWithIndexReg(cg, multiplierAddrReg, constant0Reg, 16));
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, low4Reg, low4Reg, multiplierReg);
+   generateLabelInstruction(cg, TR::InstOpCode::label, node, special3Label);
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::cmpi4, node, condReg, tempReg, 1*elementSize);
+   generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, special1Label, condReg);
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::cmpi4, node, condReg, tempReg, 0);
+   generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, endLabel, condReg);
+   // length 3
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::mulli, node, hashReg, hashReg, 29791);
+   switch (elementType)
+      {
+      case TR::Int8:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lbzx, node, tempReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 1));
+         if (isSigned)
+            {
+            generateTrg1Src1Instruction(cg, TR::InstOpCode::extsb, node, tempReg, tempReg);
+            }
+         break;
+      case TR::Int16:
+         generateTrg1MemInstruction(cg, isSigned ? TR::InstOpCode::lhax : TR::InstOpCode::lhzx, node, tempReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 2));
+         break;
+      case TR::Int32:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lwzx, node, tempReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 4));
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   // multiplierAddrReg should be free now
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::mulli, node, multiplierAddrReg, tempReg, 961);
+   switch (elementType)
+      {
+      case TR::Int8:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lbz, node, tempReg,
+               TR::MemoryReference::createWithDisplacement(cg, valueReg, 1, 1));
+         if (isSigned)
+            {
+            generateTrg1Src1Instruction(cg, TR::InstOpCode::extsb, node, tempReg, tempReg);
+            }
+         break;
+      case TR::Int16:
+         generateTrg1MemInstruction(cg, isSigned ? TR::InstOpCode::lha : TR::InstOpCode::lhz, node, tempReg,
+               TR::MemoryReference::createWithDisplacement(cg, valueReg, 2, 2));
+         break;
+      case TR::Int32:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lwz, node, tempReg,
+               TR::MemoryReference::createWithDisplacement(cg, valueReg, 4, 4));
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   // shift then subtract is slightly faster than mul 31
+   generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rlwinm, node, endReg, tempReg, 5, 0xFFFFFFFFFFFFFFE0);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::subf, node, tempReg, tempReg, endReg);
+   switch (elementType)
+      {
+      case TR::Int8:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lbz, node, endReg,
+               TR::MemoryReference::createWithDisplacement(cg, valueReg, 2, 1));
+         if (isSigned)
+            {
+            generateTrg1Src1Instruction(cg, TR::InstOpCode::extsb, node, endReg, endReg);
+            }
+         break;
+      case TR::Int16:
+         generateTrg1MemInstruction(cg, isSigned ? TR::InstOpCode::lha : TR::InstOpCode::lhz, node, endReg,
+               TR::MemoryReference::createWithDisplacement(cg, valueReg, 4, 2));
+         break;
+      case TR::Int32:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lwz, node, endReg,
+               TR::MemoryReference::createWithDisplacement(cg, valueReg, 8, 4));
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, hashReg, hashReg, multiplierAddrReg);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, hashReg, hashReg, tempReg);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, hashReg, hashReg, endReg);
+   generateLabelInstruction(cg, TR::InstOpCode::b, node, endLabel);
 
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, high4Reg, high4Reg, low4Reg);
-    generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, vtmp1Reg, vconstant0Reg, high4Reg, 8);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, high4Reg, high4Reg, vtmp1Reg);
-    generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, vtmp1Reg, vconstant0Reg, high4Reg, 12);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, high4Reg, high4Reg, vtmp1Reg);
+   // length 1
+   generateLabelInstruction(cg, TR::InstOpCode::label, node, special1Label);
+   // shift then subtract is slightly faster than mul 31
+   generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rlwinm, node, tempReg, hashReg, 5, 0xFFFFFFFFFFFFFFE0);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::subf, node, hashReg, hashReg, tempReg);
+   switch (elementType)
+      {
+      case TR::Int8:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lbzx, node, tempReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 1));
+         if (isSigned)
+            {
+            generateTrg1Src1Instruction(cg, TR::InstOpCode::extsb, node, tempReg, tempReg);
+            }
+         break;
+      case TR::Int16:
+         generateTrg1MemInstruction(cg, isSigned ? TR::InstOpCode::lhax : TR::InstOpCode::lhzx, node, tempReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 2));
+         break;
+      case TR::Int32:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lwzx, node, tempReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 4));
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, hashReg, hashReg, tempReg);
+   generateLabelInstruction(cg, TR::InstOpCode::b, node, endLabel);
 
-    generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, vtmp1Reg, high4Reg, vconstant0Reg, 8);
-    generateTrg1Src1Instruction(cg, TR::InstOpCode::mfvsrwz, node, hashReg, vtmp1Reg);
+   generateLabelInstruction(cg, TR::InstOpCode::label, node, VSXLabel);
+   // load multiplier (anything with more than 4 bytes can be truncated)
+   // 31^0-6 = 1 31 961 29791 923521 28629151 887503681
+   // 31^7 = 667E12CDF           31^8 = C694446F01         31^9 = 180BF449711F 31^10 = 2E97294E4B2C1
+   // 31^11 = 5A44E007B1A55F     31^12 = AEE5720EE830681     31^13 = 152DC8CFCE1DDC99F
+   // 31^14 = 2908B5129F59DB6A41 31^15 = 4F80DED414BE191DDDF 31^16 = 9A09AFBAE83050A9DE01
+   static uint32_t multiplierVectors8[20] = {0x50A9DE01, 0x50A9DE01, 0x50A9DE01, 0x50A9DE01,
+      0xE191DDDF, 0x59DB6A41, 0xE1DDC99F, 0xEE830681, 0x07B1A55F, 0x94E4B2C1, 0xF449711F, 0x94446F01,
+      0x67E12CDF, 887503681, 28629151, 923521, 29791, 961, 31, 1};
+   static uint32_t multiplierVectors16[12] = {0x94446F01, 0x94446F01, 0x94446F01, 0x94446F01,
+      0x67E12CDF, 887503681, 28629151, 923521, 29791, 961, 31, 1};
+   static uint32_t multiplierVectors32[8] = {923521, 923521, 923521, 923521,
+                                               29791, 961, 31, 1};
+   static uint32_t *multiplierPtr8 = NULL;
+   static uint32_t *multiplierPtr16 = NULL;
+   static uint32_t *multiplierPtr32 = NULL;
+   switch (elementType)
+      {
+      case TR::Int8:
+         if (!multiplierPtr8)
+            {
+            multiplierPtr8 = (uint32_t*) cg->allocateCodeMemory(20*sizeof(uint32_t),
+               cg->getCurrentEvaluationBlock()->isCold());
+            memcpy((void *) multiplierPtr8, (void *) multiplierVectors8, 20*sizeof(uint32_t));
+            }
+         // point to the beginning of the array
+         loadAddressConstant(cg, false, node, (intptr_t) multiplierPtr8, multiplierAddrReg);
+         break;
+      case TR::Int16:
+         if (!multiplierPtr16)
+            {
+            multiplierPtr16 = (uint32_t*) cg->allocateCodeMemory(12*sizeof(uint32_t),
+               cg->getCurrentEvaluationBlock()->isCold());
+            memcpy((void *) multiplierPtr16, (void *) multiplierVectors16, 12*sizeof(uint32_t));
+            }
+         // point to the beginning of the array
+         loadAddressConstant(cg, false, node, (intptr_t) multiplierPtr16, multiplierAddrReg);
+         break;
+      case TR::Int32:
+         if (!multiplierPtr32)
+            {
+            multiplierPtr32 = (uint32_t*) cg->allocateCodeMemory(8*sizeof(uint32_t),
+               cg->getCurrentEvaluationBlock()->isCold());
+            memcpy((void *) multiplierPtr32, (void *) multiplierVectors32, 8*sizeof(uint32_t));
+            }
+         // point to the beginning of the array
+         loadAddressConstant(cg, false, node, (intptr_t) multiplierPtr32, multiplierAddrReg);
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   // load the multiplierReg
+   generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, multiplierReg,
+      TR::MemoryReference::createWithIndexReg(cg, NULL, multiplierAddrReg, 16));
 
-    // Head of the serial loop
-    generateLabelInstruction(cg, TR::InstOpCode::label, node, serialLabel);
+   // clear accumulator registers
+   switch (elementType)
+      {
+      case TR::Int8:
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vxor, node, third4Reg, third4Reg, third4Reg);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vxor, node, fourth4Reg, fourth4Reg, fourth4Reg);
+         //fall through
+      case TR::Int16:
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vxor, node, high4Reg, high4Reg, high4Reg);
+         //fall through
+      case TR::Int32:
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vxor, node, low4Reg, low4Reg, low4Reg);
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   // ready all zeros and ones registers
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::vxor, node, vconstant0Reg, vconstant0Reg, vconstant0Reg);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::vnor, node, vtmp1Reg, vconstant0Reg, vconstant0Reg);
+   // all four words in vunpackMaskReg are masks for the length of elementType
+   if (elementType != TR::Int32 && !isSigned)
+      {
+      generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, vunpackMaskReg, vconstant0Reg, vtmp1Reg, elementSize);
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::vspltw, node, vunpackMaskReg, vunpackMaskReg, 3);
+      }
 
-    // temp = hash
-    // hash = hash << 5
-    // hash = hash - temp
-    // temp = v[i]
-    // hash = hash + temp
+   // load the initial value into the lowest word of the lowest register
+   if (nonZeroInitial)
+      {
+      generateTrg1Src1Instruction(cg, TR::InstOpCode::mtvsrwz, node, low4Reg, hashReg);
+      generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, low4Reg, vconstant0Reg, low4Reg, 8);
+      }
 
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::cmp8, node, condReg, valueReg, endReg);
-    generateConditionalBranchInstruction(cg, TR::InstOpCode::bge, node, endLabel, condReg);
-    generateTrg1Src1Instruction(cg, TR::InstOpCode::mr, node, tempReg, hashReg);
-    generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rlwinm, node, hashReg, hashReg, 5, 0xFFFFFFFFFFFFFFE0);
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::subf, node, hashReg, tempReg, hashReg);
-    generateTrg1MemInstruction(cg, TR::InstOpCode::lhzx, node, tempReg, TR::MemoryReference::createWithIndexReg(cg, valueReg, constant0Reg, 2));
-    generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, hashReg, hashReg, tempReg);
-    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, valueReg, valueReg, 0x2);
-    generateLabelInstruction(cg, TR::InstOpCode::b, node, serialLabel);
+   // temp = end - 16 + elementSize which deal with all data we can load in batches
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, tempReg, endReg,
+                                  elementSize - 16);
 
-    // End of this method
-    TR::RegisterDependencyConditions *dependencies = new (cg->trHeapMemory()) TR::RegisterDependencyConditions(0, 16, cg->trMemory());
-    dependencies->addPostCondition(valueReg, TR::RealRegister::NoReg);
-    dependencies->getPostConditions()->getRegisterDependency(0)->setExcludeGPR0(); // valueReg
+   // vectorLoop
+   generateLabelInstruction(cg, TR::InstOpCode::label, node, vectorLoopLabel);
 
-    dependencies->addPostCondition(endReg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(vendReg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(hashReg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(tempReg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(constant0Reg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(condReg, TR::RealRegister::NoReg);
+   // for each high/low register
+   // unpack v to vtmp2Reg
+   // accumulator = accumulator * 31^n + vtmp2Reg
+   switch (elementType)
+      {
+      case TR::Int8:
+         // load v
+         if (comp->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P9))
+            {
+            generateTrg1MemInstruction(cg, TR::InstOpCode::lxvb16x, node, vtmp1Reg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 16));
+            }
+         else // for P8 we only have lxvw4x
+            {
+            generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, vtmp1Reg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 16));
+            if (isLE)
+               {
+               // swap around the shorts in each word; we need 2 instructions to load 16
+               generateTrg1ImmInstruction(cg, TR::InstOpCode::vspltisw, node, vtmp2Reg, 8);
+               generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, vtmp2Reg, vtmp2Reg, vtmp2Reg);
+               generateTrg1Src2Instruction(cg, TR::InstOpCode::vrlw, node, vtmp1Reg, vtmp1Reg, vtmp2Reg);
+               // then swap around the bytes in each short
+               generateTrg1ImmInstruction(cg, TR::InstOpCode::vspltish, node, vtmp2Reg, 8);
+               generateTrg1Src2Instruction(cg, TR::InstOpCode::vrlh, node, vtmp1Reg, vtmp1Reg, vtmp2Reg);
+               }
+            }
 
-    dependencies->addPostCondition(multiplierAddrReg, TR::RealRegister::NoReg);
-    dependencies->getPostConditions()->getRegisterDependency(7)->setExcludeGPR0(); // multiplierAddrReg
+         // unpack
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::vupkhsb, node, vtmp2Reg, vtmp1Reg);
+         // fourth4
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::vupkhsh, node, vtmp3Reg, vtmp2Reg);
+         if (!isSigned)
+            {
+            generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, vtmp3Reg, vtmp3Reg, vunpackMaskReg);
+            }
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, fourth4Reg, fourth4Reg, multiplierReg);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, fourth4Reg, fourth4Reg, vtmp3Reg);
+         // third4
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::vupklsh, node, vtmp3Reg, vtmp2Reg);
+         if (!isSigned)
+            {
+            generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, vtmp3Reg, vtmp3Reg, vunpackMaskReg);
+            }
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, third4Reg, third4Reg, multiplierReg);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, third4Reg, third4Reg, vtmp3Reg);
 
-    dependencies->addPostCondition(multiplierReg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(high4Reg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(low4Reg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(vtmp1Reg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(vtmp2Reg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(vconstant0Reg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(vconstantNegReg, TR::RealRegister::NoReg);
-    dependencies->addPostCondition(vunpackMaskReg, TR::RealRegister::NoReg);
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::vupklsb, node, vtmp2Reg, vtmp1Reg);
+         // high4
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::vupkhsh, node, vtmp3Reg, vtmp2Reg);
+         if (!isSigned)
+            {
+            generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, vtmp3Reg, vtmp3Reg, vunpackMaskReg);
+            }
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, high4Reg, high4Reg, multiplierReg);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, high4Reg, high4Reg, vtmp3Reg);
+         // low4
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::vupklsh, node, vtmp3Reg, vtmp2Reg);
+         if (!isSigned)
+            {
+            generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, vtmp3Reg, vtmp3Reg, vunpackMaskReg);
+            }
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, low4Reg, low4Reg, multiplierReg);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, low4Reg, low4Reg, vtmp3Reg);
+         break;
+      case TR::Int16:
+         // load v
+         if (comp->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P9))
+            {
+            generateTrg1MemInstruction(cg, TR::InstOpCode::lxvh8x, node, vtmp1Reg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 16));
+            }
+         else // for P8 we only have lxvw4x
+            {
+            generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, vtmp1Reg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 16));
+            if (isLE)
+               {
+               // swap around the shorts in each word; we need 2 instructions to load 16
+               generateTrg1ImmInstruction(cg, TR::InstOpCode::vspltisw, node, vtmp2Reg, 8);
+               generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, vtmp2Reg, vtmp2Reg, vtmp2Reg);
+               generateTrg1Src2Instruction(cg, TR::InstOpCode::vrlw, node, vtmp1Reg, vtmp1Reg, vtmp2Reg);
+               }
+            }
 
-    generateDepLabelInstruction(cg, TR::InstOpCode::label, node, endLabel, dependencies);
+         // high4
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::vupkhsh, node, vtmp2Reg, vtmp1Reg);
+         if (!isSigned)
+            {
+            generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, vtmp2Reg, vtmp2Reg, vunpackMaskReg);
+            }
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, high4Reg, high4Reg, multiplierReg);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, high4Reg, high4Reg, vtmp2Reg);
+         // low4
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::vupklsh, node, vtmp2Reg, vtmp1Reg);
+         if (!isSigned)
+            {
+            generateTrg1Src2Instruction(cg, TR::InstOpCode::vand, node, vtmp2Reg, vtmp2Reg, vunpackMaskReg);
+            }
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, low4Reg, low4Reg, multiplierReg);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, low4Reg, low4Reg, vtmp2Reg);
+         break;
+      case TR::Int32:
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, vtmp1Reg,
+            TR::MemoryReference::createWithIndexReg(cg, NULL, valueReg, 16));
+         // no need to unpack
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, low4Reg, low4Reg, multiplierReg);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, low4Reg, low4Reg, vtmp1Reg);
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
 
-    node->setRegister(hashReg);
-    cg->decReferenceCount(valueNode);
-    cg->decReferenceCount(offsetNode);
-    cg->decReferenceCount(countNode);
+   // v = v + 0x10
+   // if v < temp goto VSX_LOOP
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, valueReg, valueReg, 0x10);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::cmpl8, node, condReg, valueReg, tempReg);
+   generateConditionalBranchInstruction(cg, TR::InstOpCode::blt, node, vectorLoopLabel, condReg);
 
-    cg->stopUsingRegister(valueReg);
-    cg->stopUsingRegister(endReg);
-    cg->stopUsingRegister(vendReg);
-    cg->stopUsingRegister(tempReg);
-    cg->stopUsingRegister(constant0Reg);
-    cg->stopUsingRegister(condReg);
-    cg->stopUsingRegister(multiplierAddrReg);
+   // now that we don't need tempReg, use it to store the number of remaining bytes
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::subf, node, tempReg, valueReg, endReg);
 
-    cg->stopUsingRegister(multiplierReg);
-    cg->stopUsingRegister(high4Reg);
-    cg->stopUsingRegister(low4Reg);
-    cg->stopUsingRegister(vtmp1Reg);
-    cg->stopUsingRegister(vtmp2Reg);
-    cg->stopUsingRegister(vconstant0Reg);
-    cg->stopUsingRegister(vconstantNegReg);
-    cg->stopUsingRegister(vunpackMaskReg);
-    return hashReg;
-}
+   // shift the high/low registers
+   switch (elementType)
+      {
+      case TR::Int8:
+         generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, multiplierAddrReg, multiplierAddrReg, 0x10);
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, multiplierReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, multiplierAddrReg, 16));
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, fourth4Reg, fourth4Reg, multiplierReg);
+         generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, multiplierAddrReg, multiplierAddrReg, 0x10);
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, multiplierReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, multiplierAddrReg, 16));
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, third4Reg, third4Reg, multiplierReg);
+         // fall through
+      case TR::Int16:
+         generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, multiplierAddrReg, multiplierAddrReg, 0x10);
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, multiplierReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, multiplierAddrReg, 16));
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, high4Reg, high4Reg, multiplierReg);
+         // fall through
+      case TR::Int32:
+         generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, multiplierAddrReg, multiplierAddrReg, 0x10);
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lxvw4x, node, multiplierReg,
+               TR::MemoryReference::createWithIndexReg(cg, NULL, multiplierAddrReg, 16));
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vmuluwm, node, low4Reg, low4Reg, multiplierReg);
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+
+   // sum the registers
+   switch (elementType)
+      {
+      case TR::Int8:
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, low4Reg, low4Reg, third4Reg);
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, low4Reg, low4Reg, fourth4Reg);
+         // fall through
+      case TR::Int16:
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, low4Reg, low4Reg, high4Reg);
+      case TR::Int32:
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+   generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, vtmp1Reg, vconstant0Reg, low4Reg, 8);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, low4Reg, low4Reg, vtmp1Reg);
+   generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, vtmp1Reg, vconstant0Reg, low4Reg, 12);
+   generateTrg1Src2Instruction(cg, TR::InstOpCode::vadduwm, node, low4Reg, low4Reg, vtmp1Reg);
+
+   // move result to hashReg
+   generateTrg1Src2ImmInstruction(cg, TR::InstOpCode::vsldoi, node, vtmp1Reg, low4Reg, vconstant0Reg, 8);
+   generateTrg1Src1Instruction(cg, TR::InstOpCode::mfvsrwz, node, hashReg, vtmp1Reg);
+
+   generateLabelInstruction(cg, TR::InstOpCode::b, node, serialLabel);
+
+   // End of this method
+   TR::RegisterDependencyConditions *dependencies =
+      new (cg->trHeapMemory()) TR::RegisterDependencyConditions(0,
+         (TR::Int8 == elementType ? 15 : (TR::Int16 == elementType ? 12 : 11)) + // accumulators
+            (!isSigned && TR::Int32 != elementType), // vunpackMaskReg
+         cg->trMemory());
+
+   dependencies->addPostCondition(valueReg, TR::RealRegister::NoReg);
+   dependencies->getPostConditions()->getRegisterDependency(0)->setExcludeGPR0(); // valueReg
+
+   dependencies->addPostCondition(endReg, TR::RealRegister::NoReg);
+   dependencies->getPostConditions()->getRegisterDependency(1)->setExcludeGPR0(); // endReg
+
+   dependencies->addPostCondition(hashReg, TR::RealRegister::NoReg);
+   dependencies->addPostCondition(tempReg, TR::RealRegister::NoReg);
+   dependencies->addPostCondition(condReg, TR::RealRegister::NoReg);
+
+   dependencies->addPostCondition(multiplierAddrReg, TR::RealRegister::NoReg);
+   dependencies->getPostConditions()->getRegisterDependency(5)->setExcludeGPR0(); // multiplierAddrReg
+
+   dependencies->addPostCondition(multiplierReg, TR::RealRegister::NoReg);
+   dependencies->addPostCondition(vtmp1Reg, TR::RealRegister::NoReg);
+   dependencies->addPostCondition(vtmp2Reg, TR::RealRegister::NoReg);
+   dependencies->addPostCondition(vconstant0Reg, TR::RealRegister::NoReg);
+
+   dependencies->addPostCondition(low4Reg, TR::RealRegister::NoReg);
+   switch (elementType)
+      {
+      case TR::Int8:
+         dependencies->addPostCondition(vtmp3Reg, TR::RealRegister::NoReg);
+         dependencies->addPostCondition(third4Reg, TR::RealRegister::NoReg);
+         dependencies->addPostCondition(fourth4Reg, TR::RealRegister::NoReg);
+         // fall through
+      case TR::Int16:
+         dependencies->addPostCondition(high4Reg, TR::RealRegister::NoReg);
+         if (!isSigned)
+            dependencies->addPostCondition(vunpackMaskReg, TR::RealRegister::NoReg);
+         // fall through
+      case TR::Int32:
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+
+   generateDepLabelInstruction(cg, TR::InstOpCode::label, node, endLabel, dependencies);
+
+   node->setRegister(hashReg);
+   cg->decReferenceCount(valueNode);
+   cg->decReferenceCount(offsetNode);
+   cg->decReferenceCount(countNode);
+   if (hashNode)
+      cg->decReferenceCount(hashNode);
+
+   cg->stopUsingRegister(valueReg);
+   cg->stopUsingRegister(endReg);
+   cg->stopUsingRegister(tempReg);
+   cg->stopUsingRegister(condReg);
+   cg->stopUsingRegister(multiplierAddrReg);
+
+   cg->stopUsingRegister(multiplierReg);
+   cg->stopUsingRegister(vtmp1Reg);
+   cg->stopUsingRegister(vtmp2Reg);
+   cg->stopUsingRegister(vconstant0Reg);
+
+   cg->stopUsingRegister(low4Reg);
+   switch (elementType)
+      {
+      case TR::Int8:
+         cg->stopUsingRegister(vtmp3Reg);
+         cg->stopUsingRegister(third4Reg);
+         cg->stopUsingRegister(fourth4Reg);
+         // fall through
+      case TR::Int16:
+         cg->stopUsingRegister(high4Reg);
+         if (!isSigned)
+            cg->stopUsingRegister(vunpackMaskReg);
+         // fall through
+      case TR::Int32:
+         break;
+      default:
+         TR_ASSERT_FATAL(false, "Unsupported hashCodeHelper elementType");
+      }
+
+   return hashReg;
+   }
+
+static TR::Register*
+inlineStringHashCode(TR::Node *node, TR::CodeGenerator *cg, bool isCompressed)
+   {
+   return hashCodeHelper(node, cg, isCompressed ? TR::Int8 : TR::Int16, NULL, false);
+   }
+
+static TR::Register*
+inlineVectorizedHashCode(TR::Node* node, TR::CodeGenerator* cg)
+   {
+   TR::Register* hashReg = NULL;
+
+   switch (node->getChild(4)->getConstValue())
+      {
+      // The following constants come from the values for the
+      // type operand of the NEWARRAY instruction
+      // See https://docs.oracle.com/javase/specs/jvms/se9/html/jvms-6.html#jvms-6.5.newarray.
+      case 4: // T_BOOLEAN
+         hashReg = hashCodeHelper(node, cg, TR::Int8, node->getChild(3), false);
+         break;
+      case 8: // T_BYTE
+         hashReg = hashCodeHelper(node, cg, TR::Int8, node->getChild(3), true);
+         break;
+      case 5: // T_CHAR
+         hashReg = hashCodeHelper(node, cg, TR::Int16, node->getChild(3), false);
+         break;
+      case 9: // T_SHORT
+         hashReg = hashCodeHelper(node, cg, TR::Int16, node->getChild(3), true);
+         break;
+      case 10: // T_INT
+         hashReg = hashCodeHelper(node, cg, TR::Int32, node->getChild(3), true);
+         break;
+      }
+   if (hashReg != NULL)
+      cg->decReferenceCount(node->getChild(4));
+
+   return hashReg;
+   }
 
 static TR::Register *inlineEncodeUTF16(TR::Node *node, TR::CodeGenerator *cg)
    {
@@ -10762,7 +11323,25 @@ static TR::Register *inlineIntrinsicIndexOf_P10(TR::Node *node, TR::CodeGenerato
       generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, endPos, endPos, endPos);
       }
 
-   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, arrAddress, array, TR::Compiler->om.contiguousArrayHeaderSizeInBytes());
+   /*
+    * Determine the address of the first byte to read either by loading from dataAddr or adding the header size.
+    * This is followed by adding in the offset.
+    */
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+   if (TR::Compiler->om.isOffHeapAllocationEnabled())
+      {
+      generateTrg1MemInstruction(
+         cg, TR::InstOpCode::ld, node, arrAddress,
+         TR::MemoryReference::createWithDisplacement(
+            cg, array, TR::Compiler->om.offsetOfContiguousDataAddrField(), 8)
+         );
+      }
+   else
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
+      {
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, arrAddress, array,
+                                     TR::Compiler->om.contiguousArrayHeaderSizeInBytes());
+      }
 
    // match first byte
    generateTrg1MemInstruction(cg, scalarLoadOp, node, temp, TR::MemoryReference::createWithIndexReg(cg, position, arrAddress, isLatin1 ? 1 : 2));
@@ -10948,7 +11527,26 @@ static TR::Register *inlineIntrinsicIndexOf(TR::Node *node, TR::CodeGenerator *c
    if (node->getChild(firstCallArgIdx+3)->getReferenceCount() == 1)
       srm->donateScratchRegister(length);
 
-   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, arrAddress, array, TR::Compiler->om.contiguousArrayHeaderSizeInBytes());
+   /*
+    * Determine the address of the first byte to read either by loading from dataAddr or adding the header size.
+    * This is followed by adding in the offset.
+    */
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+   if (TR::Compiler->om.isOffHeapAllocationEnabled())
+      {
+      generateTrg1MemInstruction(
+         cg, TR::InstOpCode::ld, node, arrAddress,
+         TR::MemoryReference::createWithDisplacement(
+            cg, array, TR::Compiler->om.offsetOfContiguousDataAddrField(), 8)
+         );
+      }
+   else
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
+      {
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, arrAddress, array,
+                                     TR::Compiler->om.contiguousArrayHeaderSizeInBytes());
+      }
+
    if (node->getChild(firstCallArgIdx)->getReferenceCount() == 1)
       srm->donateScratchRegister(array);
 
@@ -11310,17 +11908,22 @@ static bool inlineIntrinsicInflate(TR::Node *node, TR::CodeGenerator *cg)
    generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::cmpi4, node, condReg, remainingReg, 0);
    generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, doneLabel, condReg);
 
+   // IMPORTANT: The upper 32 bits of a 64-bit register containing an int are undefined. Since the
+   // indices are being passed in as ints, we must ensure that their upper 32 bits are not garbage.
+   generateTrg1Src1Instruction(cg, TR::InstOpCode::extsw, node, inputOffsetReg, inputOffsetReg);
+   generateTrg1Src1Instruction(cg, TR::InstOpCode::extsw, node, outputOffsetReg, outputOffsetReg);
+
    /*
     * Determine the address of the first byte to read either by loading from dataAddr or adding the header size.
     * This is followed by adding in the offset.
     */
-#if defined(J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
    if (TR::Compiler->om.isOffHeapAllocationEnabled())
       {
       generateTrg1MemInstruction(cg, TR::InstOpCode::ld, node, inputAddressReg, TR::MemoryReference::createWithDisplacement(cg, inputAddressReg, TR::Compiler->om.offsetOfContiguousDataAddrField(), 8));
       }
    else
-#endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
       {
       generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, inputAddressReg, inputAddressReg, TR::Compiler->om.contiguousArrayHeaderSizeInBytes());
       }
@@ -11331,13 +11934,13 @@ static bool inlineIntrinsicInflate(TR::Node *node, TR::CodeGenerator *cg)
     * Determine the address of the first char to store either by loading from dataAddr or adding the header size.
     * This is followed by adding in the offset twice due to being char data.
     */
-#if defined(J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
    if (TR::Compiler->om.isOffHeapAllocationEnabled())
       {
       generateTrg1MemInstruction(cg, TR::InstOpCode::ld, node, outputAddressReg, TR::MemoryReference::createWithDisplacement(cg, outputAddressReg, TR::Compiler->om.offsetOfContiguousDataAddrField(), 8));
       }
    else
-#endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
       {
       generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, outputAddressReg, outputAddressReg, TR::Compiler->om.contiguousArrayHeaderSizeInBytes());
       }
@@ -11894,8 +12497,29 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
       }
    else if (methodSymbol)
       {
+      bool disableCASInlining = !cg->getSupportsInlineUnsafeCompareAndSet();
+      bool disableCAEInlining = !cg->getSupportsInlineUnsafeCompareAndExchange();
+      static bool disableOSW = feGetEnv("TR_noPauseOnSpinWait") != NULL;
       switch (methodSymbol->getRecognizedMethod())
          {
+      case TR::java_lang_Thread_onSpinWait:
+         {
+         if (!disableOSW)
+            {
+            if (comp->getOption(TR_TraceCG))
+               {
+               traceMsg(comp, "Inlining Thread.onSpinWait call node %p as yield instruction.\n", node);
+               }
+
+            /*
+             * onSpinWait() method calls VM_AtomicSupport::yieldCPU() which is a yield instruction encoded as "or r27, r27, r27".
+             * Check omr/include_core/AtomicSupport.hpp for the JNI implementation.
+             */
+            generateInstruction(cg, TR::InstOpCode::yield, node);
+            return true;
+            }
+         break;
+         }
       case TR::java_util_concurrent_ConcurrentLinkedQueue_tmOffer:
          {
          if (cg->getSupportsInlineConcurrentLinkedQueue())
@@ -11947,7 +12571,7 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
             bool loadDataAddr = false;
             bool separateDestAndOffset = false;
 
-         #if defined (J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
+         #if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
             if (TR::Compiler->om.isOffHeapAllocationEnabled() && comp->target().is64Bit() && (!dest->isNull()))
                {
                if (dest->getSymbolReference() != NULL)
@@ -11999,7 +12623,7 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
                   separateDestAndOffset = true;
                   }
             }
-         #endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
+         #endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
 
             TR::Node *copyMemNode;
 
@@ -12011,7 +12635,7 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
                }
             else // CASE (1) and (2): dest += destoffset, then pass in to evaluator
                {
-            #if defined (J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
+            #if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
 
                if (loadDataAddr) // CASE (2) only
                   {
@@ -12020,7 +12644,7 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
                   dest = dataAddrNode;
                   }
 
-            #endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
+            #endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
 
                //destOffset is a long, so on 32 bit systems we need a conversion before we can add it to dest
                if (comp->target().is32Bit())
@@ -12045,20 +12669,6 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
             cg->decReferenceCount(node->getChild(4));
             return true;
             }
-         break;
-
-      case TR::java_lang_String_compress:
-         resultReg = compressStringEvaluator(node, cg, useJapaneseCompression);
-         return true;
-         break;
-
-      case TR::java_lang_String_compressNoCheck:
-         resultReg = compressStringNoCheckEvaluator(node, cg, useJapaneseCompression);
-         return true;
-
-      case TR::java_lang_String_andOR:
-         resultReg = andORStringEvaluator(node, cg);
-         return true;
          break;
 
       case TR::java_util_concurrent_atomic_AtomicBoolean_getAndSet:
@@ -12134,19 +12744,21 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
          resultReg = inlineFPTrg1Src3(node, TR::InstOpCode::fmadds, cg);
          return true;
 
+      case TR::java_lang_String_hashCodeImplCompressed:
       case TR::java_lang_String_hashCodeImplDecompressed:
-         if (!TR::Compiler->om.canGenerateArraylets()
-             && !TR::Compiler->om.isOffHeapAllocationEnabled()
-             && comp->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P8)
-             && comp->target().cpu.supportsFeature(OMR_FEATURE_PPC_HAS_VSX)
-             && !comp->compileRelocatableCode()
-#ifdef J9VM_OPT_JITSERVER
-             && !comp->isOutOfProcessCompilation()
-#endif
-            )
+         if (cg->getSupportsInlineStringHashCode())
             {
-            resultReg = inlineStringHashcode(node, cg);
-            return true;
+            resultReg = inlineStringHashCode(node, cg,
+               methodSymbol->getRecognizedMethod() == TR::java_lang_String_hashCodeImplCompressed);
+            return resultReg != NULL;
+            }
+         break;
+
+      case TR::jdk_internal_util_ArraysSupport_vectorizedHashCode:
+         if (cg->getSupportsInlineVectorizedHashCode())
+            {
+            resultReg = inlineVectorizedHashCode(node, cg);
+            return resultReg != NULL;
             }
          break;
 
@@ -12175,7 +12787,7 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
             }
          break;
 
-      case TR::java_lang_StringLatin1_inflate:
+      case TR::java_lang_StringLatin1_inflate_BICII:
          if (cg->getSupportsInlineStringLatin1Inflate())
             {
             bool result = inlineIntrinsicInflate(node, cg);
@@ -12196,8 +12808,11 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
 
         if ((node->isUnsafeGetPutCASCallOnNonArray() || !TR::Compiler->om.canGenerateArraylets()) && node->isSafeForCGToFastPathUnsafeCall())
             {
-            resultReg = VMinlineCompareAndSwap(node, cg, false);
-            return true;
+            if (!disableCASInlining)
+               {
+               resultReg = VMinlineCompareAndSetOrExchange(node, cg, 4, false);
+               return true;
+               }
             }
          break;
 
@@ -12210,13 +12825,19 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
 
          if (comp->target().is64Bit() && (node->isUnsafeGetPutCASCallOnNonArray() || !TR::Compiler->om.canGenerateArraylets()) && node->isSafeForCGToFastPathUnsafeCall())
             {
-            resultReg = VMinlineCompareAndSwap(node, cg, true);
-            return true;
+            if (!disableCASInlining)
+               {
+               resultReg = VMinlineCompareAndSetOrExchange(node, cg, 8, false);
+               return true;
+               }
             }
          else if ((node->isUnsafeGetPutCASCallOnNonArray() || !TR::Compiler->om.canGenerateArraylets()) && node->isSafeForCGToFastPathUnsafeCall())
             {
-            resultReg = inlineAtomicOperation(node, cg, methodSymbol);
-            return true;
+            if (!disableCASInlining)
+               {
+               resultReg = inlineAtomicOperation(node, cg, methodSymbol);
+               return true;
+               }
             }
          break;
 
@@ -12227,8 +12848,53 @@ J9::Power::CodeGenerator::inlineDirectCall(TR::Node *node, TR::Register *&result
 
          if ((node->isUnsafeGetPutCASCallOnNonArray() || !TR::Compiler->om.canGenerateArraylets()) && node->isSafeForCGToFastPathUnsafeCall())
             {
-            resultReg = VMinlineCompareAndSwapObject(node, cg);
-            return true;
+            if (!disableCASInlining)
+               {
+               resultReg = VMinlineCompareAndSetOrExchangeReference(node, cg, false);
+               return true;
+               }
+            }
+         break;
+
+      case TR::jdk_internal_misc_Unsafe_compareAndExchangeInt:
+        if ((node->isUnsafeGetPutCASCallOnNonArray() || !TR::Compiler->om.canGenerateArraylets()) && node->isSafeForCGToFastPathUnsafeCall())
+            {
+            if (!disableCAEInlining)
+               {
+               resultReg = VMinlineCompareAndSetOrExchange(node, cg, 4, true);
+               return true;
+               }
+            }
+         break;
+
+      case TR::jdk_internal_misc_Unsafe_compareAndExchangeLong:
+        if (comp->target().is64Bit() && (node->isUnsafeGetPutCASCallOnNonArray() || !TR::Compiler->om.canGenerateArraylets()) && node->isSafeForCGToFastPathUnsafeCall())
+            {
+            if (!disableCAEInlining)
+               {
+               resultReg = VMinlineCompareAndSetOrExchange(node, cg, 8, true);
+               return true;
+               }
+            }
+         break;
+
+      case TR::jdk_internal_misc_Unsafe_compareAndExchangeObject:
+         /*
+          * Starting from Java 12, compareAndExchangeObject was changed from a native call to a
+          * Java wrapper calling compareAndExchangeReference.
+          * We only want to inline the JNI native method, so add an explicit test for isNative().
+          */
+         if (!methodSymbol->isNative())
+            break;
+         /* If native, fall through. */
+      case TR::jdk_internal_misc_Unsafe_compareAndExchangeReference:
+         if ((node->isUnsafeGetPutCASCallOnNonArray() || !TR::Compiler->om.canGenerateArraylets()) && node->isSafeForCGToFastPathUnsafeCall())
+            {
+            if (!disableCAEInlining)
+               {
+               resultReg = VMinlineCompareAndSetOrExchangeReference(node, cg, true);
+               return true;
+               }
             }
          break;
 
@@ -12578,6 +13244,377 @@ TR::Register *J9::Power::TreeEvaluator::directCallEvaluator(TR::Node *node, TR::
       }
 
    return returnRegister;
+   }
+
+
+TR::Register *J9::Power::TreeEvaluator::setmemoryEvaluator(TR::Node *node, TR::CodeGenerator *cg)
+   {
+   TR::Compilation *comp = cg->comp();
+   TR::Node             *dstBaseAddrNode, *dstOffsetNode, *dstAddrNode, *lengthNode, *valueNode;
+
+   bool arrayCheckNeeded;
+
+   // IL tree structure depends on whether or not it's been determined that a runtime arrayCHK is needed:
+   // if node has four children (i.e.: object base address and offset are separate), need array check
+   // if node three children (i.e.: object base address and offset have already been added together), don't need array check
+   if (node->getNumChildren() == 4)
+      {
+      arrayCheckNeeded = true;
+
+      dstBaseAddrNode = node->getChild(0);
+      dstOffsetNode = node->getChild(1);
+      dstAddrNode = NULL;
+      lengthNode = node->getChild(2);
+      valueNode = node->getChild(3);
+      }
+   else //i.e.: node->getNumChildren() == 3
+      {
+      arrayCheckNeeded = false;
+
+      dstBaseAddrNode = NULL;
+      dstOffsetNode = NULL;
+      dstAddrNode = node->getChild(0);
+      lengthNode = node->getChild(1);
+      valueNode = node->getChild(2);
+      }
+
+   TR::Register         *dstBaseAddrReg, *dstOffsetReg, *dstAddrReg, *lengthReg, *valueReg;
+
+   // if the offset is a constant value less than 16 bits, then we dont need a separate register for it
+   bool useOffsetAsImmVal = dstOffsetNode && dstOffsetNode->getOpCode().isLoadConst() &&
+                            (dstOffsetNode->getConstValue() >= LOWER_IMMED) && (dstOffsetNode->getConstValue() <= UPPER_IMMED);
+
+   bool stopUsingCopyRegBase = dstBaseAddrNode ? TR::TreeEvaluator::stopUsingCopyReg(dstBaseAddrNode, dstBaseAddrReg, cg) : false;
+   bool stopUsingCopyRegAddr = dstAddrNode ? TR::TreeEvaluator::stopUsingCopyReg(dstAddrNode, dstAddrReg, cg) : false ;
+
+   bool stopUsingCopyRegOffset, stopUsingCopyRegLen, stopUsingCopyRegVal;
+
+   //dstOffsetNode (type: long)
+   if (dstOffsetNode && !useOffsetAsImmVal) //only want to allocate a register for dstoffset if we're using it for the array check AND it isn't a constant
+      {
+      if (!cg->canClobberNodesRegister(lengthNode)) //only need to copy dstOffset into another register if the current one isn't clobberable
+         {
+         if (cg->comp()->target().is32Bit()) //on 32-bit systems, need to grab the lower 32 bits of offset from the register pair
+            {
+            dstOffsetReg = cg->evaluate(dstOffsetNode);
+            TR::Register *offsetCopyReg = cg->allocateRegister();
+            generateTrg1Src1Instruction(cg, TR::InstOpCode::mr, dstOffsetNode, offsetCopyReg, dstOffsetReg->getLowOrder());
+
+            dstOffsetReg = offsetCopyReg;
+            stopUsingCopyRegOffset = true;
+            }
+         else
+            {
+            stopUsingCopyRegOffset = TR::TreeEvaluator::stopUsingCopyReg(dstOffsetNode, dstOffsetReg, cg);
+            }
+         }
+      else
+         {
+         dstOffsetReg = cg->evaluate(dstOffsetNode);
+
+         if (cg->comp()->target().is32Bit()) //on 32-bit systems, need to grab the lower 32 bits of offset from the register pair
+            dstOffsetReg = dstOffsetReg->getLowOrder();
+
+         stopUsingCopyRegOffset = false;
+         }
+      }
+   else
+      {
+      stopUsingCopyRegOffset = false;
+      }
+
+   //lengthNode (type: long)
+   lengthReg = cg->evaluate(lengthNode);
+   if (!cg->canClobberNodesRegister(lengthNode))
+      {
+      TR::Register *lenCopyReg = cg->allocateRegister();
+
+      if (cg->comp()->target().is32Bit()) //on 32-bit systems, need to grab the lower 32 bits of length from the register pair
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::mr, lengthNode, lenCopyReg, lengthReg->getLowOrder());
+      else //on 64-bit system, can just do a normal copy
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::mr, lengthNode, lenCopyReg, lengthReg);
+
+      lengthReg = lenCopyReg;
+      stopUsingCopyRegLen = true;
+      }
+   else
+      {
+      if (cg->comp()->target().is32Bit()) //on 32-bit system, need to grab lower 32 bits of length from the register pair
+         lengthReg = lengthReg->getLowOrder();
+
+      stopUsingCopyRegLen = false;
+      }
+
+   //valueNode (type: byte)
+   valueReg = cg->evaluate(valueNode);
+   if (cg->comp()->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P8))
+      {
+      //on P8 or higher, we can use vector instructions to cut down on loop iterations and residual tests -> need to copy valueReg into a VSX register
+      TR::Register *valVectorReg = cg->allocateRegister(TR_VRF);
+      generateTrg1Src1Instruction(cg, TR::InstOpCode::mtvsrd, valueNode, valVectorReg, valueReg);
+
+      valueReg = valVectorReg;
+      stopUsingCopyRegVal = true;
+      }
+   else if (!cg->canClobberNodesRegister(valueNode))
+      {
+      TR::Register *valCopyReg = cg->allocateRegister();
+      generateTrg1Src1Instruction(cg, TR::InstOpCode::mr, valueNode, valCopyReg, valueReg);
+
+      valueReg = valCopyReg;
+      stopUsingCopyRegVal = true;
+      }
+
+   TR::LabelSymbol * residualLabel =  generateLabelSymbol(cg);
+   TR::LabelSymbol * loopStartLabel =  generateLabelSymbol(cg);
+   TR::LabelSymbol * doneLabel =  generateLabelSymbol(cg);
+
+   //these labels are not needed for the vector approach to storing to residual bytes (i.e.: P10+)
+   TR::LabelSymbol *label8aligned, *label4aligned, *label2aligned, *label1aligned;
+
+   if (!cg->comp()->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P10))
+      {
+      label8aligned =  generateLabelSymbol(cg);
+      label4aligned =  generateLabelSymbol(cg);
+      label2aligned =  generateLabelSymbol(cg);
+      label1aligned =  generateLabelSymbol(cg);
+      }
+
+   TR::RegisterDependencyConditions *conditions;
+   int32_t numDeps = 6;
+
+   //need extra register for offset only if it isn't already included in the destination address AND it isn't a constant
+   if (arrayCheckNeeded && !useOffsetAsImmVal)
+      numDeps++;
+
+   conditions = new (cg->trHeapMemory()) TR::RegisterDependencyConditions(numDeps, numDeps, cg->trMemory());
+   TR::Register *cndReg = cg->allocateRegister(TR_CCR);
+   TR::addDependency(conditions, cndReg, TR::RealRegister::cr0, TR_CCR, cg);
+
+   if (arrayCheckNeeded)
+      {
+      //dstBaseAddrReg holds the address of the object being written to, so need to exclude GPR0
+      TR::addDependency(conditions, dstBaseAddrReg, TR::RealRegister::NoReg, TR_GPR, cg);
+      conditions->getPostConditions()->getRegisterDependency(conditions->getAddCursorForPost() - 1)->setExcludeGPR0();
+
+      if (!useOffsetAsImmVal)
+         TR::addDependency(conditions, dstOffsetReg, TR::RealRegister::NoReg, TR_GPR, cg);
+      }
+   else
+      {
+      //dstAddrReg holds the address of the object being written to, so need to exclude GPR0
+      TR::addDependency(conditions, dstAddrReg, TR::RealRegister::NoReg, TR_GPR, cg);
+      conditions->getPostConditions()->getRegisterDependency(1)->setExcludeGPR0();
+      }
+
+   TR::addDependency(conditions, lengthReg, TR::RealRegister::NoReg, TR_GPR, cg);
+   TR::addDependency(conditions, valueReg, TR::RealRegister::NoReg, TR_GPR, cg);
+
+   //temp1Reg will later be used to hold the J9Class flags for the object at dst, so need to exclude GPR0
+   TR::Register * temp1Reg = cg->allocateRegister();
+   TR::addDependency(conditions, temp1Reg, TR::RealRegister::NoReg, TR_GPR, cg);
+   conditions->getPostConditions()->getRegisterDependency(conditions->getAddCursorForPost() - 1)->setExcludeGPR0();
+
+   TR::Register * temp2Reg = cg->allocateRegister();
+   TR::addDependency(conditions, temp2Reg, TR::RealRegister::NoReg, TR_GPR, cg);
+
+
+#if defined (J9VM_GC_SPARSE_HEAP_ALLOCATION)
+
+   if (arrayCheckNeeded) // CASE (3)
+      {
+      // There are two scenarios in which we DON'T want to modify the dest base address:
+      // 1.) If the object is NULL (since we can't load dataAddr from a NULL pointer)
+      // 2.) If the object is a non-array object
+      // So two checks are required (NULL, Array) to determine whether dataAddr should be loaded or not
+      TR::LabelSymbol *noDataAddr = generateLabelSymbol(cg);
+
+      // We only want to generate a runtime NULL check if the status of the object (i.e.: whether it is NULL or non-NULL)
+      // is NOT known. Note that if the object is known to be NULL, arrayCheckNeeded will be false, so there is no need to check
+      // that condition here.
+      if (!dstBaseAddrNode->isNonNull())
+         {
+         //generate NULL test
+         generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::Op_cmpi, node, cndReg, dstBaseAddrReg, 0);
+         generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, noDataAddr, cndReg);
+         }
+
+      //Array Check
+      TR::Register *dstClassInfoReg = temp1Reg;
+      TR::Register *arrayFlagReg = temp2Reg;
+
+      //load dst class info into temp1Reg
+      if (TR::Compiler->om.compressObjectReferences())
+         generateTrg1MemInstruction(cg, TR::InstOpCode::lwz, node, dstClassInfoReg,
+            TR::MemoryReference::createWithDisplacement(cg, dstBaseAddrReg, static_cast<int32_t>(TR::Compiler->om.offsetOfObjectVftField()), 4));
+      else
+         generateTrg1MemInstruction(cg,TR::InstOpCode::Op_load, node, dstClassInfoReg,
+            TR::MemoryReference::createWithDisplacement(cg, dstBaseAddrReg, static_cast<int32_t>(TR::Compiler->om.offsetOfObjectVftField()), TR::Compiler->om.sizeofReferenceAddress()));
+
+      TR::TreeEvaluator::generateVFTMaskInstruction(cg, node, dstClassInfoReg);
+
+      TR::MemoryReference *dstClassMR = TR::MemoryReference::createWithDisplacement(cg, dstClassInfoReg, offsetof(J9Class, classDepthAndFlags), TR::Compiler->om.sizeofReferenceAddress());
+      generateTrg1MemInstruction(cg, TR::InstOpCode::Op_load, node, dstClassInfoReg, dstClassMR);
+
+      //generate array check
+      int32_t arrayFlagValue = comp->fej9()->getFlagValueForArrayCheck();
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::andis_r, node, arrayFlagReg, dstClassInfoReg, arrayFlagValue >> 16);
+
+      //if object is not an array (i.e.: temp1Reg & temp2Reg == 0), skip adjusting dstBaseAddr and dstOffset
+      generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, noDataAddr, cndReg);
+
+      //load dataAddr if object is array:
+      TR::MemoryReference *dataAddrSlotMR = TR::MemoryReference::createWithDisplacement(cg, dstBaseAddrReg, comp->fej9()->getOffsetOfContiguousDataAddrField(), TR::Compiler->om.sizeofReferenceAddress());
+      generateTrg1MemInstruction(cg, TR::InstOpCode::Op_load, node, dstBaseAddrReg, dataAddrSlotMR);
+
+      //arrayCHK will skip to here if object is not an array
+      generateLabelInstruction(cg, TR::InstOpCode::label, node, noDataAddr);
+
+      //calculate dstAddr = dstBaseAddr + dstOffset
+      dstAddrReg = dstBaseAddrReg;
+
+      if (useOffsetAsImmVal)
+         {
+         int offsetImmVal = dstOffsetNode->getConstValue();
+         generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstAddrReg, dstBaseAddrReg, offsetImmVal);
+         }
+      else
+         generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, dstAddrReg, dstBaseAddrReg, dstOffsetReg);
+      }
+
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
+
+   // assemble the double word value from byte value
+   if (cg->comp()->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P8))
+      {
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::vspltb, valueNode, valueReg, valueReg, 7);
+      }
+   else
+      {
+      generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rldimi, node, valueReg, valueReg,  8,  CONSTANT64(0x000000000000FF00));
+      generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rldimi, node, valueReg, valueReg,  16, CONSTANT64(0x00000000FFFF0000));
+      generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rldimi, node, valueReg, valueReg,  32, CONSTANT64(0xFFFFFFFF00000000));
+      }
+
+   generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::Op_cmpli, node, cndReg, lengthReg, 32);
+   generateConditionalBranchInstruction(cg, TR::InstOpCode::blt, node, residualLabel, cndReg);
+
+   generateTrg1Src1ImmInstruction(cg, lengthNode->getType().isInt32() ? TR::InstOpCode::srawi : TR::InstOpCode::sradi, node, temp1Reg, lengthReg, 5);
+   generateSrc1Instruction(cg, TR::InstOpCode::mtctr, node, temp1Reg);
+   generateLabelInstruction(cg, TR::InstOpCode::label, node, loopStartLabel);
+
+   //store designated value to memory in chunks of 32 bytes
+   if (cg->comp()->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P8))
+      {
+      //on P8 and higher, we can use vector instructions to cut down on loop iterations/number of stores
+      generateMemSrc1Instruction(cg, TR::InstOpCode::stxvd2x, node, TR::MemoryReference::createWithIndexReg(cg, NULL, dstAddrReg, 16), valueReg);
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstAddrReg, dstAddrReg, 16);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::stxvd2x, node, TR::MemoryReference::createWithIndexReg(cg, NULL, dstAddrReg, 16), valueReg);
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstAddrReg, dstAddrReg, 16);
+      }
+   else
+      {
+      generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 0, 8), valueReg);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 8, 8), valueReg);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 16, 8), valueReg);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 24, 8), valueReg);
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstAddrReg, dstAddrReg, 32);
+      }
+
+   //decrement counter and return to start of loop
+   generateConditionalBranchInstruction(cg, TR::InstOpCode::bdnz, node, loopStartLabel, cndReg);
+
+   //loop exit
+   generateLabelInstruction(cg, TR::InstOpCode::label, node, residualLabel);
+
+   //Set residual bytes (max number of residual bytes = 31 = 0x1F)
+   if (cg->comp()->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P10)) //on P10, we can use stxvl to store all residual bytes efficiently
+      {
+      //First 16 byte segment
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::andi_r, node, temp1Reg, lengthReg, 16); //get first hex char (can only be 0 or 1)
+      generateTrg1Src1Instruction(cg, TR::InstOpCode::mr, node, temp2Reg, temp1Reg); //keep a copy of first hex char
+
+      //store to memory
+      //NOTE: due to a quirk of the stxvl instruction on P10, the number of residual bytes must be shifted over before it can be used
+      generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rldicr, node, temp1Reg, temp1Reg, 56, CONSTANT64(0xFF00000000000000));
+      generateSrc3Instruction(cg, TR::InstOpCode::stxvl, node, valueReg, dstAddrReg, temp1Reg);
+
+      //advance to next 16 byte chunk IF number of residual bytes >= 16
+      generateTrg1Src2Instruction(cg, TR::InstOpCode::add, node, dstAddrReg, dstAddrReg, temp2Reg);
+
+      //Second 16 byte segment
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::andi_r, node, temp1Reg, lengthReg, 15); //get second hex char
+      generateTrg1Src1Imm2Instruction(cg, TR::InstOpCode::rldicr, node, temp1Reg, temp1Reg, 56, CONSTANT64(0xFF00000000000000)); //shift num residual bytes
+      generateSrc3Instruction(cg, TR::InstOpCode::stxvl, node, valueReg, dstAddrReg, temp1Reg); //store to memory
+      }
+   else
+      {
+      TR::Register *valueResidueReg;
+
+      if (cg->comp()->target().cpu.isAtLeast(OMR_PROCESSOR_PPC_P8))
+         {
+         //since P8 and P9 used the vector approach, we first need to copy valueReg back into a GPR
+         generateTrg1Src1Instruction(cg, TR::InstOpCode::mfvsrd, node, temp2Reg, valueReg);
+         valueResidueReg = temp2Reg;
+         }
+      else
+         valueResidueReg = valueReg;
+
+      //check if residual < 16
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::andi_r, node, temp1Reg, lengthReg, 16);
+      generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, label8aligned, cndReg);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 0, 8), valueResidueReg);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 8, 8), valueResidueReg);
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstAddrReg, dstAddrReg, 16);
+
+      generateLabelInstruction(cg, TR::InstOpCode::label, node, label8aligned); //check if residual < 8
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::andi_r, node, temp1Reg, lengthReg, 8);
+      generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, label4aligned, cndReg);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::std, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 0, 8), valueResidueReg);
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstAddrReg, dstAddrReg, 8);
+
+      generateLabelInstruction(cg, TR::InstOpCode::label, node, label4aligned); //check if residual < 4
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::andi_r, node, temp1Reg, lengthReg, 4);
+      generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, label2aligned, cndReg);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::stw, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 0, 4), valueResidueReg);
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstAddrReg, dstAddrReg, 4);
+
+      generateLabelInstruction(cg, TR::InstOpCode::label, node, label2aligned); //check if residual < 2
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::andi_r, node, temp1Reg, lengthReg, 2);
+      generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, label1aligned, cndReg);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::sth, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 0, 2), valueResidueReg);
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::addi, node, dstAddrReg, dstAddrReg, 2);
+
+      generateLabelInstruction(cg, TR::InstOpCode::label, node, label1aligned); //residual <= 1
+      generateTrg1Src1ImmInstruction(cg, TR::InstOpCode::andi_r, node, temp1Reg, lengthReg, 1);
+      generateConditionalBranchInstruction(cg, TR::InstOpCode::beq, node, doneLabel, cndReg);
+      generateMemSrc1Instruction(cg, TR::InstOpCode::stb, node, TR::MemoryReference::createWithDisplacement(cg, dstAddrReg, 0, 1), valueResidueReg);
+      }
+
+   generateDepLabelInstruction(cg, TR::InstOpCode::label, node, doneLabel, conditions);
+
+   if (stopUsingCopyRegBase)
+      cg->stopUsingRegister(dstBaseAddrReg);
+   if (stopUsingCopyRegOffset)
+      cg->stopUsingRegister(dstOffsetReg);
+   if (stopUsingCopyRegAddr)
+      cg->stopUsingRegister(dstAddrReg);
+   if (stopUsingCopyRegLen)
+      cg->stopUsingRegister(lengthReg);
+   if (stopUsingCopyRegVal)
+      cg->stopUsingRegister(valueReg);
+
+   cg->stopUsingRegister(cndReg);
+   cg->stopUsingRegister(temp1Reg);
+   cg->stopUsingRegister(temp2Reg);
+
+   if (dstBaseAddrNode) cg->decReferenceCount(dstBaseAddrNode);
+   if (dstOffsetNode) cg->decReferenceCount(dstOffsetNode);
+   if (dstAddrNode) cg->decReferenceCount(dstAddrNode);
+   cg->decReferenceCount(lengthNode);
+   cg->decReferenceCount(valueNode);
+
+   return(NULL);
    }
 
 

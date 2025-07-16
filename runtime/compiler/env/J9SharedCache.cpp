@@ -25,6 +25,7 @@
 #include <algorithm>
 #include "j9cfg.h"
 #include "control/CompilationRuntime.hpp"
+#include "control/CompilationThread.hpp"
 #include "control/Options.hpp"
 #include "control/Options_inlines.hpp"
 #include "compile/ResolvedMethod.hpp"
@@ -48,6 +49,17 @@
 #include "runtime/JITServerAOTDeserializer.hpp"
 #endif
 
+// for madvise
+#ifdef LINUX
+#include <sys/mman.h>
+#ifndef MADV_NOHUGEPAGE
+#define MADV_NOHUGEPAGE  15
+#endif // MADV_NOHUGEPAGE
+#ifndef MADV_PAGEOUT
+#define MADV_PAGEOUT     21
+#endif // MADV_PAGEOUT
+#endif
+
 #define LOG(logLevel, format, ...)               \
    if (_logLevel >= logLevel)                    \
       {                                          \
@@ -55,12 +67,18 @@
       }
 
 // From CompositeCache.cpp
+#define RWUPDATEPTR(ca) (((uint8_t *)(ca)) + (ca)->readWriteSRP)
+#define CAEND(ca) (((uint8_t *)(ca)) + (ca)->totalBytes)
 #define UPDATEPTR(ca) (((uint8_t *)(ca)) + (ca)->updateSRP)
 #define SEGUPDATEPTR(ca) (((uint8_t *)(ca)) + (ca)->segmentSRP)
 
 // Used by TR_J9SharedCache::rememberClass() to communicate that a class has not been recorded in the SCC but could have been recorded.
 #define COULD_CREATE_CLASS_CHAIN 1
 static_assert(TR_SharedCache::INVALID_CLASS_CHAIN_OFFSET != COULD_CREATE_CLASS_CHAIN, "These values must be distinct");
+
+static const char dependencyKeyPrefix[] = "MethodDependencies:";
+static const size_t dependencyKeyPrefixLength = sizeof(dependencyKeyPrefix) - 1; // exclude NULL terminator
+static const size_t dependencyKeyBufferLength = sizeof(dependencyKeyPrefix) + 16;
 
 TR_J9SharedCache::TR_J9SharedCacheDisabledReason TR_J9SharedCache::_sharedCacheState = TR_J9SharedCache::UNINITIALIZED;
 TR_YesNoMaybe TR_J9SharedCache::_sharedCacheDisabledBecauseFull = TR_maybe;
@@ -104,6 +122,67 @@ TR_J9SharedCache::validateAOTHeader(J9JITConfig *jitConfig, J9VMThread *vmThread
       jitConfig->relocatableTargetProcessor = TR::Compiler->relocatableTarget.cpu.getProcessorDescription();
       }
    }
+
+#if defined(LINUX)
+bool TR_J9SharedCache::disclaim(const uint8_t *start, const uint8_t *end, UDATA pageSize, bool trace)
+   {
+   uint8_t *nextPage = (uint8_t *)(((UDATA)start + (pageSize - 1)) & ~(pageSize - 1));
+   if (nextPage < end)
+      {
+      int ret = madvise(nextPage, end - nextPage, MADV_PAGEOUT);
+      if (ret == 0)
+         return true;
+      if (trace)
+         TR_VerboseLog::writeLineLocked(TR_Vlog_PERF, "WARNING: Failed to use madvise to disclaim memory for shared class cache; errno: %d", errno);
+      // Temporary failure, don't disable disclaim permanently if this happens.
+      if (errno == EAGAIN)
+         return true;
+      }
+   return false;
+   }
+
+int32_t TR_J9SharedCache::disclaimSharedCaches()
+   {
+   int32_t numDisclaimed = 0;
+
+   if (!_disclaimEnabled)
+      return numDisclaimed;
+
+   J9SharedClassCacheDescriptor *scHead = getCacheDescriptorList();
+   J9SharedClassCacheDescriptor *scCur = scHead;
+   PORT_ACCESS_FROM_JAVAVM(_javaVM); // for j9vmem_supported_page_sizes
+   UDATA pageSize = j9vmem_supported_page_sizes()[0];
+   bool trace = TR::Options::getCmdLineOptions()->getVerboseOption(TR_VerbosePerformance);
+
+   do
+      {
+      uint8_t *rwStart = RWUPDATEPTR(scCur->cacheStartAddress);
+      uint8_t *rwEnd = SEGUPDATEPTR(scCur->cacheStartAddress);
+      if (!disclaim(rwStart, rwEnd, pageSize, trace))
+         {
+         if (trace)
+            TR_VerboseLog::writeLineLocked(TR_Vlog_PERF, "WARNING: Disabling shared class cache disclaiming from now on");
+         _disclaimEnabled = false;
+         break;
+         }
+      numDisclaimed++;
+      uint8_t *updateStart = UPDATEPTR(scCur->cacheStartAddress);
+      uint8_t *updateEnd = CAEND(scCur->cacheStartAddress);
+      if (!disclaim(updateStart, updateEnd, pageSize, trace))
+         {
+         if (trace)
+            TR_VerboseLog::writeLineLocked(TR_Vlog_PERF, "WARNING: Disabling shared class cache disclaiming from now on");
+         _disclaimEnabled = false;
+         break;
+         }
+      numDisclaimed++;
+      scCur = scCur->next;
+      }
+   while (scCur != scHead);
+
+   return numDisclaimed;
+   }
+#endif // defined(LINUX)
 
 TR_YesNoMaybe TR_J9SharedCache::isSharedCacheDisabledBecauseFull(TR::CompilationInfo *compInfo)
    {
@@ -186,6 +265,9 @@ TR_J9SharedCache::TR_J9SharedCache(TR_J9VMBase *fe)
    _aotStats = fe->getPrivateConfig()->aotStats;
    _sharedCacheConfig = _javaVM->sharedClassConfig;
    _numDigitsForCacheOffsets = 8;
+#if defined(LINUX)
+   _disclaimEnabled = TR::Options::getCmdLineOptions()->getOption(TR_EnableSharedCacheDisclaiming);
+#endif
 
 #if defined(J9VM_OPT_JITSERVER)
    TR_ASSERT_FATAL(_sharedCacheConfig || _compInfo->getPersistentInfo()->getRemoteCompilationMode() == JITServer::SERVER
@@ -904,11 +986,16 @@ TR_J9SharedCache::isPtrToROMClassesSectionInSharedCache(void *ptr, uintptr_t *ca
 J9ROMClass *
 TR_J9SharedCache::startingROMClassOfClassChain(UDATA *classChain)
    {
-   UDATA lengthInBytes = classChain[0];
-   TR_ASSERT_FATAL(lengthInBytes >= 2 * sizeof (UDATA), "class chain is too short!");
+   return romClassFromOffsetInSharedCache(startingROMClassOffsetOfClassChain(classChain));
+   }
 
-   UDATA romClassOffset = classChain[1];
-   return romClassFromOffsetInSharedCache(romClassOffset);
+uintptr_t
+TR_J9SharedCache::startingROMClassOffsetOfClassChain(void *chain)
+   {
+   auto classChain = (uintptr_t *)chain;
+   uintptr_t lengthInBytes = classChain[0];
+   TR_ASSERT_FATAL(lengthInBytes >= 2 * sizeof (UDATA), "class chain is too short!");
+   return classChain[1];
    }
 
 // convert an offset into a string of 8 characters
@@ -1341,7 +1428,8 @@ TR_J9SharedCache::lookupClassFromChainAndLoader(uintptr_t *chainData, void *clas
    if (!clazz && comp->isDeserializedAOTMethod())
       {
       auto deserializer = TR::CompilationInfo::get()->getJITServerAOTDeserializer();
-      clazz = deserializer->getGeneratedClass((J9ClassLoader *)classLoader, romClassOffset, comp);
+      auto context = DeserializerContext(comp);
+      clazz = deserializer->getGeneratedClass((J9ClassLoader *)classLoader, romClassOffset, context);
       }
 #endif /* defined(J9VM_OPT_JITSERVER) */
 
@@ -1464,6 +1552,82 @@ TR_J9SharedCache::storeWellKnownClasses(J9VMThread *vmThread, uintptr_t *classCh
    return storeSharedData(vmThread, key, &dataDescriptor);
    }
 
+void
+TR_J9SharedCache::buildAOTMethodDependenciesKey(uintptr_t offset, char *buffer, size_t &keyLength)
+   {
+   auto cursor = buffer;
+
+   memcpy(cursor, dependencyKeyPrefix, dependencyKeyPrefixLength);
+   cursor += dependencyKeyPrefixLength;
+
+   convertUnsignedOffsetToASCII(offset, cursor);
+   keyLength = (cursor - buffer) + _numDigitsForCacheOffsets;
+   }
+
+const void *
+TR_J9SharedCache::storeAOTMethodDependencies(J9VMThread *vmThread,
+                                             TR_OpaqueMethodBlock *method,
+                                             TR_OpaqueClassBlock *definingClass,
+                                             uintptr_t *methodDependencies,
+                                             size_t methodDependenciesSize)
+   {
+   LOG(1, "storeAOTMethodDependencies class %p method %p\n", definingClass, method);
+   uintptr_t methodOffset = 0;
+   if (!isMethodInSharedCache(method, definingClass, &methodOffset))
+      return NULL;
+
+   LOG(3, "\toffset %lu\n", methodOffset);
+
+   char key[dependencyKeyBufferLength];
+   size_t keyLength = 0;
+   buildAOTMethodDependenciesKey(methodOffset, key, keyLength);
+
+   LOG(3, "\tkey created: %.*s\n", keyLength, key);
+
+   J9SharedDataDescriptor dataDescriptor;
+   dataDescriptor.address = (uint8_t *)methodDependencies;
+   dataDescriptor.length = methodDependenciesSize * sizeof(methodDependencies[0]);
+   dataDescriptor.type = J9SHR_DATA_TYPE_JITHINT;
+   dataDescriptor.flags = 0;
+
+   return storeSharedData(vmThread, key, &dataDescriptor);
+   }
+
+bool
+TR_J9SharedCache::methodHasAOTBodyWithDependencies(J9VMThread *vmThread, J9ROMMethod *method, const uintptr_t * &methodDependencies)
+   {
+   methodDependencies = NULL;
+#if defined(J9VM_OPT_SHARED_CLASSES) && (defined(TR_HOST_X86) || defined(TR_HOST_POWER) || defined(TR_HOST_S390) || defined(TR_HOST_ARM) || defined(TR_HOST_ARM64))
+   char key[dependencyKeyBufferLength];
+   uintptr_t methodOffset = INVALID_ROM_METHOD_OFFSET;
+   if (!isROMMethodInSharedCache(method, &methodOffset))
+      return false;
+
+   auto aotBody = TR::CompilationInfoPerThreadBase::findAotBodyInSCC(vmThread, method);
+   if (!aotBody)
+      return false;
+
+   auto dataCacheHeader = static_cast<const J9JITDataCacheHeader *>(aotBody);
+   auto aotMethodHeader = (TR_AOTMethodHeader *)(dataCacheHeader + 1); // skip the data cache header to get to the AOT method header
+   if (!(aotMethodHeader->flags & TR_AOTMethodHeader_TracksDependencies))
+      return false;
+
+   size_t keyLength = 0;
+   buildAOTMethodDependenciesKey(methodOffset, key, keyLength);
+
+   J9SharedDataDescriptor dataDescriptor;
+   dataDescriptor.address = NULL;
+   TR_J9VMBase *fej9 = (TR_J9VMBase *)(fe());
+
+   sharedCacheConfig()->findSharedData(vmThread, key, keyLength, J9SHR_DATA_TYPE_JITHINT, FALSE, &dataDescriptor, NULL);
+   methodDependencies = (uintptr_t *)dataDescriptor.address;
+
+   return true;
+#else
+   return false;
+#endif /*  defined(J9VM_OPT_SHARED_CLASSES) && (defined(TR_HOST_X86) || defined(TR_HOST_POWER) || defined(TR_HOST_S390) || defined(TR_HOST_ARM) || defined(TR_HOST_ARM64)) */
+   }
+
 #if defined(J9VM_OPT_JITSERVER)
 TR_J9JITServerSharedCache::TR_J9JITServerSharedCache(TR_J9VMBase *fe)
    : TR_J9SharedCache(fe), _stream(NULL), _compInfoPT(NULL)
@@ -1473,11 +1637,11 @@ TR_J9JITServerSharedCache::TR_J9JITServerSharedCache(TR_J9VMBase *fe)
 uintptr_t
 TR_J9JITServerSharedCache::rememberClass(J9Class *clazz, const AOTCacheClassChainRecord **classChainRecord, bool create)
    {
-   TR_ASSERT_FATAL(classChainRecord || !create, "Must pass classChainRecord if creating class chain at JITServer");
+   TR::Compilation *comp = _compInfoPT->getCompilation();
+   TR_ASSERT_FATAL(classChainRecord || !create || !comp->isAOTCacheStore(), "Must pass classChainRecord if creating class chain at JITServer");
    TR_ASSERT(_stream, "stream must be initialized by now");
 
    uintptr_t clientClassChainOffset = TR_SharedCache::INVALID_CLASS_CHAIN_OFFSET;
-   TR::Compilation *comp = _compInfoPT->getCompilation();
    ClientSessionData *clientData = comp->getClientData();
    bool needClassChainRecord = comp->isAOTCacheStore();
    bool useServerOffsets = clientData->useServerOffsets(_stream) && needClassChainRecord;
@@ -1707,7 +1871,8 @@ TR_J9DeserializerSharedCache::romClassFromOffsetInSharedCache(uintptr_t offset)
    {
    TR::Compilation *comp = _compInfoPT->getCompilation();
    bool wasReset = false;
-   auto romClass = _deserializer->romClassFromOffsetInSharedCache(offset, comp, wasReset);
+   auto context = DeserializerContext(comp);
+   auto romClass = _deserializer->romClassFromOffsetInSharedCache(offset, context, wasReset);
    if (wasReset)
       comp->failCompilation<J9::AOTDeserializerReset>(
          "Deserializer reset during relocation of method %s", comp->signature());
@@ -1723,7 +1888,8 @@ TR_J9DeserializerSharedCache::pointerFromOffsetInSharedCache(uintptr_t offset)
    {
    TR::Compilation *comp = _compInfoPT->getCompilation();
    bool wasReset = false;
-   auto ptr = _deserializer->pointerFromOffsetInSharedCache(offset, comp, wasReset);
+   auto context = DeserializerContext(comp);
+   auto ptr = _deserializer->pointerFromOffsetInSharedCache(offset, context, wasReset);
    if (wasReset)
       comp->failCompilation<J9::AOTDeserializerReset>(
          "Deserializer reset during relocation of method %s", comp->signature());
@@ -1753,7 +1919,8 @@ TR_J9DeserializerSharedCache::classMatchesCachedVersion(J9Class *clazz, UDATA *c
    // is equal to the one we are trying to validate.
    TR::Compilation *comp = _compInfoPT->getCompilation();
    bool wasReset = false;
-   auto ramClass = _deserializer->classFromOffset(chainData[1], comp, wasReset);
+   auto context = DeserializerContext(comp);
+   auto ramClass = _deserializer->classFromOffset(chainData[1], context, wasReset);
    if (wasReset)
       comp->failCompilation<J9::AOTDeserializerReset>(
          "Deserializer reset during relocation of method %s", comp->signature());
@@ -1772,7 +1939,8 @@ TR_J9DeserializerSharedCache::lookupClassFromChainAndLoader(uintptr_t *chainData
    // We do not need to perform that checking here, because during deserialization we will have already resolved the first class in the chain to
    // a J9Class and verified that it matches. Thus we can simply return that cached first J9Class.
    bool wasReset = false;
-   auto clazz = _deserializer->classFromOffset(chainData[1], comp, wasReset);
+   auto context = DeserializerContext(comp);
+   auto clazz = _deserializer->classFromOffset(chainData[1], context, wasReset);
    if (wasReset)
       comp->failCompilation<J9::AOTDeserializerReset>(
          "Deserializer reset during relocation of method %s", comp->signature());
@@ -1788,7 +1956,8 @@ TR_J9DeserializerSharedCache::romMethodFromOffsetInSharedCache(uintptr_t offset)
    {
    TR::Compilation *comp = _compInfoPT->getCompilation();
    bool wasReset = false;
-   auto romMethod = _deserializer->romMethodFromOffsetInSharedCache(offset, comp, wasReset);
+   auto context = DeserializerContext(comp);
+   auto romMethod = _deserializer->romMethodFromOffsetInSharedCache(offset, context, wasReset);
    if (wasReset)
       comp->failCompilation<J9::AOTDeserializerReset>(
          "Deserializer reset during relocation of method %s", comp->signature());

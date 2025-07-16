@@ -284,6 +284,8 @@ public:
 
 	UDATA getOSPageSize(void);
 
+	UDATA getOSPageSizeInHeader(void);
+
 	bool getContainsCachelets(void);
 
 	void setStringTableInitialized(bool);
@@ -394,6 +396,10 @@ public:
 	const char* getCacheNameWithVGen(void) const;
 	
 	bool hasReadMutex(J9VMThread* currentThread) const;
+
+	U_32 getExtraStartupHints(void) const;
+
+	void setExtraStartupHints(J9VMThread* currentThread, U_32 val);
 
 private:
 	J9SharedClassConfig* _sharedClassConfig;
@@ -547,6 +553,11 @@ private:
 
 	void unsetCacheHeaderFullFlags(J9VMThread *currentThread, UDATA flagsToUnset);
 
+	void updateMprotectRuntimeFlags(void);
+#if defined(J9VM_OPT_SHR_MSYNC_SUPPORT)
+	void updateMsyncRuntimeFlags(void);
+#endif /* defined(J9VM_OPT_SHR_MSYNC_SUPPORT) */
+
 	BlockPtr getRomClassProtectEnd() {
 		return _romClassProtectEnd;
 	}
@@ -574,4 +585,3 @@ private:
 };
 
 #endif /* !defined(COMPOSITECACHEIMPL_H_INCLUDED) */
-

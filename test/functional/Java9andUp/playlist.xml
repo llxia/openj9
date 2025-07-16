@@ -20,7 +20,7 @@
 
   SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-exception-2.0 OR GPL-2.0-only WITH OpenJDK-assembly-exception-1.0
 -->
-<playlist xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../TKG/playlist.xsd">
+<playlist xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../TKG/resources/playlist.xsd">
 	<test>
 		<testCaseName>MethodVisibilityTests</testCaseName>
 		<!--  Don$(SQ)t put generaltest.jar on the classpath.  
@@ -318,6 +318,7 @@
 		<variations>
 			<variation>-Xint</variation>
 			<variation>-Xjit:count=1,disableAsyncCompilation</variation>
+			<variation>-Xjit:count=1,disableGRA,disableLinkageRegisterAllocation,disableLocalCSE,disableAsyncCompilation</variation>
 		</variations>
 		<command>$(JAVA_COMMAND) $(JVM_OPTIONS) \
 	-cp $(Q)$(RESOURCES_DIR)$(P)$(TESTNG)$(P)$(TEST_RESROOT)$(D)GeneralTest.jar$(P)$(LIB_DIR)$(D)asm-all.jar$(Q) \
@@ -408,7 +409,6 @@
 		</groups>
 		<versions>
 			<version>11</version>
-			<version>16</version>
 		</versions>
 		<impls>
 			<impl>openj9</impl>

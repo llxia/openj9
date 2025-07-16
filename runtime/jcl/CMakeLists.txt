@@ -23,6 +23,9 @@
 set(J9VM_JCL_BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 
 add_tracegen(j9jcl.tdf)
+add_tracegen(jcl_java.tdf)
+add_tracegen(jcl_net.tdf)
+add_tracegen(jcl_nio.tdf)
 
 j9vm_add_library(jclse SHARED
 	OUTPUT_NAME jclse${J9VM_VERSION_SUFFIX}
@@ -106,7 +109,6 @@ target_link_libraries(jclse
 
 target_sources(jclse
 	PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}/common/acccont.c
 		${CMAKE_CURRENT_SOURCE_DIR}/common/annparser.c
 		${CMAKE_CURRENT_SOURCE_DIR}/common/attach.c
 		${CMAKE_CURRENT_SOURCE_DIR}/common/bootstrp.c
@@ -236,6 +238,43 @@ if(NOT JAVA_SPEC_VERSION LESS 19)
 		PRIVATE
 			${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_internal_vm_Continuation.cpp
 	)
+endif()
+
+if(JAVA_SPEC_VERSION LESS 24)
+	target_sources(jclse PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/common/acccont.c)
+endif()
+
+if(J9VM_OPT_JFR)
+	# JFR sources
+	if(JAVA_SPEC_VERSION EQUAL 11)
+		target_sources(jclse
+			PRIVATE
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_common.cpp
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_jdk11.cpp
+		)
+	elseif(JAVA_SPEC_VERSION EQUAL 17)
+		target_sources(jclse
+			PRIVATE
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_common.cpp
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_jdk17.cpp
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_jdk17andUp.cpp
+		)
+	elseif(JAVA_SPEC_VERSION EQUAL 21)
+		target_sources(jclse
+			PRIVATE
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_common.cpp
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_jdk17andUp.cpp
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_jdk21andUp.cpp
+		)
+	elseif(NOT JAVA_SPEC_VERSION LESS 23)
+		target_sources(jclse
+			PRIVATE
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_common.cpp
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_jdk17andUp.cpp
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_jdk21andUp.cpp
+				${CMAKE_CURRENT_SOURCE_DIR}/common/jdk_jfr_internal_JVM_jdk23.cpp
+		)
+	endif()
 endif()
 
 include(exports.cmake)

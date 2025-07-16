@@ -57,6 +57,7 @@ J9InternalVMFunctions J9InternalFunctions = {
 	hashClassTableAtPut,
 	hashClassTableDelete,
 	hashClassTableReplace,
+	segmentIteratorNextClass,
 	monitorTableAt,
 	allocateVMThread,
 	deallocateVMThread,
@@ -64,6 +65,10 @@ J9InternalVMFunctions J9InternalFunctions = {
 	javaThreadProc,
 	copyStringToUTF8WithMemAlloc,
 	copyStringToJ9UTF8WithMemAlloc,
+	copyStringToJ9UTF8WithPortLib,
+	copyJ9UTF8ToUTF8WithMemAlloc,
+	copyJ9UTF8WithMemAlloc,
+	copyJ9UTF8WithPortLib,
 	internalAcquireVMAccess,
 	internalAcquireVMAccessWithMask,
 	internalAcquireVMAccessNoMutexWithMask,
@@ -75,6 +80,7 @@ J9InternalVMFunctions J9InternalFunctions = {
 	resolveKnownClass,
 	computeHashForUTF8,
 	getStringUTF8Length,
+	getStringUTF8LengthTruncated,
 	acquireExclusiveVMAccess,
 	releaseExclusiveVMAccess,
 	internalReleaseVMAccess,
@@ -152,6 +158,9 @@ J9InternalVMFunctions J9InternalFunctions = {
 	printThreadInfo,
 	initializeAttachedThread,
 	initializeMethodRunAddressNoHook,
+#if defined(J9VM_OPT_SNAPSHOTS)
+	initializeMethodRunAddressForSnapshot,
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
 	sidecarInvokeReflectMethod,
 	sidecarInvokeReflectConstructor,
 	allocateMemorySegmentListWithSize,
@@ -409,13 +418,14 @@ J9InternalVMFunctions J9InternalFunctions = {
 	jvmCheckpointHooks,
 	jvmRestoreHooks,
 	isCRaCorCRIUSupportEnabled,
-	isCRaCorCRIUSupportEnabled_VM,
 	isCRIUSupportEnabled,
+	isTimeCompensationEnabled,
 	enableCRIUSecProvider,
 	isCheckpointAllowed,
 	isNonPortableRestoreMode,
 	isJVMInPortableRestoreMode,
 	isDebugOnRestoreEnabled,
+	isDebugAgentDisabled,
 	setRequiredGhostFileLimit,
 	runInternalJVMCheckpointHooks,
 	runInternalJVMRestoreHooks,
@@ -451,12 +461,36 @@ J9InternalVMFunctions J9InternalFunctions = {
 	walkAllStackFrames,
 	acquireVThreadInspector,
 	releaseVThreadInspector,
+	enterVThreadTransitionCritical,
+	exitVThreadTransitionCritical,
 #endif /* JAVA_SPEC_VERSION >= 19 */
 	checkArgsConsumed,
 #if defined(J9VM_ZOS_3164_INTEROPERABILITY) && (JAVA_SPEC_VERSION >= 17)
 	invoke31BitJNI_OnXLoad,
 #endif /* defined(J9VM_ZOS_3164_INTEROPERABILITY) && (JAVA_SPEC_VERSION >= 17) */
 #if defined(J9VM_OPT_JFR)
+	initializeJFR,
+	isJFREnabled,
+	isJFRRecordingStarted,
+	jfrDump,
 	jfrExecutionSample,
+	setJFRRecordingFileName,
+	tearDownJFR,
+	getTypeIdUTF8,
+	getTypeId,
 #endif /* defined(J9VM_OPT_JFR) */
+#if defined(J9VM_OPT_SNAPSHOTS)
+	initializeSnapshotClassLoaderObject,
+	initializeSnapshotClassObject,
+	loadWarmClassFromSnapshot,
+	initializeBaseClasses,
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+#if JAVA_SPEC_VERSION >= 24
+	monitorTablePeek,
+	takeVirtualThreadListToUnblock,
+	preparePinnedVirtualThreadForUnmount,
+	detachMonitorInfo,
+#endif /* JAVA_SPEC_VERSION >= 24 */
+	getSystemPropertyList,
+	freeMapCaches,
 };

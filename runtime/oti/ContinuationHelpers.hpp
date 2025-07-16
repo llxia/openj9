@@ -25,11 +25,15 @@
 #include "j9.h"
 #include "j9consts.h"
 #include "j9vmconstantpool.h"
+#include "VMHelpers.hpp"
 
 /* These should match the error code values in enum Pinned within class Continuation. */
 #define J9VM_CONTINUATION_PINNED_REASON_NATIVE 1
 #define J9VM_CONTINUATION_PINNED_REASON_MONITOR 2
 #define J9VM_CONTINUATION_PINNED_REASON_CRITICAL_SECTION 3
+#if JAVA_SPEC_VERSION >= 24
+#define J9VM_CONTINUATION_PINNED_REASON_EXCEPTION 4
+#endif /* JAVA_SPEC_VERSION >= 24 */
 
 class VM_ContinuationHelpers {
 	/*
@@ -53,7 +57,7 @@ public:
 	static VMINLINE void
 	swapFieldsWithContinuation(J9VMThread *vmThread, J9VMContinuation *continuation, j9object_t continuationObject, bool swapJ9VMthreadSavedRegisters = true)
 	{
-	/* Helper macro to swap fields between the two J9Class structs. */
+	/* Helper macro to swap fields between the two J9VMContinuation structs. */
 #define SWAP_MEMBER(fieldName, fieldType, class1, class2) \
 	do { \
 		fieldType temp = (fieldType)((class1)->fieldName); \
@@ -88,7 +92,42 @@ public:
 		j9object_t scopedValueCache = J9VMJDKINTERNALVMCONTINUATION_SCOPEDVALUECACHE(vmThread, continuationObject);
 		J9VMJDKINTERNALVMCONTINUATION_SET_SCOPEDVALUECACHE(vmThread, continuationObject, vmThread->scopedValueCache);
 		vmThread->scopedValueCache = scopedValueCache;
+
+#if JAVA_SPEC_VERSION >= 24
+		if (J9_ARE_ANY_BITS_SET(vmThread->javaVM->extendedRuntimeFlags3, J9_EXTENDED_RUNTIME3_YIELD_PINNED_CONTINUATION)) {
+			SWAP_MEMBER(ownedMonitorCount, UDATA, vmThread, continuation);
+			SWAP_MEMBER(monitorEnterRecordPool, J9Pool*, vmThread, continuation);
+			SWAP_MEMBER(monitorEnterRecords, J9MonitorEnterRecord*, vmThread, continuation);
+			SWAP_MEMBER(jniMonitorEnterRecords, J9MonitorEnterRecord*, vmThread, continuation);
+			/* Reset J9VMThread in preserverd register */
+#if defined(J9VM_ARCH_S390)
+			((J9JITGPRSpillArea*)threadELS->jitGlobalStorageBase)->jitGPRs[13] = (UDATA)vmThread;
+#elif defined(J9VM_ARCH_AARCH64) /* defined(J9VM_ARCH_S390) */
+			((J9JITGPRSpillArea*)threadELS->jitGlobalStorageBase)->jitGPRs[19] = (UDATA)vmThread;
+#elif defined(J9VM_ARCH_ARM) /* defined(J9VM_ARCH_S390) */
+			((J9JITGPRSpillArea*)threadELS->jitGlobalStorageBase)->jitGPRs[8] = (UDATA)vmThread;
+#elif defined(J9VM_ARCH_X86) /* defined(J9VM_ARCH_S390) */
+			((J9JITGPRSpillArea*)threadELS->jitGlobalStorageBase)->jitGPRs.named.rbp = (UDATA)vmThread;
+#elif defined(J9VM_ARCH_RISCV)
+			((J9JITGPRSpillArea*)threadELS->jitGlobalStorageBase)->jitGPRs[10] = (UDATA)vmThread;
+#elif defined(J9VM_ARCH_POWER) /* defined(J9VM_ARCH_S390) */
+#if defined(J9VM_ENV_DATA64)
+			((J9JITGPRSpillArea*)threadELS->jitGlobalStorageBase)->jitGPRs[15] = (UDATA)vmThread;
+#else /* defined(J9VM_ENV_DATA64) */
+			((J9JITGPRSpillArea*)threadELS->jitGlobalStorageBase)->jitGPRs[13] = (UDATA)vmThread;
+#endif /* defined(J9VM_ENV_DATA64) */
+#endif /* defined(J9VM_ARCH_S390) */
+		}
+#endif /* JAVA_SPEC_VERSION >= 24 */
 	}
+
+#if JAVA_SPEC_VERSION >= 24
+	static VMINLINE void
+	sendUnblockerThreadSignal(J9JavaVM *vm)
+	{
+		J9VM_SEND_VIRTUAL_UNBLOCKER_THREAD_SIGNAL(vm);
+	}
+#endif /* JAVA_SPEC_VERSION >= 24 */
 
 	static VMINLINE ContinuationState volatile *
 	getContinuationStateAddress(J9VMThread *vmThread , j9object_t object)
@@ -261,6 +300,169 @@ public:
 
 		return threadObject;
 	}
+
+#if JAVA_SPEC_VERSION >= 24
+	/**
+	 * Check if the threadObject mounted on a J9VMThread is a virtual thread and can be yielded.
+	 *
+	 * @param[in] vmThread the J9VMThread
+	 *
+	 * @return true if the virtual thread is yieldable, otherwise false
+	 */
+	static VMINLINE bool
+	isYieldableVirtualThread(J9VMThread *vmThread)
+	{
+		return (J9_ARE_ANY_BITS_SET(vmThread->javaVM->extendedRuntimeFlags3, J9_EXTENDED_RUNTIME3_YIELD_PINNED_CONTINUATION)
+				&& IS_JAVA_LANG_VIRTUALTHREAD(vmThread, vmThread->threadObject)
+				&& (0 == vmThread->continuationPinCount)
+				&& (0 == vmThread->callOutCount));
+	}
+
+	/**
+	 * Remove a continuation from the provided list.
+	 *
+	 * @param[in] list the list from which the continuation should be removed
+	 * @param[in] continuation the continuation to be removed
+	 *
+	 * @return true if the continuation is found and removed from the list, otherwise false
+	 */
+	static bool
+	removeContinuationFromList(J9VMContinuation **list, J9VMContinuation *continuation)
+	{
+		bool foundInList = false;
+		J9VMContinuation *previous = NULL;
+		J9VMContinuation *current = *list;
+
+		while (NULL != current) {
+			if (continuation == current) {
+				foundInList = true;
+				if (NULL == previous) {
+					*list = current->nextWaitingContinuation;
+				} else {
+					previous->nextWaitingContinuation = current->nextWaitingContinuation;
+				}
+				current->nextWaitingContinuation = NULL;
+				break;
+			}
+			previous = current;
+			current = current->nextWaitingContinuation;
+		}
+
+		return foundInList;
+	}
+
+	/**
+	 * Logic to notify virtual threads waiting on an object monitor.
+	 *
+	 * @param[in] vmThread the J9VMThread
+	 * @param[in] objectMonitor the object monitor on which the virtual threads are waiting
+	 * @param[in] notifyAll indicates if all virtual threads should be notified
+	 *
+	 * @return true if any virtual threads are notified, otherwise false
+	 */
+	static VMINLINE bool
+	notifyVirtualThread(J9VMThread *vmThread, J9ObjectMonitor *objectMonitor, bool notifyAll)
+	{
+		bool notified = false;
+		J9JavaVM *vm = vmThread->javaVM;
+
+		omrthread_monitor_enter(vm->blockedVirtualThreadsMutex);
+		J9VMContinuation **link = &objectMonitor->waitingContinuations;
+		J9VMContinuation *current = NULL;
+		j9object_t vthread = NULL;
+
+		while (NULL != *link) {
+			current = *link;
+			vthread = current->vthread;
+			if (J9VMJAVALANGTHREAD_DEADINTERRUPT(vmThread, vthread)) {
+				/* Remove virtual threads that have been interrupted. */
+				*link = current->nextWaitingContinuation;
+				current->nextWaitingContinuation = NULL;
+			} else {
+				/* Set the notified and onWaitingList flags for virtual threads that have not been interrupted. */
+				J9VMJAVALANGVIRTUALTHREAD_SET_NOTIFIED(vmThread, vthread, JNI_TRUE);
+
+				U_32 state = J9VMJAVALANGVIRTUALTHREAD_STATE(vmThread, vthread);
+				if ((JAVA_LANG_VIRTUALTHREAD_WAIT == state) || (JAVA_LANG_VIRTUALTHREAD_TIMED_WAIT == state)) {
+					/* Update the thread state to BLOCKED. */
+					MM_ObjectAccessBarrierAPI barrier(vmThread);
+					barrier.inlineMixedObjectCompareAndSwapU32(
+							vmThread,
+							vthread,
+							J9VMJAVALANGVIRTUALTHREAD_STATE_OFFSET(vmThread),
+							state,
+							JAVA_LANG_VIRTUALTHREAD_BLOCKED,
+							true);
+				}
+
+				current->objectWaitMonitor->virtualThreadWaitCount += 1;
+				notified = true;
+
+				if (!notifyAll) {
+					/* For Object.notify, exit the loop with current pointer set to the notified Continuation. */
+					break;
+				}
+
+				link = &current->nextWaitingContinuation;
+			}
+		}
+
+		if (notified) {
+			/* Move notified virtual threads to the blockedContinuations list for unblocking. */
+			if (notifyAll) {
+				current->nextWaitingContinuation = vm->blockedContinuations;
+				vm->blockedContinuations = objectMonitor->waitingContinuations;
+				objectMonitor->waitingContinuations = NULL;
+			} else {
+				objectMonitor->waitingContinuations = current->nextWaitingContinuation;
+				current->nextWaitingContinuation = vm->blockedContinuations;
+				vm->blockedContinuations = current;
+			}
+			VM_ContinuationHelpers::sendUnblockerThreadSignal(vm);
+		}
+
+		omrthread_monitor_exit(vm->blockedVirtualThreadsMutex);
+
+		return notified;
+	}
+
+	/**
+	 * Remove a blocking continuation from the VM or monitor blocking list.
+	 *
+	 * @param[in] currentThread the J9VMThread
+	 * @param[in] continuation the continuation to be removed
+	 *
+	 * @return true if the continuation is removed from the lists or not on any list, otherwise false
+	 */
+	static VMINLINE bool
+	removeBlockingContinuationFromLists(J9VMThread *currentThread, J9VMContinuation *continuation)
+	{
+		J9JavaVM *vm = currentThread->javaVM;
+		bool foundInBlockedContinuationList = false;
+		bool foundInMonitorList = false;
+
+		omrthread_monitor_enter(vm->blockedVirtualThreadsMutex);
+
+		foundInBlockedContinuationList = removeContinuationFromList(
+				&vm->blockedContinuations, continuation);
+
+		if (foundInBlockedContinuationList) {
+			continuation->objectWaitMonitor->virtualThreadWaitCount -= 1;
+		}
+
+		if (NULL != continuation->objectWaitMonitor->waitingContinuations) {
+			foundInMonitorList = removeContinuationFromList(
+					&continuation->objectWaitMonitor->waitingContinuations, continuation);
+		}
+
+		omrthread_monitor_exit(vm->blockedVirtualThreadsMutex);
+
+		continuation->objectWaitMonitor = NULL;
+
+		/* Virtual can only be in one list at a time. */
+		return !(foundInBlockedContinuationList && foundInMonitorList);
+	}
+#endif /* JAVA_SPEC_VERSION >= 24 */
 };
 
 #endif /* CONTINUATIONHELPERS_HPP_ */

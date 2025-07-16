@@ -39,7 +39,7 @@ public final class ExtendedRuntimeMXBeanImpl extends RuntimeMXBeanImpl implement
 
 	/**
 	 * Singleton accessor method.
-	 * 
+	 *
 	 * @return the <code>RuntimeMXBeanImpl</code> singleton.
 	 */
 	public static RuntimeMXBean getInstance() {
@@ -117,19 +117,25 @@ public final class ExtendedRuntimeMXBeanImpl extends RuntimeMXBeanImpl implement
 
 	@Override
 	public boolean isAttachApiInitialized() {
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 		checkMonitorPermission();
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 		return AttachHandler.isAttachApiInitialized();
 	}
 
 	@Override
 	public boolean isAttachApiTerminated() {
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 		checkMonitorPermission();
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 		return AttachHandler.isAttachApiTerminated();
 	}
 
 	@Override
 	public String getVmId() {
+		/*[IF JAVA_SPEC_VERSION < 24]*/
 		checkMonitorPermission();
+		/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 		return AttachHandler.getVmId();
 	}
 }

@@ -38,13 +38,12 @@ namespace J9 { typedef J9::Compilation CompilationConnector; }
 #include "control/Options.hpp"
 #include "control/Options_inlines.hpp"
 #include "infra/Statistics.hpp"
+#include "infra/vector.hpp"
 #include "env/CompilerEnv.hpp"
 #include "env/OMRMemory.hpp"
 #include "compile/AOTClassInfo.hpp"
 #include "runtime/SymbolValidationManager.hpp"
-#if defined(J9VM_OPT_JITSERVER)
 #include "env/PersistentCollections.hpp"
-#endif /* defined(J9VM_OPT_JITSERVER) */
 
 
 class TR_AOTGuardSite;
@@ -391,6 +390,9 @@ class OMR_EXTENSIBLE Compilation : public OMR::CompilationConnector
    // fails serialization by setting _aotCacheStore to false if we are not ignoring the client's SCC, and otherwise
    // fails the compilation entirely.
    void addThunkRecord(const AOTCacheThunkRecord *record);
+#else
+   bool isDeserializedAOTMethod() const { return false; }
+   bool ignoringLocalSCC() const { return false; }
 #endif /* defined(J9VM_OPT_JITSERVER) */
 
    TR::SymbolValidationManager *getSymbolValidationManager() { return _symbolValidationManager; }
@@ -432,6 +434,21 @@ class OMR_EXTENSIBLE Compilation : public OMR::CompilationConnector
    void setOSRProhibitedOverRangeOfTrees() { _osrProhibitedOverRangeOfTrees = true; }
    bool isOSRProhibitedOverRangeOfTrees() { return _osrProhibitedOverRangeOfTrees; }
 
+#if defined(PERSISTENT_COLLECTIONS_UNSUPPORTED)
+   void addAOTMethodDependency(TR_OpaqueClassBlock *ramClass) {}
+   void addAOTMethodDependency(TR_OpaqueClassBlock *ramClass, uintptr_t chainOffset) {}
+#else
+   void addAOTMethodDependency(TR_OpaqueClassBlock *ramClass);
+   void addAOTMethodDependency(TR_OpaqueClassBlock *ramClass, uintptr_t chainOffset);
+   uintptr_t populateAOTMethodDependencies(TR_OpaqueClassBlock *definingClass, Vector<uintptr_t> &chainBuffer);
+#endif
+
+   /**
+    * \brief Get the class loaders that are known to be permanent.
+    * \return a vector of pointers to all known-permanent class loaders
+    */
+   const TR::vector<J9ClassLoader*, TR::Region&> &permanentLoaders();
+
 private:
    enum CachedClassPointerId
       {
@@ -445,6 +462,10 @@ private:
       };
 
    TR_OpaqueClassBlock *getCachedClassPointer(CachedClassPointerId which);
+
+#if !defined(PERSISTENT_COLLECTIONS_UNSUPPORTED)
+   void addAOTMethodDependency(uintptr_t offset, bool classIsInitialized);
+#endif  /*  !defined(PERSISTENT_COLLECTIONS_UNSUPPORTED) */
 
    J9VMThread *_j9VMThread;
 
@@ -561,9 +582,19 @@ private:
    UnorderedSet<const AOTCacheThunkRecord *> _thunkRecords;
 #endif /* defined(J9VM_OPT_JITSERVER) */
 
+#if !defined(PERSISTENT_COLLECTIONS_UNSUPPORTED)
+   // A map recording the dependencies of an AOT method. The keys are the class
+   // chain offsets of classes this method depends on, and the values record
+   // whether the class needs to be initialized before method loading, or only
+   // loaded.
+   UnorderedMap<uintptr_t, bool> _aotMethodDependencies;
+#endif /* defined(PERSISTENT_COLLECTIONS_UNSUPPORTED) */
+
    TR::SymbolValidationManager *_symbolValidationManager;
+   TR::vector<J9ClassLoader*, TR::Region&> _permanentLoaders;
    bool _osrProhibitedOverRangeOfTrees;
    bool _wasFearPointAnalysisDone;
+   bool _permanentLoadersInitialized;
    };
 
 }

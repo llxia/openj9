@@ -92,13 +92,6 @@ TR_J9ServerVM::isSameOrSuperClass(J9Class *superClass, J9Class *subClass)
    if (superClass == subClass) // same class
       return true;
 
-   void *superClassLoader, *subClassLoader;
-   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
-   JITServerHelpers::getAndCacheRAMClassInfo(superClass, _compInfoPT->getClientData(), stream, JITServerHelpers::CLASSINFO_CLASS_LOADER, &superClassLoader);
-   JITServerHelpers::getAndCacheRAMClassInfo(subClass, _compInfoPT->getClientData(), stream, JITServerHelpers::CLASSINFO_CLASS_LOADER, &subClassLoader);
-   if (superClassLoader != subClassLoader)
-      return false;
-
    TR_OpaqueClassBlock *candidateSuperClassPtr = reinterpret_cast<TR_OpaqueClassBlock *>(superClass);
    TR_OpaqueClassBlock *classPtr = reinterpret_cast<TR_OpaqueClassBlock *>(subClass);
    // walk the hierarchy, trying to find a matching super class
@@ -253,7 +246,7 @@ TR_J9ServerVM::getByteArrayClass()
    {
    JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
    auto *vmInfo = _compInfoPT->getClientData()->getOrCacheVMInfo(stream);
-   return vmInfo->_byteArrayClass;
+   return vmInfo->_byteArrayOpaqueClass;
    }
 
 bool
@@ -348,26 +341,49 @@ TR_J9ServerVM::getLeafComponentClassFromArrayClass(TR_OpaqueClassBlock * arrayCl
    }
 
 TR_OpaqueClassBlock *
-TR_J9ServerVM::getClassFromSignature(const char *sig, int32_t length, TR_ResolvedMethod *method, bool isVettedForAOT)
+TR_J9ServerVM::getClassFromSignature(const char *sig, int32_t sigLength, J9ConstantPool *constantPool, bool isVettedForAOT)
    {
    // Primitive types don't have a class associated with them
-   if (isSignatureForPrimitiveType(sig, length))
+   if (isSignatureForPrimitiveType(sig, sigLength))
       return NULL;
 
-   TR_OpaqueClassBlock * clazz = NULL;
-   J9ClassLoader * cl = ((TR_ResolvedJ9Method *)method)->getClassLoader();
-   ClassLoaderStringPair key = {cl, std::string(sig, length)};
-   PersistentUnorderedMap<ClassLoaderStringPair, TR_OpaqueClassBlock*> & classBySignatureMap = _compInfoPT->getClientData()->getClassBySignatureMap();
+   auto cpClass = getClassFromCP(constantPool);
+   auto cpClassLoader = (J9ClassLoader *)getClassLoader(cpClass);
+
+   ClassLoaderStringPair key = {cpClassLoader, std::string(sig, sigLength)};
+   PersistentUnorderedMap<ClassLoaderStringPair, TR_OpaqueClassBlock *> & classBySignatureMap = _compInfoPT->getClientData()->getClassBySignatureMap();
       {
       OMR::CriticalSection classFromSigCS(_compInfoPT->getClientData()->getClassMapMonitor());
       auto it = classBySignatureMap.find(key);
       if (it != classBySignatureMap.end())
          return it->second;
       }
+
    // classname not found; ask the client and cache the answer
-   clazz = getClassFromSignature(sig, length, (TR_OpaqueMethodBlock *)method->getPersistentIdentifier(), isVettedForAOT);
+   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
+   std::string str(sig, sigLength);
+   stream->write(JITServer::MessageType::VM_getClassFromSignature, str, constantPool);
+   auto recv = stream->read<TR_OpaqueClassBlock *, J9ClassLoader *>();
+   TR_OpaqueClassBlock *clazz = std::get<0>(recv);
+   J9ClassLoader *cl = std::get<1>(recv);
    if (clazz)
       {
+      if (cl != cpClassLoader)
+         {
+         // make sure that the class is cached
+         J9ROMClass *romClass = TR::Compiler->cls.romClassOf((TR_OpaqueClassBlock *)clazz);
+         TR_ASSERT_FATAL(romClass, "class %p could not be cached", clazz);
+         OMR::CriticalSection getRemoteROMClass(_compInfoPT->getClientData()->getROMMapMonitor());
+         auto it = _compInfoPT->getClientData()->getROMClassMap().find(reinterpret_cast<J9Class *>(clazz));
+         if (it != _compInfoPT->getClientData()->getROMClassMap().end())
+            {
+            // remember that we cached this class by cp class loader
+            // so that the cache entry is removed if the cached class gets unloaded
+            // if the class loaders are not identical
+            it->second._referencingClassLoaders.insert(cpClassLoader);
+            }
+         }
+
       OMR::CriticalSection classFromSigCS(_compInfoPT->getClientData()->getClassMapMonitor());
       classBySignatureMap[key] = clazz;
       }
@@ -379,39 +395,6 @@ TR_J9ServerVM::getClassFromSignature(const char *sig, int32_t length, TR_Resolve
       // In theory we could consider this a special case and watch the CHTable updates
       // for a class load event for Ljava/lang/String$StringCompressionFlag, but it may not
       // be worth the trouble.
-      }
-   return clazz;
-   }
-
-
-TR_OpaqueClassBlock *
-TR_J9ServerVM::getClassFromSignature(const char *sig, int32_t length, TR_OpaqueMethodBlock *method, bool isVettedForAOT)
-   {
-   // Primitive types don't have a class associated with them
-   if (isSignatureForPrimitiveType(sig, length))
-      return NULL;
-
-   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
-   std::string str(sig, length);
-   stream->write(JITServer::MessageType::VM_getClassFromSignature, str, method, isVettedForAOT);
-   auto recv = stream->read<TR_OpaqueClassBlock *, J9ClassLoader *, J9ClassLoader *>();
-   TR_OpaqueClassBlock *clazz = std::get<0>(recv);
-   J9ClassLoader *cl = std::get<1>(recv);
-   J9ClassLoader *methodClassLoader = std::get<2>(recv);
-   if (clazz && cl != methodClassLoader)
-      {
-      // make sure that the class is cached
-      J9ROMClass *romClass = TR::Compiler->cls.romClassOf(clazz);
-      TR_ASSERT_FATAL(romClass, "class %p could not be cached", clazz);
-      OMR::CriticalSection getRemoteROMClass(_compInfoPT->getClientData()->getROMMapMonitor());
-      auto it = _compInfoPT->getClientData()->getROMClassMap().find(reinterpret_cast<J9Class *>(clazz));
-      if (it != _compInfoPT->getClientData()->getROMClassMap().end())
-         {
-         // remember that we cached this class by method class loader
-         // so that the cache entry is removed if the cached class gets unloaded
-         // if the class loaders are not identical
-         it->second._referencingClassLoaders.insert(methodClassLoader);
-         }
       }
    return clazz;
    }
@@ -680,11 +663,16 @@ TR_J9ServerVM::isGetImplAndRefersToInliningSupported()
 bool
 TR_J9ServerVM::compiledAsDLTBefore(TR_ResolvedMethod *method)
    {
+   // The server keeps track of DLT compilations that have been performed,
+   // so no messages need to be sent to the client
 #if defined(J9VM_JIT_DYNAMIC_LOOP_TRANSFER)
-   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
-   auto mirror = static_cast<TR_ResolvedJ9JITServerMethod *>(method)->getRemoteMirror();
-   stream->write(JITServer::MessageType::VM_compiledAsDLTBefore, static_cast<TR_ResolvedMethod *>(mirror));
-   return std::get<0>(stream->read<bool>());
+   TR_ResolvedJ9JITServerMethod *serverMethod = static_cast<TR_ResolvedJ9JITServerMethod*>(method);
+   J9Method *j9method = serverMethod->ramMethod();
+
+   ClientSessionData *clientData = _compInfoPT->getClientData();
+   auto &dltedMethodSet = clientData->getDLTedMethodSet();
+   OMR::CriticalSection cs(clientData->getDLTSetMonitor());
+   return dltedMethodSet.find(j9method) != dltedMethodSet.end();
 #else
    return 0;
 #endif
@@ -947,10 +935,35 @@ TR_J9ServerVM::getObjectClassFromKnownObjectIndex(TR::Compilation *comp, TR::Kno
    return std::get<0>(stream->read<TR_OpaqueClassBlock *>());
    }
 
+TR_OpaqueClassBlock *
+TR_J9ServerVM::getObjectClassFromKnownObjectIndex(TR::Compilation *comp,
+                                                  TR::KnownObjectTable::Index idx,
+                                                  bool *isJavaLangClass)
+   {
+   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
+   stream->write(JITServer::MessageType::VM_getObjectClassFromKnownObjectIndexJLClass, idx);
+   auto recv = stream->read<TR_OpaqueClassBlock *, bool>();
+   *isJavaLangClass = std::get<1>(recv);
+   return std::get<0>(recv);
+   }
+
 uintptr_t
 TR_J9ServerVM::getStaticReferenceFieldAtAddress(uintptr_t fieldAddress)
    {
    TR_ASSERT_FATAL(false, "getStaticReferenceFieldAtAddress() should not be called by JITServer");
+   }
+
+TR_J9VMBase::ObjectClassInfo
+TR_J9ServerVM::getObjectClassInfoFromObjectReferenceLocation(TR::Compilation *comp, uintptr_t objectReferenceLocation)
+   {
+   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
+   stream->write(JITServer::MessageType::VM_getObjectClassInfoFromObjectReferenceLocation,
+                 objectReferenceLocation);
+   auto recv = stream->read<TR_J9VMBase::ObjectClassInfo, uintptr_t *>();
+   TR_J9VMBase::ObjectClassInfo result = std::get<0>(recv);
+   uintptr_t *objectReferenceLocationClient = std::get<1>(recv);
+   comp->getKnownObjectTable()->updateKnownObjectTableAtServer(result.knownObjectIndex, objectReferenceLocationClient);
+   return result;
    }
 
 bool
@@ -1044,7 +1057,7 @@ TR_J9ServerVM::sampleSignature(TR_OpaqueMethodBlock * aMethod, char *buf, int32_
    int32_t len = J9UTF8_LENGTH(className) + J9UTF8_LENGTH(name) + J9UTF8_LENGTH(signature) + 3;
    char *s = len <= bufLen ? buf : (trMemory ? (char *)trMemory->allocateHeapMemory(len) : NULL);
    if (s)
-      sprintf(s, "%.*s.%.*s%.*s", J9UTF8_LENGTH(className), utf8Data(className), J9UTF8_LENGTH(name), utf8Data(name), J9UTF8_LENGTH(signature), utf8Data(signature));
+      snprintf(s, len, "%.*s.%.*s%.*s", J9UTF8_LENGTH(className), utf8Data(className), J9UTF8_LENGTH(name), utf8Data(name), J9UTF8_LENGTH(signature), utf8Data(signature));
    return s;
    }
 
@@ -1058,12 +1071,16 @@ TR_J9ServerVM::getHostClass(TR_OpaqueClassBlock *clazz)
    return hostClass;
    }
 
-intptr_t
+int32_t
 TR_J9ServerVM::getStringUTF8Length(uintptr_t objectPointer)
    {
-   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
-   stream->write(JITServer::MessageType::VM_getStringUTF8Length, objectPointer);
-   return std::get<0>(stream->read<intptr_t>());
+   TR_ASSERT_FATAL(false, "getStringUTF8Length(uintptr_t) should not be called by JITServer");
+   }
+
+uint64_t
+TR_J9ServerVM::getStringUTF8UnabbreviatedLength(uintptr_t objectPointer)
+   {
+   TR_ASSERT_FATAL(false, "getStringUTF8UnabbreviatedLength(uintptr_t) should not be called by JITServer");
    }
 
 bool
@@ -1169,6 +1186,30 @@ TR_J9ServerVM::getArrayClassFromComponentClass(TR_OpaqueClassBlock *componentCla
          }
       }
    return arrayClass;
+   }
+
+TR_OpaqueClassBlock *
+TR_J9ServerVM::getNullRestrictedArrayClassFromComponentClass(TR_OpaqueClassBlock *componentClass)
+   {
+   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
+   TR_OpaqueClassBlock *nullRestrictedArrayClass = NULL;
+   JITServerHelpers::getAndCacheRAMClassInfo((J9Class *)componentClass, _compInfoPT->getClientData(), stream, JITServerHelpers::CLASSINFO_NULLRESTRICTED_ARRAY_CLASS, (void *)&nullRestrictedArrayClass);
+   if (!nullRestrictedArrayClass)
+      {
+      stream->write(JITServer::MessageType::VM_getNullRestrictedArrayClassFromComponentClass, componentClass);
+      nullRestrictedArrayClass = std::get<0>(stream->read<TR_OpaqueClassBlock *>());
+      if (nullRestrictedArrayClass)
+         {
+         // if client initialized nullRestrictedArrayClass, cache the new value
+         OMR::CriticalSection getRemoteROMClass(_compInfoPT->getClientData()->getROMMapMonitor());
+         auto it = _compInfoPT->getClientData()->getROMClassMap().find((J9Class*) componentClass);
+         if (it != _compInfoPT->getClientData()->getROMClassMap().end())
+            {
+            it->second._nullRestrictedArrayClass = nullRestrictedArrayClass;
+            }
+         }
+      }
+   return nullRestrictedArrayClass;
    }
 
 J9Class *
@@ -1589,16 +1630,70 @@ TR_J9ServerVM::reportHotField(int32_t reducedCpuUtil, J9Class* clazz, uint8_t fi
 int32_t *
 TR_J9ServerVM::getReferenceSlotsInClass(TR::Compilation *comp, TR_OpaqueClassBlock *clazz)
    {
+   bool classIsCached = true;
+   // First check the cache
+      {
+      OMR::CriticalSection getRemoteROMClass(_compInfoPT->getClientData()->getROMMapMonitor());
+      auto it = _compInfoPT->getClientData()->getROMClassMap().find(reinterpret_cast<J9Class *>(clazz));
+      if (it != _compInfoPT->getClientData()->getROMClassMap().end())
+         {
+         // 'clazz' is cached. How about the reference slot info for this class?
+         auto &refSlotsCache = it->second._referenceSlotsInClass;
+         if (refSlotsCache.size() > 0)
+            {
+            // I have the reference fields cached. Copy them out.
+            if (refSlotsCache.size() == 1) // Last one is a 0 marker, i.e. end-of-list
+               return NULL; // 'clazz' has no reference fields
+            size_t sizeInBytes = refSlotsCache.size() * sizeof(int32_t);
+            // Ideally we would return a pointer inside the vector (refSlotsCache.data()),
+            // but the danger is that the compiler might try to free it. It's safer just to copy the data.
+            int32_t *refSlots = (int32_t *)comp->trHeapMemory().allocate(sizeInBytes);
+            if (!refSlots)
+               throw std::bad_alloc();
+            memcpy(refSlots, refSlotsCache.data(), sizeInBytes);
+            return refSlots;
+            }
+         }
+      else // Class is not cached
+         {
+         // Don't try to cache 'clazz'. Just ask the client for the reference slots info.
+         classIsCached = false;
+         }
+      }
+   int32_t numRefSlots = 0;
+   int32_t *refSlots = NULL;
+   // Send a message to the client to retrieve the desired data
    JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
    stream->write(JITServer::MessageType::VM_getReferenceSlotsInClass, clazz);
    auto recv = stream->read<std::string>();
    auto &slotsStr = std::get<0>(recv);
-   if (slotsStr.empty())
-      return NULL;
-   int32_t *refSlots = (int32_t *)comp->trHeapMemory().allocate(slotsStr.size());
-   if (!refSlots)
-      throw std::bad_alloc();
-   memcpy(refSlots, slotsStr.data(), slotsStr.size());
+   if (!slotsStr.empty())
+      {
+      refSlots = (int32_t *)comp->trHeapMemory().allocate(slotsStr.size());
+      if (!refSlots)
+         throw std::bad_alloc();
+      memcpy(refSlots, slotsStr.data(), slotsStr.size());
+      numRefSlots = slotsStr.size() / sizeof(int32_t) - 1; // Last entry is the NULL terminator
+      }
+
+   // If the class is cached, we can also cache the information about the reference slots.
+   if (classIsCached)
+      {
+      OMR::CriticalSection getRemoteROMClass(_compInfoPT->getClientData()->getROMMapMonitor());
+      auto it = _compInfoPT->getClientData()->getROMClassMap().find(reinterpret_cast<J9Class *>(clazz));
+      if (it != _compInfoPT->getClientData()->getROMClassMap().end())
+         {
+         auto &refSlotsCache = it->second._referenceSlotsInClass;
+         if (refSlots)
+            {
+            refSlotsCache.reserve(numRefSlots + 1);
+            for (int i = 0; i < numRefSlots; i++)
+               refSlotsCache.push_back(refSlots[i]);
+            }
+         // Add a 0 terminator for the sequence of reference slots.
+         refSlotsCache.push_back(0);
+         }
+      }
    return refSlots;
    }
 
@@ -1608,14 +1703,6 @@ TR_J9ServerVM::getMethodSize(TR_OpaqueMethodBlock *method)
    JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
    stream->write(JITServer::MessageType::VM_getMethodSize, method);
    return std::get<0>(stream->read<uint32_t>());
-   }
-
-void *
-TR_J9ServerVM::addressOfFirstClassStatic(TR_OpaqueClassBlock *clazz)
-   {
-   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
-   stream->write(JITServer::MessageType::VM_addressOfFirstClassStatic, clazz);
-   return std::get<0>(stream->read<void *>());
    }
 
 void *
@@ -1678,7 +1765,7 @@ TR_J9ServerVM::getClassFromMethodBlock(TR_OpaqueMethodBlock *method)
       auto it = _compInfoPT->getClientData()->getJ9MethodMap().find((J9Method*) method);
       if (it != _compInfoPT->getClientData()->getJ9MethodMap().end())
          {
-         return it->second._owningClass;
+         return (TR_OpaqueClassBlock *)it->second.definingClass();
          }
       }
 
@@ -1853,6 +1940,22 @@ TR_J9ServerVM::createMethodHandleArchetypeSpecimen(TR_Memory *trMemory, uintptr_
    return result;
    }
 
+TR::KnownObjectTable::Index
+TR_J9ServerVM::mutableCallSiteEpoch(TR::Compilation *comp, TR::KnownObjectTable::Index mcs)
+   {
+   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
+   stream->write(JITServer::MessageType::VM_mutableCallSiteEpoch, mcs);
+
+   auto recv = stream->read<TR::KnownObjectTable::Index, uintptr_t*>();
+   TR::KnownObjectTable::Index result = std::get<0>(recv);
+   uintptr_t *resultRefLocation = std::get<1>(recv);
+
+   TR::KnownObjectTable *knot = comp->getKnownObjectTable();
+   knot->updateKnownObjectTableAtServer(result, resultRefLocation);
+
+   return result;
+   }
+
 intptr_t
 TR_J9ServerVM::getVFTEntry(TR_OpaqueClassBlock *clazz, int32_t offset)
    {
@@ -1966,7 +2069,7 @@ TR_J9ServerVM::transformJlrMethodInvoke(J9Method *callerMethod, J9Class *callerC
 bool
 TR_J9ServerVM::isAnonymousClass(TR_OpaqueClassBlock *j9clazz)
    {
-   uintptr_t extraModifiers = 0;
+   uint32_t extraModifiers = 0;
    JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
    JITServerHelpers::getAndCacheRAMClassInfo((J9Class *)j9clazz, _compInfoPT->getClientData(), stream, JITServerHelpers::CLASSINFO_ROMCLASS_EXTRAMODIFIERS, (void *)&extraModifiers);
 
@@ -1976,7 +2079,7 @@ TR_J9ServerVM::isAnonymousClass(TR_OpaqueClassBlock *j9clazz)
 bool
 TR_J9ServerVM::isHiddenClass(TR_OpaqueClassBlock *j9clazz)
    {
-   uintptr_t extraModifiers = 0;
+   uint32_t extraModifiers = 0;
    JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
    JITServerHelpers::getAndCacheRAMClassInfo((J9Class *)j9clazz, _compInfoPT->getClientData(), stream, JITServerHelpers::CLASSINFO_ROMCLASS_EXTRAMODIFIERS, (void *)&extraModifiers);
 
@@ -2401,6 +2504,19 @@ TR_J9ServerVM::getVMIndexOffset()
    return vmInfo->_vmindexOffset;
    }
 
+int32_t
+TR_J9ServerVM::getVarHandleAccessDescriptorMode(TR::Compilation *comp, TR::KnownObjectTable::Index adIndex)
+   {
+   TR::KnownObjectTable *knot = comp->getKnownObjectTable();
+   if (!knot) return -1;
+
+   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
+   stream->write(JITServer::MessageType::VM_getVarHandleAccessDescriptorMode, adIndex);
+   auto recv = stream->read<int32_t>();
+
+   return std::get<0>(recv);
+   }
+
 TR::KnownObjectTable::Index
 TR_J9ServerVM::getMethodHandleTableEntryIndex(TR::Compilation *comp, TR::KnownObjectTable::Index vhIndex, TR::KnownObjectTable::Index adIndex)
    {
@@ -2414,6 +2530,22 @@ TR_J9ServerVM::getMethodHandleTableEntryIndex(TR::Compilation *comp, TR::KnownOb
    TR::KnownObjectTable::Index mhIndex = std::get<0>(recv);
    knot->updateKnownObjectTableAtServer(mhIndex, std::get<1>(recv));
    return mhIndex;
+   }
+
+TR::KnownObjectTable::Index
+TR_J9ServerVM::getLayoutVarHandle(TR::Compilation *comp, TR::KnownObjectTable::Index layoutIndex)
+   {
+   TR::KnownObjectTable *knot = comp->getKnownObjectTable();
+   if (!knot) return TR::KnownObjectTable::UNKNOWN;
+
+   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
+   stream->write(JITServer::MessageType::VM_getLayoutVarHandle, layoutIndex);
+   auto recv = stream->read<TR::KnownObjectTable::Index, uintptr_t *>();
+
+   TR::KnownObjectTable::Index vhIndex = std::get<0>(recv);
+   knot->updateKnownObjectTableAtServer(vhIndex, std::get<1>(recv));
+   return vhIndex;
+
    }
 
 #endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
@@ -2463,11 +2595,37 @@ TR_J9ServerVM::isLambdaFormGeneratedMethod(TR_ResolvedMethod *method)
    }
 
 bool
-TR_J9ServerVM::isStable(J9Class *fieldClass, int cpIndex)
+TR_J9ServerVM::isStable(J9Class *fieldClass, int32_t cpIndex)
    {
+   // See if we cached the presence of the annotation for this class and cpIndex
+      {
+      OMR::CriticalSection getRemoteROMClass(_compInfoPT->getClientData()->getROMMapMonitor());
+      // The fieldClass is guaranteed to be cached at the server because this
+      // method is called from a ResolvedMethod
+      auto &cache = JITServerHelpers::getJ9ClassInfo(_compInfoPT, fieldClass)._isStableCache;
+      auto it = cache.find(cpIndex);
+      if (it != cache.end())
+         return it->second;
+      }
+   // At the moment, @Stable annotations are only used in bootstrap classes (this can change though).
+   // To limit the number of VM_isStable messages further and to reduce the number of values that
+   // are cached in "_isStableCache" cache, we return 'false' when the `fieldClass` is not a bootstrap class.
+   static char *dontIgnore = feGetEnv("TR_DontIgnoreStableAnnotationForUserClasses");
+   if (!dontIgnore && !isClassLibraryClass((TR_OpaqueClassBlock*)fieldClass))
+      return false;
+
+   // Not cached; send a message and obtain the value
    JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
    stream->write(JITServer::MessageType::VM_isStable, fieldClass, cpIndex);
-   return std::get<0>(stream->read<bool>());
+   bool answer = std::get<0>(stream->read<bool>());
+
+   // Cache the answer
+      {
+      OMR::CriticalSection getRemoteROMClass(_compInfoPT->getClientData()->getROMMapMonitor());
+      auto &cache = JITServerHelpers::getJ9ClassInfo(_compInfoPT, fieldClass)._isStableCache;
+      cache.insert({cpIndex, answer});
+      }
+   return answer;
    }
 
 bool
@@ -2549,6 +2707,131 @@ TR_J9ServerVM::isPortableRestoreModeEnabled()
    JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
    auto *vmInfo = _compInfoPT->getClientData()->getOrCacheVMInfo(stream);
    return vmInfo->_isPortableRestoreMode;
+   }
+
+bool
+TR_J9ServerVM::isIndexableDataAddrPresent()
+   {
+#if defined(J9VM_ENV_DATA64)
+   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
+   auto *vmInfo = _compInfoPT->getClientData()->getOrCacheVMInfo(stream);
+   return vmInfo->_isIndexableDataAddrPresent;
+#else
+   return false;
+#endif /* defined(J9VM_ENV_DATA64) */
+   }
+
+/**
+ * Query if off-heap large array allocation is enabled
+ *
+ * @return true if off-heap large array allocation is enabled, false otherwise
+ */
+bool
+TR_J9ServerVM::isOffHeapAllocationEnabled()
+   {
+   JITServer::ServerStream *stream = _compInfoPT->getMethodBeingCompiled()->_stream;
+   auto *vmInfo = _compInfoPT->getClientData()->getOrCacheVMInfo(stream);
+   return vmInfo->_isOffHeapAllocationEnabled;
+   }
+
+
+TR_arrayTypeCode
+TR_J9ServerVM::getPrimitiveArrayTypeCode(TR_OpaqueClassBlock* clazz)
+   {
+   TR_ASSERT(isPrimitiveClass(clazz), "Expect primitive class in TR_J9VMBase::getPrimitiveArrayType");
+
+   J9Class* j9clazz = (J9Class*)clazz;
+
+   auto stream = _compInfoPT->getStream();
+   auto vmInfo = _compInfoPT->getClientData()->getOrCacheVMInfo(stream);
+   if (j9clazz == vmInfo->_booleanReflectClassPtr)
+      return atype_boolean;
+   else if (j9clazz == vmInfo->_charReflectClassPtr)
+      return atype_char;
+   else if (j9clazz == vmInfo->_floatReflectClassPtr)
+      return atype_float;
+   else if (j9clazz == vmInfo->_doubleReflectClassPtr)
+      return atype_double;
+   else if (j9clazz == vmInfo->_byteReflectClassPtr)
+      return atype_byte;
+   else if (j9clazz == vmInfo->_shortReflectClassPtr)
+      return atype_short;
+   else if (j9clazz == vmInfo->_intReflectClassPtr)
+      return atype_int;
+   else if (j9clazz == vmInfo->_longReflectClassPtr)
+      return atype_long;
+   else
+      {
+      TR_ASSERT(false, "TR_arrayTypeCode is not defined for the j9clazz");
+      return (TR_arrayTypeCode)0;
+      }
+   }
+
+TR::DataType
+TR_J9ServerVM::getClassPrimitiveDataType(TR_OpaqueClassBlock* clazz)
+   {
+   J9Class *j9class = TR::Compiler->cls.convertClassOffsetToClassPtr(clazz);
+
+   if (!j9class) return TR::NoType;
+
+   auto vmInfo = _compInfoPT->getClientData()->getOrCacheVMInfo(_compInfoPT->getStream());
+
+   if (j9class == vmInfo->_floatReflectClassPtr)
+      return TR::Float;
+   else if (j9class == vmInfo->_doubleReflectClassPtr)
+      return TR::Double;
+   else if (j9class == vmInfo->_byteReflectClassPtr)
+      return TR::Int8;
+   else if (j9class == vmInfo->_shortReflectClassPtr)
+      return TR::Int16;
+   else if (j9class == vmInfo->_intReflectClassPtr)
+      return TR::Int32;
+   else if (j9class == vmInfo->_longReflectClassPtr)
+      return TR::Int64;
+   else
+      return TR::NoType;
+   }
+
+TR_OpaqueClassBlock *
+TR_J9ServerVM::getArrayClassFromDataType(TR::DataType type, bool booleanClass)
+   {
+   J9Class *j9class;
+   auto vmInfo = _compInfoPT->getClientData()->getOrCacheVMInfo(_compInfoPT->getStream());
+
+   if (booleanClass)
+      {
+      j9class = (J9Class *) vmInfo->_booleanArrayClass;
+      }
+   else
+      {
+      switch (type)
+         {
+         case TR::Float:
+            j9class = (J9Class *) vmInfo->_floatArrayClass;
+            break;
+         case TR::Double:
+            j9class = (J9Class *) vmInfo->_doubleArrayClass;
+            break;
+         case TR::Int8:
+            j9class = (J9Class *) vmInfo->_byteArrayClass;
+            break;
+         case TR::Int16:
+            j9class = (J9Class *) vmInfo->_shortArrayClass;
+            break;
+         case TR::Int32:
+            j9class = (J9Class *) vmInfo->_intArrayClass;
+            break;
+         case TR::Int64:
+            j9class = (J9Class *) vmInfo->_longArrayClass;
+            break;
+         default:
+            TR_ASSERT_FATAL(false, "Incorrect array element type");
+            return NULL;
+         }
+      }
+
+
+   return convertClassPtrToClassOffset(j9class);
    }
 
 bool
@@ -2693,91 +2976,25 @@ TR_J9SharedCacheServerVM::supportAllocationInlining(TR::Compilation *comp, TR::N
    }
 
 TR_OpaqueClassBlock *
-TR_J9SharedCacheServerVM::getClassFromSignature(const char * sig, int32_t sigLength, TR_ResolvedMethod * method, bool isVettedForAOT)
+TR_J9SharedCacheServerVM::getClassFromSignature(const char *sig, int32_t sigLength, J9ConstantPool *constantPool, bool isVettedForAOT)
    {
-   // Primitive types don't have a class associated with them
-   if (isSignatureForPrimitiveType(sig, sigLength))
-      return NULL;
-
-   TR_ResolvedRelocatableJ9JITServerMethod* resolvedJITServerMethod = (TR_ResolvedRelocatableJ9JITServerMethod *)method;
-   TR_OpaqueClassBlock* clazz = NULL;
-   J9ClassLoader * cl = ((TR_ResolvedJ9Method *)method)->getClassLoader();
-   ClassLoaderStringPair key = {cl, std::string(sig, sigLength)};
-   PersistentUnorderedMap<ClassLoaderStringPair, TR_OpaqueClassBlock*> & classBySignatureMap = _compInfoPT->getClientData()->getClassBySignatureMap();
-      {
-      OMR::CriticalSection classFromSigCS(_compInfoPT->getClientData()->getClassMapMonitor());
-      auto it = classBySignatureMap.find(key);
-      if (it != classBySignatureMap.end())
-         clazz = it->second;
-      }
-   if (!clazz)
-      {
-      // classname not found; ask the client and cache the answer
-      clazz = TR_J9ServerVM::getClassFromSignature(sig, sigLength, (TR_OpaqueMethodBlock *)resolvedJITServerMethod->getPersistentIdentifier(), isVettedForAOT);
-      if (clazz)
-         {
-            {
-            OMR::CriticalSection classFromSigCS(_compInfoPT->getClientData()->getClassMapMonitor());
-            classBySignatureMap[key] = clazz;
-            }
-         if (!validateClass((TR_OpaqueMethodBlock *)resolvedJITServerMethod->getPersistentIdentifier(), clazz, isVettedForAOT))
-            {
-            clazz = NULL;
-            }
-         }
-      else
-         {
-         // Class with given name does not exist yet, but it could be
-         // loaded in the future, thus we should not cache NULL pointers.
-         // Note: many times we get in here due to Ljava/lang/String$StringCompressionFlag;
-         // In theory we could consider this a special case and watch the CHTable updates
-         // for a class load event for Ljava/lang/String$StringCompressionFlag, but it may not
-         // be worth the trouble.
-         //printf("ErrorSystem %lu for cl=%p\tclassName=%.*s\n", ++errorsSystem, cl, length, sig);
-         }
-      }
-   else
-      {
-      if (!validateClass((TR_OpaqueMethodBlock *)resolvedJITServerMethod->getPersistentIdentifier(), clazz, isVettedForAOT))
-         clazz = NULL;
-      }
-   return clazz;
-   }
-
-TR_OpaqueClassBlock *
-TR_J9SharedCacheServerVM::getClassFromSignature(const char * sig, int32_t sigLength, TR_OpaqueMethodBlock * method, bool isVettedForAOT)
-   {
-   TR_OpaqueClassBlock* j9class = TR_J9ServerVM::getClassFromSignature(sig, sigLength, method, true);
-   if (j9class)
-      {
-      if (!validateClass(method, j9class, isVettedForAOT))
-         j9class = NULL;
-      }
-
-   return j9class;
-   }
-
-bool
-TR_J9SharedCacheServerVM::validateClass(TR_OpaqueMethodBlock * method, TR_OpaqueClassBlock* j9class, bool isVettedForAOT)
-   {
-   TR::Compilation* comp = _compInfoPT->getCompilation();
+   auto comp = _compInfoPT->getCompilation();
+   auto j9class = TR_J9ServerVM::getClassFromSignature(sig, sigLength, constantPool, isVettedForAOT);
    bool validated = false;
 
-   if (comp->getOption(TR_UseSymbolValidationManager))
+   if (j9class)
       {
-      TR::SymbolValidationManager *svm = comp->getSymbolValidationManager();
-      SVM_ASSERT_ALREADY_VALIDATED(svm, method);
-      validated = svm->addClassByNameRecord(j9class, getClassFromMethodBlock(method));
+      if (comp->getOption(TR_UseSymbolValidationManager))
+         validated = comp->getSymbolValidationManager()->addClassByNameRecord(j9class, getClassFromCP(constantPool));
+      else if (isVettedForAOT)
+         validated = ((TR_ResolvedRelocatableJ9JITServerMethod *) comp->getCurrentMethod())->validateArbitraryClass(comp, (J9Class *) j9class);
       }
+
+   if (validated)
+      return j9class;
    else
-      {
-      if (isVettedForAOT)
-         {
-         if (((TR_ResolvedRelocatableJ9JITServerMethod *) comp->getCurrentMethod())->validateArbitraryClass(comp, (J9Class *) j9class))
-            validated = true;
-         }
-      }
-   return validated;
+      return NULL;
+
    }
 
 bool
@@ -3183,7 +3400,7 @@ TR_J9SharedCacheServerVM::getDesignatedCodeCache(TR::Compilation *comp)
    int32_t compThreadID = comp ? comp->getCompThreadID() : -1;
    bool hadClassUnloadMonitor = false;
    bool hadVMAccess = releaseClassUnloadMonitorAndAcquireVMaccessIfNeeded(comp, &hadClassUnloadMonitor);
-   TR::CodeCache * codeCache = TR::CodeCacheManager::instance()->reserveCodeCache(true, 0, compThreadID, &numReserved);
+   TR::CodeCache * codeCache = TR::CodeCacheManager::instance()->reserveCodeCache(true, 0, compThreadID, &numReserved, comp->codeCacheKind());
    acquireClassUnloadMonitorAndReleaseVMAccessIfNeeded(comp, hadVMAccess, hadClassUnloadMonitor);
    // For AOT we need some alignment
    if (codeCache)
@@ -3249,6 +3466,26 @@ TR_J9SharedCacheServerVM::getArrayClassFromComponentClass(TR_OpaqueClassBlock * 
          validated = true;
       }
    return validated ? arrayClass : NULL;
+   }
+
+TR_OpaqueClassBlock *
+TR_J9SharedCacheServerVM::getNullRestrictedArrayClassFromComponentClass(TR_OpaqueClassBlock * componentClass)
+   {
+   TR::Compilation* comp = _compInfoPT->getCompilation();
+   TR_ASSERT(comp, "Should be called only within a compilation");
+
+   bool validated = false;
+   TR_OpaqueClassBlock *nullRestrictedArrayClass = TR_J9ServerVM::getNullRestrictedArrayClassFromComponentClass(componentClass);
+
+   if (comp->getOption(TR_UseSymbolValidationManager))
+      {
+      validated = comp->getSymbolValidationManager()->addArrayClassFromComponentClassRecord(nullRestrictedArrayClass, componentClass);
+      }
+   else
+      {
+      validated = ((TR_ResolvedRelocatableJ9JITServerMethod *) comp->getCurrentMethod())->validateArbitraryClass(comp, (J9Class *) componentClass);
+      }
+   return validated ? nullRestrictedArrayClass : NULL;
    }
 
 TR_OpaqueClassBlock *

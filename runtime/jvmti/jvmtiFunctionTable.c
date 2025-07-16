@@ -41,6 +41,12 @@
 #define JVMTI_19_ENTRY(name) NULL
 #endif /* JAVA_SPEC_VERSION >= 19 */
 
+#if JAVA_SPEC_VERSION >= 25
+#define JVMTI_25_ENTRY(name) name
+#else /* JAVA_SPEC_VERSION >= 25 */
+#define JVMTI_25_ENTRY(name) NULL
+#endif /* JAVA_SPEC_VERSION >= 25 */
+
 jvmtiNativeInterface jvmtiFunctionTable = {
 	NULL,
 	jvmtiSetEventNotificationMode,
@@ -108,7 +114,7 @@ jvmtiNativeInterface jvmtiFunctionTable = {
 	jvmtiGetMethodName,
 	jvmtiGetMethodDeclaringClass,
 	jvmtiGetMethodModifiers,
-	NULL,
+	JVMTI_25_ENTRY(jvmtiClearAllFramePops),
 	jvmtiGetMaxLocals,
 	jvmtiGetArgumentsSize,
 	jvmtiGetLineNumberTable,

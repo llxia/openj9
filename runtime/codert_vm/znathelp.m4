@@ -213,7 +213,7 @@ BEGIN_FUNC($1)
     L_GPR r14,JIT_GPR_SAVE_SLOT(14)
     ST_GPR r14,J9TR_VMThread_jitReturnAddress(J9VMTHREAD)
     SAVE_C_NONVOLATILE_GPRS
-    SAVE_C_NONVOLATILE_REGS
+    SAVE_C_NONVOLATILE_FPRVR
     LR_GPR CRA,CRINT
     LR_GPR CARG1,J9VMTHREAD
     CALL_INDIRECT(CRA)
@@ -222,7 +222,7 @@ BEGIN_FUNC($1)
     je LABEL_NAME(CONCAT(L_SLOW_,SYM_COUNT))
     br CRINT
 PLACE_LABEL(CONCAT(L_SLOW_,SYM_COUNT))
-    RESTORE_C_NONVOLATILE_REGS
+    RESTORE_C_NONVOLATILE_FPRVR
     RESTORE_C_NONVOLATILE_GPRS
 PLACE_LABEL(CONCAT(L_DONE_,SYM_COUNT))
     STORE_SSP
@@ -246,7 +246,7 @@ BEGIN_FUNC($1)
     L_GPR r14,JIT_GPR_SAVE_SLOT(14)
     ST_GPR r14,J9TR_VMThread_jitReturnAddress(J9VMTHREAD)
     SAVE_C_NONVOLATILE_GPRS
-    SAVE_C_NONVOLATILE_REGS
+    SAVE_C_NONVOLATILE_FPRVR
     LR_GPR CRA,CRINT
     LR_GPR CARG1,J9VMTHREAD
     CALL_INDIRECT(CRA)
@@ -255,7 +255,7 @@ BEGIN_FUNC($1)
     je LABEL_NAME(CONCAT(L_SLOW_,SYM_COUNT))
     br CRINT
 PLACE_LABEL(CONCAT(L_SLOW_,SYM_COUNT))
-    RESTORE_C_NONVOLATILE_REGS
+    RESTORE_C_NONVOLATILE_FPRVR
     RESTORE_C_NONVOLATILE_GPRS
 PLACE_LABEL(CONCAT(L_DONE_,SYM_COUNT))
     STORE_SSP
@@ -409,6 +409,7 @@ EXCEPTION_THROW_HELPER(jitThrowInstantiationException,0)
 EXCEPTION_THROW_HELPER(jitThrowNullPointerException,0)
 EXCEPTION_THROW_HELPER(jitThrowWrongMethodTypeException,0)
 EXCEPTION_THROW_HELPER(jitThrowIncompatibleReceiver,2)
+EXCEPTION_THROW_HELPER(jitThrowIdentityException,0)
 
 dnl Write barrier helpers
 
@@ -523,6 +524,24 @@ PLACE_LABEL(L_CINTERP)
     L_GPR r14,J9TR_JavaVM_cInterpreter(r14)
     br r14
 END_CURRENT
+
+dnl Following routine will be called when exiting
+dnl and coming back to JIT compiled code.
+dnl Interpreter would have restored all preserved
+dnl registers before calling following glue code.
+dnl In order to confirm if vector registers are
+dnl needed to restored or not, this routine uses
+dnl R8 and R9 as scratch register. Restoring them
+dnl back from CSP upon restorning vector regs.
+
+ifelse(eval(ASM_JAVA_SPEC_VERSION >= 24), 1, {
+BEGIN_RETURN_POINT(jitExitInterpreter0RestoreAll)
+    RESTORE_C_NONVOLATILE_FPRVR
+ifdef({J9ZOS390},{
+    LM_GPR r8,r9,JIT_GPR_SAVE_SLOT(8)
+}) dnl J9ZOS390
+END_RETURN_POINT(jitExitInterpreter0RestoreAll)
+}) dnl jitExitInterpreter0RestoreAll is only supported on JAVA 24+
 
 BEGIN_RETURN_POINT(jitExitInterpreter0)
 END_RETURN_POINT
@@ -849,6 +868,12 @@ END_CURRENT
 BEGIN_FUNC(throwCurrentExceptionFromJIT)
     CINTERP(J9TR_bcloop_throw_current_exception, 0)
 END_CURRENT
+
+ifelse(eval(ASM_JAVA_SPEC_VERSION >= 24), 1, {
+BEGIN_FUNC(yieldAtMonitorEnter)
+    CINTERP(J9TR_bcloop_yield_monent, 0)
+END_CURRENT(yieldAtMonitorEnter)
+}) dnl yieldAtMonitorEnter is only supported on JAVA 24+
 
 BEGIN_FUNC(executeCurrentBytecodeFromJIT)
     CINTERP(J9TR_bcloop_execute_bytecode, 0)

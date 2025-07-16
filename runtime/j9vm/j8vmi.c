@@ -72,7 +72,6 @@ JVM_IsVMGeneratedMethodIx(JNIEnv *env, jclass cb, jint index) {
 
 /**
  * Returns platform specific temporary directory used by the system.
- * Same as getTmpDir() defined in jcl/unix/syshelp.c and jcl/win32/syshelp.c.
  *
  * @param [in] env Pointer to JNI environment.
  *
@@ -82,20 +81,10 @@ jstring JNICALL
 JVM_GetTemporaryDirectory(JNIEnv *env)
 {
 	PORT_ACCESS_FROM_ENV(env);
-	jstring result = NULL;
-	IDATA size = j9sysinfo_get_tmp(NULL, 0, TRUE);
-	if (0 <= size) {
-		char *buffer = (char *)j9mem_allocate_memory(size, OMRMEM_CATEGORY_VM);
-		if (NULL == buffer) {
-			return NULL;
-		}
-		if (0 == j9sysinfo_get_tmp(buffer, size, TRUE)) {
-			result = (*env)->NewStringUTF(env, buffer);
-		}
-
-		j9mem_free_memory(buffer);
-	}
-
+	char *tempBuf = NULL;
+	char *tempDir = getTmpDir(env, &tempBuf);
+	jstring result = (*env)->NewStringUTF(env, tempDir);
+	j9mem_free_memory(tempBuf);
 	return result;
 }
 
@@ -129,7 +118,7 @@ JVM_CopySwapMemory(JNIEnv *env, jobject srcObj, jlong srcOffset, jobject dstObj,
 		/* The java caller has added Unsafe.arrayBaseOffset() to the offset. Remove it
 		 * here as GetPrimitiveArrayCritical returns a pointer to the first element.
 		 */
-		srcOffset -= J9VMTHREAD_CONTIGUOUS_INDEXABLE_HEADER_SIZE((J9VMThread*)env);
+		srcOffset -= J9VMTHREAD_UNSAFE_INDEXABLE_HEADER_SIZE((J9VMThread*)env);
 	}
 	if (NULL != dstObj) {
 		dstBytes = (*env)->GetPrimitiveArrayCritical(env, dstObj, NULL);
@@ -137,7 +126,7 @@ JVM_CopySwapMemory(JNIEnv *env, jobject srcObj, jlong srcOffset, jobject dstObj,
 		/* The java caller has added Unsafe.arrayBaseOffset() to the offset. Remove it
 		 * here as GetPrimitiveArrayCritical returns a pointer to the first element.
 		 */
-		dstOffset -= J9VMTHREAD_CONTIGUOUS_INDEXABLE_HEADER_SIZE((J9VMThread*)env);
+		dstOffset -= J9VMTHREAD_UNSAFE_INDEXABLE_HEADER_SIZE((J9VMThread*)env);
 	}
 	dstAddr += (UDATA)dstOffset;
 	/* First copy the bytes unmodified to the new location (memmove handles the overlap case) */

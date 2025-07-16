@@ -1,4 +1,4 @@
-/*[INCLUDE-IF Sidecar18-SE-OpenJ9 & !OPENJDK_METHODHANDLES]*/
+/*[INCLUDE-IF !OPENJDK_METHODHANDLES & !VENDOR_UMA]*/
 /*
  * Copyright IBM Corp. and others 2017
  *
@@ -64,22 +64,22 @@ class MethodHandleNatives {
 	static boolean refKindIsMethod(byte kind) {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
-	
+
 	static boolean refKindIsField(byte kind) {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
-	
+
 	static boolean refKindIsConstructor(byte kind) {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
-	
+
 	private static final JavaLangAccess JLA = SharedSecrets.getJavaLangAccess();
 
 	/**
 	 * Returns the classData stored in the class.
-	 * 
+	 *
 	 * @param the class from where to retrieve the classData.
-	 * 
+	 *
 	 * @return the classData (Object).
 	 */
 	static Object classData(Class<?> c) {

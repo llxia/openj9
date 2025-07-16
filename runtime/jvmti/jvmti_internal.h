@@ -1500,6 +1500,16 @@ unhookEvent(J9JVMTIEnv * j9env, jint event);
 void
 unhookGlobalEvents(J9JVMTIData * jvmtiData);
 
+#if defined(J9VM_OPT_CRIU_SUPPORT)
+/**
+* @brief Disable the debug related hooks & events if no jdwp agent is specified.
+* @param[in] jvmtiData - point to the JVMTI data
+* @param[in] j9env - pointer to the current JVMTI environment
+* @return void
+*/
+void
+criuDisableHooks(J9JVMTIData *jvmtiData, J9JVMTIEnv *j9env);
+#endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
 
 /* ---------------- jvmtiJNIFunctionInterception.c ---------------- */
 
@@ -2163,6 +2173,18 @@ jvmtiNotifyFramePop(jvmtiEnv* env,
 	jthread thread,
 	jint depth);
 
+#if JAVA_SPEC_VERSION >= 25
+/**
+ * @brief Clear all frame pop request to prevent generation of
+ * FramePop events for any frames.
+ *
+ * @param env The JVMTI environment pointer
+ * @param thread The thread whose FramePop events will be cleared
+ * @return jvmtiError Error code returned by JVMTI function
+ */
+jvmtiError JNICALL
+jvmtiClearAllFramePops(jvmtiEnv *env, jthread thread);
+#endif /* JAVA_SPEC_VERSION >= 25 */
 
 /**
 * @brief
@@ -2196,6 +2218,19 @@ IDATA J9VMDllMain(J9JavaVM* vm, IDATA stage, void* reserved);
 */
 jint JNICALL JVM_OnLoad(JavaVM *jvm, char* options, void *reserved);
 
+#if defined(J9VM_OPT_CRIU_SUPPORT)
+/**
+* Check if any agent library is specified in the CRIU restore option file,
+* if so, the checkpointState flag J9VM_CRIU_IS_JDWP_ENABLED is set, and
+* load/start the library loading.
+*
+* @param[in] vm the pointer to the J9JavaVM struct
+* @param[in] j9env - pointer to the current JVMTI environment
+* @return void
+*/
+void
+criuRestoreInitializeLib(J9JavaVM *vm, J9JVMTIEnv *j9env);
+#endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
 
 /* ---------------- jvmtiSystemProperties.c ---------------- */
 

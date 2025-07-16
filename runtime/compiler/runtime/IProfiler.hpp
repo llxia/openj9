@@ -78,6 +78,7 @@ namespace TR { class Options; }
 class TR_FrontEnd;
 class TR_IPBCDataPointer;
 class TR_IPBCDataCallGraph;
+class TR_IPBCDataDirectCall;
 class TR_IPBCDataFourBytes;
 class TR_IPBCDataEightWords;
 class TR_IPBCDataAllocation;
@@ -136,9 +137,10 @@ public:
          _tooBigToBeInlined=0;
          }
 
-   uintptr_t getClazz(int index);
-   void setClazz(int index, uintptr_t clazzPtr);
+   uintptr_t getClazz(int index) const { return _clazz[index]; }
+   void setClazz(int index, uintptr_t clazzPtr) { _clazz[index] = clazzPtr; }
    uintptr_t getDominantClass(int32_t &sumW, int32_t &maxW);
+   uint32_t getDominantSlot() const;
 
 private:
    uintptr_t _clazz[NUM_CS_SLOTS]; // store them in either 64 or 32 bits
@@ -147,6 +149,7 @@ private:
 #define TR_IPBCD_FOUR_BYTES  1
 #define TR_IPBCD_EIGHT_WORDS 2
 #define TR_IPBCD_CALL_GRAPH  3
+#define TR_IPBCD_DIRECT_CALL 4
 
 
 // We rely on the following structures having the same first 4 fields
@@ -176,6 +179,14 @@ typedef struct TR_IPBCDataCallGraphStorage
    CallSiteProfileInfo _csInfo;
    } TR_IPBCDataCallGraphStorage;
 
+typedef struct TR_IPBCDataDirectCallStorage
+   {
+   TR_IPBCDataStorageHeader header;
+   uint16_t _callCount;
+   bool _isInvalid;
+   bool _tooBigToBeInlined;
+   } TR_IPBCDataDirectCallStorage;
+
 enum TR_EntryStatusInfo
    {
    IPBC_ENTRY_CANNOT_PERSIST = 0,
@@ -186,6 +197,8 @@ enum TR_EntryStatusInfo
    };
 
 #define TR_IPBC_PERSISTENT_ENTRY_READ  0x1 // used to check if the persistent entry has been read, if so we want to avoid the overhead introduced by calculating sample counts
+#define TR_IPBC_OVERFLOW 0x1 // Set and never reset
+#define TR_IPBC_COUNTERS_RESET 0x2 // Set and never reset
 
 // Hash table for bytecodes
 class TR_IPBytecodeHashTableEntry
@@ -196,26 +209,31 @@ public:
    void * operator new (size_t size, void * placement) {return placement;}
    void operator delete(void *p, void *) {}
 
-   TR_IPBytecodeHashTableEntry(uintptr_t pc) : _next(NULL), _pc(pc), _lastSeenClassUnloadID(-1), _entryFlags(0), _persistFlags(IPBC_ENTRY_CAN_PERSIST_FLAG) {}
+   TR_IPBytecodeHashTableEntry(uintptr_t pc) : _next(NULL), _pc(pc), _lastSeenClassUnloadID(-1), _entryFlags(0), _persistFlags(IPBC_ENTRY_CAN_PERSIST_FLAG), _overflowFlags(0) {}
    virtual ~TR_IPBytecodeHashTableEntry() {}
    uintptr_t getPC() const { return _pc; }
    TR_IPBytecodeHashTableEntry * getNext() const { return _next; }
    void setNext(TR_IPBytecodeHashTableEntry *n) { _next = n; }
    int32_t getLastSeenClassUnloadID() const { return _lastSeenClassUnloadID; }
    void setLastSeenClassUnloadID(int32_t v) { _lastSeenClassUnloadID = v; }
+   virtual bool hasData() = 0;
    virtual uintptr_t getData(TR::Compilation *comp = NULL) = 0;
    virtual uint32_t* getDataReference() { return NULL; }
    virtual int32_t setData(uintptr_t value, uint32_t freq = 1) = 0;
+   virtual uint32_t getNumSamples() const = 0;
    virtual bool isInvalid() = 0;
    virtual void setInvalid() = 0;
-   virtual bool isCompact() = 0;
    virtual TR_IPBCDataPointer        *asIPBCDataPointer()        { return NULL; }
    virtual TR_IPBCDataFourBytes      *asIPBCDataFourBytes()      { return NULL; }
    virtual TR_IPBCDataEightWords     *asIPBCDataEightWords()     { return NULL; }
    virtual TR_IPBCDataCallGraph      *asIPBCDataCallGraph()      { return NULL; }
+   virtual TR_IPBCDataDirectCall     *asIPBCDataDirectCall()     { return NULL; }
    virtual TR_IPBCDataAllocation     *asIPBCDataAllocation()     { return NULL; }
    // returns the number of bytes the equivalent storage structure needs
    virtual uint32_t                   getBytesFootprint() = 0;
+
+   virtual void setWarmCallGraphTooBig(bool set=true) {}
+   virtual bool isWarmCallGraphTooBig() const { return false; }
 
 #if defined(J9VM_OPT_JITSERVER)
    // Serialization used for JITServer
@@ -223,13 +241,32 @@ public:
    virtual uint32_t canBeSerialized(TR::PersistentInfo *info) { return IPBC_ENTRY_CAN_PERSIST; }
    virtual void serialize(uintptr_t methodStartAddress, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info) = 0;
    virtual void deserialize(TR_IPBCDataStorageHeader *storage) = 0;
+
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR::Region &region) const = 0;
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR_PersistentMemory *persistentMemory,
+                                                 TR_Memory::ObjectType tag = TR_Memory::UnknownType) const = 0;
+   TR_IPBytecodeHashTableEntry *clone(TR::Region &region)
+      {
+      auto entry = newEntry(region);
+      entry->copyFromEntry(this);
+      return entry;
+      }
+
+   TR_IPBytecodeHashTableEntry *clone(TR_PersistentMemory *persistentMemory,
+                                      TR_Memory::ObjectType tag = TR_Memory::UnknownType)
+      {
+      auto entry = newEntry(persistentMemory, tag);
+      if (!entry)
+         throw std::bad_alloc();
+      entry->copyFromEntry(this);
+      return entry;
+      }
 #endif
 
    virtual uint32_t canBePersisted(TR_J9SharedCache *sharedCache, TR::PersistentInfo *info) { return IPBC_ENTRY_CAN_PERSIST; }
-   virtual void createPersistentCopy(TR_J9SharedCache *sharedCache, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info)  = 0;
+   virtual void createPersistentCopy(TR_J9SharedCache *sharedCache, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info) = 0;
    virtual void loadFromPersistentCopy(TR_IPBCDataStorageHeader *storage, TR::Compilation *comp) {}
-   virtual void copyFromEntry(TR_IPBytecodeHashTableEntry * originalEntry, TR::Compilation *comp) {}
-   void clearEntryFlags(){ _entryFlags = 0;};
+   virtual void copyFromEntry(TR_IPBytecodeHashTableEntry *originalEntry) = 0;
    void setPersistentEntryRead(){ _entryFlags |= TR_IPBC_PERSISTENT_ENTRY_READ;};
    bool isPersistentEntryRead(){ return (_entryFlags & TR_IPBC_PERSISTENT_ENTRY_READ) != 0;};
 
@@ -238,6 +275,10 @@ public:
    bool isLockedEntry() const { return (_persistFlags & IPBC_ENTRY_PERSIST_LOCK_FLAG) != 0; }
    void setLockedEntry() { _persistFlags |= IPBC_ENTRY_PERSIST_LOCK_FLAG; }
    void resetLockedEntry() { _persistFlags &= ~IPBC_ENTRY_PERSIST_LOCK_FLAG; }
+   void setOverflow() { _overflowFlags |= TR_IPBC_OVERFLOW; }
+   bool hasOverflowed() const { return (_overflowFlags & TR_IPBC_OVERFLOW) != 0; }
+   void setCountersWereReset() { _overflowFlags |= TR_IPBC_COUNTERS_RESET; }
+   bool countersWereReset() const { return (_overflowFlags & TR_IPBC_COUNTERS_RESET) != 0; } // only for CallGraph entries
 
 protected:
    TR_IPBytecodeHashTableEntry *_next;
@@ -252,18 +293,19 @@ protected:
 
    uint8_t _entryFlags;
    uint8_t _persistFlags;
+   uint8_t _overflowFlags; // indicates whether sample counters overflowed or were reset
    }; // class TR_IPBytecodeHashTableEntry
 
 class TR_IPMethodData
    {
    public:
    TR_IPMethodData() : _method(0),_pcIndex(0),_weight(0) {}
-   TR_OpaqueMethodBlock *getMethod() { return _method; }
+   TR_OpaqueMethodBlock *getMethod() const { return _method; }
    void setMethod (TR_OpaqueMethodBlock *meth) { _method = meth; }
-   uint32_t getWeight() { return _weight; }
+   uint32_t getWeight() const { return _weight; }
    void     incWeight() { ++_weight; }
    void     setWeight(uint32_t weight) { _weight = weight; }
-   uint32_t getPCIndex() { return _pcIndex; }
+   uint32_t getPCIndex() const { return _pcIndex; }
    void     setPCIndex(uint32_t i) { _pcIndex = i; }
 
    TR_IPMethodData* next;
@@ -305,11 +347,12 @@ public:
    TR_IPBCDataFourBytes(uintptr_t pc) : TR_IPBytecodeHashTableEntry(pc), data(0) {}
 
    static const uint32_t IPROFILING_INVALID = ~0;
-   virtual uintptr_t getData(TR::Compilation *comp = NULL) { return (uint32_t)data; }
-   virtual uint32_t* getDataReference() { static uint32_t data_copy = (uint32_t)data; return &data_copy; }
+   virtual bool hasData() { return data != 0; }
+   virtual uintptr_t getData(TR::Compilation *comp = NULL) { return data; }
+   virtual uint32_t* getDataReference() { static uint32_t data_copy = data; return &data_copy; }
 
    virtual int32_t setData(uintptr_t value, uint32_t freq = 1) { data = (uint32_t)value; return 0;}
-   virtual bool isCompact() { return true; }
+   virtual uint32_t getNumSamples() const { return getSumBranchCount(); }
    virtual bool isInvalid() { if (data == IPROFILING_INVALID) return true; return false; }
    virtual void setInvalid() { data = IPROFILING_INVALID; }
    virtual TR_IPBCDataFourBytes  *asIPBCDataFourBytes() { return this; }
@@ -317,11 +360,22 @@ public:
 #if defined(J9VM_OPT_JITSERVER)
    virtual void serialize(uintptr_t methodStartAddress, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info);
    virtual void deserialize(TR_IPBCDataStorageHeader *storage);
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR::Region &region) const override
+      {
+      return new (region.allocate(sizeof(*this))) TR_IPBCDataFourBytes(_pc);
+      }
+
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR_PersistentMemory *persistentMemory,
+                                              TR_Memory::ObjectType tag = TR_Memory::UnknownType) const override
+      {
+      tag = (tag != TR_Memory::UnknownType) ? tag : TR_Memory::IPBCDataFourBytes;
+      return new (persistentMemory->allocatePersistentMemory(sizeof(*this), tag)) TR_IPBCDataFourBytes(_pc);
+      }
 #endif
    virtual void createPersistentCopy(TR_J9SharedCache *sharedCache, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info);
    virtual void loadFromPersistentCopy(TR_IPBCDataStorageHeader *storage, TR::Compilation *comp);
-   int16_t getSumBranchCount();
-   virtual void copyFromEntry(TR_IPBytecodeHashTableEntry * originalEntry, TR::Compilation *comp);
+   int32_t getSumBranchCount() const;
+   virtual void copyFromEntry(TR_IPBytecodeHashTableEntry * originalEntry);
 private:
    uint32_t data;
    };
@@ -331,10 +385,10 @@ class TR_IPBCDataAllocation : public TR_IPBytecodeHashTableEntry
 public:
    TR_IPBCDataAllocation(uintptr_t pc) : TR_IPBytecodeHashTableEntry(pc), clazz(0), method(0), data(0) {}
    static const uint32_t IPROFILING_INVALID = ~0;
-   virtual uintptr_t getData(TR::Compilation *comp = NULL) { return (uint32_t)data; }
+   virtual bool hasData() { return data != 0; }
+   virtual uintptr_t getData(TR::Compilation *comp = NULL) { return data; }
    virtual uint32_t* getDataReference() { return &data; }
    virtual int32_t setData(uintptr_t value, uint32_t freq = 1) { data = (uint32_t)value; return 0;}
-   virtual bool isCompact() { return true; }
    virtual bool isInvalid() { if (data == IPROFILING_INVALID) return true; return false; }
    virtual void setInvalid() { data = IPROFILING_INVALID; }
    virtual TR_IPBCDataAllocation  *asIPBCDataAllocation() { return this; }
@@ -359,10 +413,12 @@ public:
          data[i] = 0;
       };
    static const uint64_t IPROFILING_INVALID = ~0;
+   virtual bool hasData() { return getSumSwitchCount() > 1; } // Note: getSumSwitchCount() artificially adds one to the count
    virtual uintptr_t getData(TR::Compilation *comp = NULL) { /*TR_ASSERT(0, "Don't call me, I'm empty"); */return 0;}
    virtual int32_t setData(uintptr_t value, uint32_t freq = 1) { /*TR_ASSERT(0, "Don't call me, I'm empty");*/ return 0;}
+   const uint64_t* getDataPointer() const { return data; }
    uint64_t* getDataPointer() { return data; }
-   virtual bool isCompact() { return false; }
+   virtual uint32_t getNumSamples() const { return getSumSwitchCount(); }
    virtual bool isInvalid() { if (data[0] == IPROFILING_INVALID) return true; return false; }
    virtual void setInvalid() { data[0] = IPROFILING_INVALID; }
    virtual TR_IPBCDataEightWords  *asIPBCDataEightWords() { return this; }
@@ -370,11 +426,21 @@ public:
 #if defined(J9VM_OPT_JITSERVER)
    virtual void serialize(uintptr_t methodStartAddress, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info);
    virtual void deserialize(TR_IPBCDataStorageHeader *storage);
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR::Region &region) const override
+      {
+      return new (region.allocate(sizeof(*this))) TR_IPBCDataEightWords(_pc);
+      }
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR_PersistentMemory *persistentMemory,
+                                                 TR_Memory::ObjectType tag = TR_Memory::UnknownType) const override
+      {
+      tag = (tag != TR_Memory::UnknownType) ? tag : TR_Memory::IPBCDataEightWords;
+      return new (persistentMemory->allocatePersistentMemory(sizeof(*this), tag)) TR_IPBCDataEightWords(_pc);
+      }
 #endif
    virtual void createPersistentCopy(TR_J9SharedCache *sharedCache, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info);
    virtual void loadFromPersistentCopy(TR_IPBCDataStorageHeader *storage, TR::Compilation *comp);
-   virtual int32_t getSumSwitchCount();
-   virtual void copyFromEntry(TR_IPBytecodeHashTableEntry * originalEntry, TR::Compilation *comp);
+   int32_t getSumSwitchCount() const;
+   virtual void copyFromEntry(TR_IPBytecodeHashTableEntry *originalEntry);
 
 private:
    uint64_t data[SWITCH_DATA_COUNT];
@@ -389,45 +455,50 @@ public:
       {
       _csInfo.initialize();
       }
-
-   // Set the higher 32 bits to zero under compressedref to avoid assertion in
-   // CallSiteProfileInfo::setClazz, which is called by setInvalid with IPROFILING_INVALID
-   //
-   // Set the higher 32 bits to zero under compressedref to avoid assertion in
-   // CallSiteProfileInfo::setClazz, which is called by setInvalid with IPROFILING_INVALID
-   //
-   static const uintptr_t IPROFILING_INVALID_COMPRESSED = 0x00000000FFFFFFFF;
    static const uintptr_t IPROFILING_INVALID = ~0;
 
+   virtual bool hasData() { return getData(NULL) != 0; }
    virtual uintptr_t getData(TR::Compilation *comp = NULL);
    virtual CallSiteProfileInfo* getCGData() { return &_csInfo; } // overloaded
    virtual int32_t setData(uintptr_t v, uint32_t freq = 1);
    virtual uint32_t* getDataReference() { return NULL; }
-   virtual bool isCompact() { return false; }
+   virtual uint32_t getNumSamples() const { return getSumCount(); }
    virtual TR_IPBCDataCallGraph *asIPBCDataCallGraph() { return this; }
+   int32_t getSumCount() const;
    int32_t getSumCount(TR::Compilation *comp);
-   int32_t getSumCount(TR::Compilation *comp, bool);
    int32_t getEdgeWeight(TR_OpaqueClassBlock *clazz, TR::Compilation *comp);
    void updateEdgeWeight(TR_OpaqueClassBlock *clazz, int32_t weight);
    void printWeights(TR::Compilation *comp);
 
-   void setWarmCallGraphTooBig(bool set=true) { _csInfo._tooBigToBeInlined = (set) ? 1 : 0; }
-   bool isWarmCallGraphTooBig() { return (_csInfo._tooBigToBeInlined == 1); }
+   virtual void setWarmCallGraphTooBig(bool set=true) { _csInfo._tooBigToBeInlined = (set) ? 1 : 0; }
+   virtual bool isWarmCallGraphTooBig() const { return (_csInfo._tooBigToBeInlined == 1); }
 
-   virtual bool isInvalid() { if (_csInfo.getClazz(0) == (TR::Compiler->om.compressObjectReferences() ? IPROFILING_INVALID_COMPRESSED : IPROFILING_INVALID)) return true; return false; }
-   virtual void setInvalid() { _csInfo.setClazz(0, (TR::Compiler->om.compressObjectReferences() ? IPROFILING_INVALID_COMPRESSED : IPROFILING_INVALID)); }
+   virtual bool isInvalid() { return (_csInfo.getClazz(0) == IPROFILING_INVALID); }
+   virtual void setInvalid() { _csInfo.setClazz(0, IPROFILING_INVALID); }
    virtual uint32_t getBytesFootprint() {return sizeof (TR_IPBCDataCallGraphStorage);}
 
 #if defined(J9VM_OPT_JITSERVER)
    virtual uint32_t canBeSerialized(TR::PersistentInfo *info);
    virtual void serialize(uintptr_t methodStartAddress, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info);
    virtual void deserialize(TR_IPBCDataStorageHeader *storage);
+   //TODO: add override to all functions that need it for consistency
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR::Region &region) const override
+      {
+      return new (region.allocate(sizeof(*this))) TR_IPBCDataCallGraph(_pc);
+      }
+
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR_PersistentMemory *persistentMemory,
+                                                 TR_Memory::ObjectType tag = TR_Memory::UnknownType) const override
+      {
+      tag = (tag != TR_Memory::UnknownType) ? tag : TR_Memory::IPBCDataCallGraph;
+      return new (persistentMemory->allocatePersistentMemory(sizeof(*this), tag)) TR_IPBCDataCallGraph(_pc);
+      }
 #endif
 
    virtual uint32_t canBePersisted(TR_J9SharedCache *sharedCache, TR::PersistentInfo *info);
    virtual void createPersistentCopy(TR_J9SharedCache *sharedCache, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info);
    virtual void loadFromPersistentCopy(TR_IPBCDataStorageHeader *storage, TR::Compilation *comp);
-   virtual void copyFromEntry(TR_IPBytecodeHashTableEntry * originalEntry, TR::Compilation *comp);
+   virtual void copyFromEntry(TR_IPBytecodeHashTableEntry *originalEntry);
 
    bool lockEntry();
    void releaseEntry();
@@ -436,6 +507,59 @@ public:
 private:
    CallSiteProfileInfo _csInfo;
    };
+
+class TR_IPBCDataDirectCall : public TR_IPBytecodeHashTableEntry
+   {
+public:
+   TR_IPBCDataDirectCall (uintptr_t pc) : TR_IPBytecodeHashTableEntry(pc)
+      {
+      _callCount = 0;
+      _isInvalid = false;
+      _tooBigToBeInlined = false;
+      setDoNotPersist();
+      }
+
+   virtual bool hasData() { return _callCount != 0; }
+   virtual uintptr_t getData(TR::Compilation *comp = NULL) { return _callCount; }
+   virtual int32_t setData(uintptr_t v, uint32_t freq = 1);
+   virtual uint32_t* getDataReference() { return NULL; }
+   virtual uint32_t getNumSamples() const { return _callCount; }
+   virtual TR_IPBCDataDirectCall *asIPBCDataDirectCall() { return this; }
+
+   virtual void setWarmCallGraphTooBig(bool set=true) { _tooBigToBeInlined = set; }
+   virtual bool isWarmCallGraphTooBig() const { return _tooBigToBeInlined; }
+
+   virtual bool isInvalid() { return _isInvalid; }
+   virtual void setInvalid() { _isInvalid = true; }
+   virtual uint32_t getBytesFootprint() {return sizeof (TR_IPBCDataDirectCallStorage);}
+
+#if defined(J9VM_OPT_JITSERVER)
+   virtual void serialize(uintptr_t methodStartAddress, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info);
+   virtual void deserialize(TR_IPBCDataStorageHeader *storage);
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR::Region &region) const override
+      {
+      return new (region.allocate(sizeof(*this))) TR_IPBCDataDirectCall(_pc);
+      }
+
+   virtual TR_IPBytecodeHashTableEntry *newEntry(TR_PersistentMemory *persistentMemory,
+                                                 TR_Memory::ObjectType tag = TR_Memory::UnknownType) const override
+      {
+      tag = (tag != TR_Memory::UnknownType) ? tag : TR_Memory::IPBCDataDirectCall;
+      return new (persistentMemory->allocatePersistentMemory(sizeof(*this), tag)) TR_IPBCDataDirectCall(_pc);
+      }
+#endif
+   // We do not write TR_IPBCDataDirectCall entries in the SCC.
+   virtual uint32_t canBePersisted(TR_J9SharedCache *sharedCache, TR::PersistentInfo *info) { return IPBC_ENTRY_CANNOT_PERSIST; }
+   virtual void createPersistentCopy(TR_J9SharedCache *sharedCache, TR_IPBCDataStorageHeader *storage, TR::PersistentInfo *info) {}
+   virtual void loadFromPersistentCopy(TR_IPBCDataStorageHeader *storage, TR::Compilation *comp) {}
+   virtual void copyFromEntry(TR_IPBytecodeHashTableEntry *originalEntry);
+
+private:
+   uint16_t _callCount;
+   bool _isInvalid;
+   bool _tooBigToBeInlined;
+   };
+
 
 class IProfilerBuffer : public TR_Link0<IProfilerBuffer>
    {
@@ -482,7 +606,65 @@ private:
    int32_t _historyBufferSize;
    int32_t _crtIndex;
    TR_ReadSampleRequestsStats *_history; // My circular buffer
-   };
+   }; // class TR_ReadSampleRequestsHistory
+
+
+// Supporting code for dumping IProfiler data to stderr to track possible
+// performance issues due to insufficient or wrong IProfiler info.
+// It implements a hashtable where each node stores information for
+// various bytecodes of a single ROMMethod.
+// Code is currently inactive. To actually use one must issue
+// iProfiler->dumpIPBCDataCallGraph(vmThread)
+// in some part of the code (typically at shutdown time)
+class TR_AggregationHT
+   {
+public:
+   class TR_IPChainedEntry
+      {
+      TR_IPChainedEntry *_next; // for chaining
+      TR_IPBytecodeHashTableEntry *_IPentry;
+   public:
+      TR_IPChainedEntry(TR_IPBytecodeHashTableEntry *entry) : _next(NULL), _IPentry(entry) { }
+      TR_IPChainedEntry *getNext() const { return _next; }
+      void setNext(TR_IPChainedEntry *next) { _next = next; }
+      TR_IPBytecodeHashTableEntry *getIPData() const { return _IPentry; }
+      uintptr_t getPC() const { return _IPentry->getPC(); }
+      };
+   class TR_AggregationHTNode
+      {
+      TR_AggregationHTNode *_next; // for chaining
+      J9ROMMethod *_romMethod; // this is the key
+      J9ROMClass  *_romClass; // TODO: is this needed?
+      TR_IPChainedEntry *_IPData;
+   public:
+      TR_AggregationHTNode(J9ROMMethod *romMethod, J9ROMClass *romClass, TR_IPBytecodeHashTableEntry *entry);
+      ~TR_AggregationHTNode();
+      TR_AggregationHTNode *getNext() const { return _next; }
+      void setNext(TR_AggregationHTNode *next) { _next = next; }
+      J9ROMMethod *getROMMethod() const { return _romMethod; }
+      J9ROMClass *getROMClass() const { return _romClass; }
+      TR_IPChainedEntry *getFirstIPEntry() const { return _IPData; }
+      void setFirstCGEntry(TR_IPChainedEntry *e) { _IPData = e; }
+      };
+   struct SortingPair
+      {
+      char *_methodName;
+      TR_AggregationHTNode *_IPdata;
+      };
+
+   TR_AggregationHT(size_t sz);
+   ~TR_AggregationHT();
+   size_t hash(J9ROMMethod *romMethod) const { return (((uintptr_t)romMethod) >> 3) % _sz; }
+   size_t getSize() const { return _sz; }
+   size_t numTrackedMethods() const { return _numTrackedMethods; }
+   TR_AggregationHTNode* getBucket(size_t i) const { return _backbone[i]; }
+   void add(J9ROMMethod *romMethod, J9ROMClass *romClass, TR_IPBytecodeHashTableEntry *cgEntry);
+   void sortByNameAndPrint();
+private:
+   size_t _sz; // size of the backbone of the hashtable
+   size_t _numTrackedMethods; // only increasing
+   TR_AggregationHTNode** _backbone;
+   }; // class TR_AggregationHT
 
 class TR_IProfiler : public TR_ExternalProfiler
    {
@@ -539,22 +721,15 @@ public:
    virtual void persistIprofileInfo(TR::ResolvedMethodSymbol *methodSymbol, TR_ResolvedMethod *method, TR::Compilation *comp); // JITServer: mark virtual
    bool elgibleForPersistIprofileInfo(TR::Compilation *comp) const;
 
-   void checkMethodHashTable();
+   void persistAllEntries(); // Persists all entries from IProfiler table into the SCC; TODO: check that JITServer does not execute this
+   void traverseIProfilerTableAndCollectEntries(TR_AggregationHT *aggregationHT, J9VMThread* vmThread, bool collectOnlyCallGraphEntries = false);
 
-   virtual int32_t getMaxCallCount();
+   void checkMethodHashTable();
 
    //j9method.cpp
    void getFaninInfo(TR_OpaqueMethodBlock *calleeMethod, uint32_t *count, uint32_t *weight, uint32_t *otherBucketWeight = NULL);
    bool getCallerWeight(TR_OpaqueMethodBlock *calleeMethod, TR_OpaqueMethodBlock *callerMethod , uint32_t *weight, uint32_t pcIndex = ~0, TR::Compilation *comp = 0);
 
-   //VMJ9.cpp
-   int32_t getCallCount(TR_OpaqueMethodBlock *calleeMethod, TR_OpaqueMethodBlock *method, int32_t bcIndex, TR::Compilation *);
-   int32_t getCallCount(TR_OpaqueMethodBlock *method, int32_t bcIndex, TR::Compilation *);
-   int32_t getCallCount(TR_ByteCodeInfo &bcInfo, TR::Compilation *comp);
-   virtual void setCallCount(TR_OpaqueMethodBlock *method, int32_t bcIndex, int32_t count, TR::Compilation *);
-   void    setCallCount(TR_ByteCodeInfo &bcInfo, int32_t count, TR::Compilation *comp);
-
-   int32_t getCGEdgeWeight (TR::Node *callerNode, TR_OpaqueMethodBlock *callee, TR::Compilation *comp);
    bool    isCallGraphProfilingEnabled();
 
    virtual TR_AbstractInfo *createIProfilingValueInfo( TR_ByteCodeInfo &bcInfo, TR::Compilation *comp);
@@ -562,10 +737,11 @@ public:
    uint32_t *getAllocationProfilingDataPointer(TR_ByteCodeInfo &bcInfo, TR_OpaqueClassBlock *clazz, TR_OpaqueMethodBlock *method, TR::Compilation *comp);
    uint32_t *getGlobalAllocationDataPointer(bool isAOT);
    TR_ExternalProfiler * canProduceBlockFrequencyInfo(TR::Compilation& comp);
-   void setupEntriesInHashTable(TR_IProfiler *ip);
 
    TR_IPMethodHashTableEntry *findOrCreateMethodEntry(J9Method *, J9Method *, bool addIt, uint32_t pcIndex =  ~0);
-   uint32_t releaseAllEntries();
+   // Returns the number of entries released, and also stores the number of
+   // entries that were not expected to be locked in unexpectedLockedEntries
+   uint32_t releaseAllEntries(uint32_t &unexpectedLockedEntries);
    uint32_t countEntries();
    void advanceEpochForHistoryBuffer() { _readSampleRequestsHistory->advanceEpoch(); }
    uint32_t getReadSampleFailureRate() const { return _readSampleRequestsHistory->getReadSampleFailureRate(); }
@@ -608,6 +784,8 @@ public:
    TR_IprofilerThreadLifetimeStates getIProfilerThreadLifetimeState() const { return _iprofilerThreadLifetimeState; }
    void setIProfilerThreadLifetimeState(TR_IprofilerThreadLifetimeStates s) { _iprofilerThreadLifetimeState = s; }
 
+   void traverseIProfilerTableAndGenerateHistograms(J9JITConfig *jitConfig);
+
 protected:
    bool isCompact(U_8 byteCode);
    bool isSwitch(U_8 byteCode);
@@ -629,16 +807,13 @@ private:
 #endif
    bool needTriggerCallContextCollection(U_8 *pc, J9Method *caller, J9Method *callee);
    uintptr_t getProfilingData(TR_ByteCodeInfo &bcInfo, TR::Compilation *comp);
-   virtual void setBlockAndEdgeFrequencies( TR::CFG *cfg, TR::Compilation *comp);
+   virtual void setBlockAndEdgeFrequencies(TR::CFG *cfg, TR::Compilation *comp);
    virtual bool hasSameBytecodeInfo(TR_ByteCodeInfo & persistentByteCodeInfo, TR_ByteCodeInfo & currentByteCodeInfo, TR::Compilation *comp);
-   virtual void getBranchCounters (TR::Node *node, TR::TreeTop *fallThroughTree, int32_t *taken, int32_t *notTaken, TR::Compilation *comp);
-   virtual int32_t getSwitchCountForValue (TR::Node *node, int32_t value, TR::Compilation *comp);
-   virtual int32_t getSumSwitchCount (TR::Node *node, TR::Compilation *comp);
+   virtual void getBranchCounters(TR::Node *node, TR::TreeTop *fallThroughTree, int32_t *taken, int32_t *notTaken, TR::Compilation *comp);
+   virtual int32_t getSwitchCountForValue(TR::Node *node, int32_t value, TR::Compilation *comp);
+   virtual int32_t getSumSwitchCount(TR::Node *node, TR::Compilation *comp);
    virtual int32_t getFlatSwitchProfileCounts (TR::Node *node, TR::Compilation *comp);
-   virtual bool isSwitchProfileFlat (TR::Node *node, TR::Compilation *comp);
-   int32_t getSamplingCount( TR_IPBytecodeHashTableEntry *entry, TR::Compilation *comp);
-   // for replay
-   void copyDataFromEntry(TR_IPBytecodeHashTableEntry *oldEntry, TR_IPBytecodeHashTableEntry *newEntry, TR_IProfiler *ip);
+   virtual bool isSwitchProfileFlat(TR::Node *node, TR::Compilation *comp);
 
    TR_IPBCDataStorageHeader *getJ9SharedDataDescriptorForMethod(J9SharedDataDescriptor * descriptor, unsigned char * buffer, uint32_t length, TR_OpaqueMethodBlock * method, TR::Compilation *comp);
 
@@ -676,8 +851,9 @@ private:
    TR_IPBCDataCallGraph* getCGProfilingData(TR_ByteCodeInfo &bcInfo, TR::Compilation *comp);
    TR_IPBCDataCallGraph* getCGProfilingData(TR_OpaqueMethodBlock *method, uint32_t byteCodeIndex, TR::Compilation *comp);
 
-   uintptr_t createBalancedBST(uintptr_t *pcEntries, int32_t low, int32_t high, uintptr_t memChunk,
-                                TR::Compilation *comp);
+   J9ROMMethod *findROMMethodFromPC(J9VMThread *vmThread, uintptr_t methodPC, J9ROMClass *&romClass);
+   uintptr_t createBalancedBST(TR_IPBytecodeHashTableEntry **ipEntries, int32_t low, int32_t high, uintptr_t memChunk, TR_J9SharedCache *sharedCache);
+   uintptr_t createBalancedBST(uintptr_t *pcEntries, int32_t low, int32_t high, uintptr_t memChunk, TR_J9SharedCache *sharedCache);
    uint32_t walkILTreeForEntries(uintptr_t *pcEntries, uint32_t &numEntries, TR_J9ByteCodeIterator *bcIterator, TR_OpaqueMethodBlock *method, TR::Compilation *comp,
                                  vcount_t visitCount, int32_t callerIndex, TR_BitVector *BCvisit, bool &abort);
 

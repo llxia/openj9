@@ -62,6 +62,25 @@ class ValuePropagation : public OMR::ValuePropagation
    TR_YesNoMaybe isStringObject(TR::VPConstraint *constraint);
 
    /**
+    * \brief Determine whether an \p arrayClass with the \p componentClass can be trusted as a fixed class
+    *
+    * \param arrayClass The array class.
+    * \param componentClass The component class of the array.
+    *
+    * \return true if an array with the component class can be trusted as a fixed class, and false otherwise.
+    */
+   virtual bool canArrayClassBeTrustedAsFixedClass(TR_OpaqueClassBlock *arrayClass, TR_OpaqueClassBlock *componentClass);
+   /**
+    * \brief Determine whether a class retrieved from signature can be trusted as a fixed class
+    *
+    * \param symRef The symbol reference of the class object.
+    * \param classObject The class object to be checked.
+    *
+    * \return true if a class can be trusted as a fixed class, and false otherwise.
+    */
+   virtual bool canClassBeTrustedAsFixedClass(TR::SymbolReference *symRef, TR_OpaqueClassBlock *classObject);
+
+   /**
     * Determine whether the type is, or might be, a value type.  Note that
     * a null reference can be cast to a value type that is not a primitive
     * value type, but for the purposes of this method, a null reference is
@@ -76,14 +95,14 @@ class ValuePropagation : public OMR::ValuePropagation
    virtual TR_YesNoMaybe isValue(TR::VPConstraint *constraint, TR_OpaqueClassBlock *& clazz);
 
    /**
-    * Determine whether the component type of an array is, or might be, a primitive value
-    * type.
+    * Determine whether the array is, or might be, null-restricted
+    *
     * \param arrayConstraint The \ref TR::VPConstraint type constraint for the array reference
-    * \returns \c TR_yes if the array's component type is definitely a primitive value type;\n
-    *          \c TR_no if it is definitely not a primitive value type; or\n
+    * \returns \c TR_yes if the array is definitely a null-restricted array;\n
+    *          \c TR_no if it is definitely not a null-restricted array; or\n
     *          \c TR_maybe otherwise.
     */
-   virtual TR_YesNoMaybe isArrayCompTypePrimitiveValueType(TR::VPConstraint *arrayConstraint);
+   virtual TR_YesNoMaybe isArrayNullRestricted(TR::VPConstraint *arrayConstraint);
 
    /**
     * \brief
@@ -264,6 +283,19 @@ class ValuePropagation : public OMR::ValuePropagation
    void transformVTObjectEqNeCompare(TR_OpaqueClassBlock *containingClass, TR::Node *callNode);
 
    /**
+    * \brief
+    *    Handles refined MethodHandle.invokeBasic and MethodHandle.linkTo* VM INL calls so that
+    *    they can be inlined during delayed VP transformations. This helper does the following:
+    *       1. Creates and populates TR_PrexArgInfo for the callee
+    *       2. Adds the corresponding OMR::ValuePropagation::CallInfo to
+    *          _refinedMethodHandleINLMethodsToInline
+    *
+    * \param node
+    *    The refined call node
+    */
+   void processRefinedMethodHandleINLCall(TR::Node *node);
+
+   /**
     * Determine the bounds and element size for an array constraint
     *
     * \param[in] arrayConstraint A \ref TR::VPConstraint for an array reference
@@ -371,6 +403,7 @@ class ValuePropagation : public OMR::ValuePropagation
    TR::VP_BCDSign **_bcdSignConstraints;
    List<TreeNodeResultPair> _callsToBeFoldedToNode;
    List<TR_TreeTopNodePair> _offHeapCopyMemory;
+   TR_LinkHead<CallInfo> _refinedMethodHandleINLMethodsToInline;
 
    struct ValueTypesHelperCallTransform;
    struct ObjectComparisonHelperCallTransform;

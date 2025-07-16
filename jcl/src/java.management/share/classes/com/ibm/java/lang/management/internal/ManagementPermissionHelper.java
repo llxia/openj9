@@ -1,4 +1,4 @@
-/*[INCLUDE-IF Sidecar17]*/
+/*[INCLUDE-IF JAVA_SPEC_VERSION < 24]*/
 /*
  * Copyright IBM Corp. and others 2015
  *
@@ -26,7 +26,7 @@ import java.lang.management.ManagementPermission;
 
 /*
  * (non-Javadoc)
- * 
+ *
  * Helper class only loaded when the security manager is enabled via following code snippet
  * 	SecurityManager security = System.getSecurityManager();
  * 	if (security != null) {

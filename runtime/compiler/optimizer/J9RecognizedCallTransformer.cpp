@@ -42,6 +42,7 @@
 #include "optimizer/CallInfo.hpp"
 #include "optimizer/IdiomRecognitionUtils.hpp"
 #include "optimizer/Structure.hpp"
+#include "optimizer/ValuePropagation.hpp"
 #include "codegen/CodeGenerator.hpp"
 #include "optimizer/TransformUtil.hpp"
 #include "env/j9method.h"
@@ -271,6 +272,149 @@ void J9::RecognizedCallTransformer::process_java_lang_StringCoding_encodeASCII(T
    cfg->removeEdge(fallthroughBlock, fallbackPathBlock);
    }
 
+void J9::RecognizedCallTransformer::process_java_lang_StringLatin1_inflate_BIBII(TR::TreeTop *treetop, TR::Node *node)
+   {
+   /*
+    * Replace the call with the following tree (+ boundary checks)
+    *
+    * treetop
+    *   arraytranslate (TROTNoBreak)
+    *     aladd
+    *       srcObj
+    *       ladd
+    *         srcOff
+    *         hdrSize
+    *     aladd
+    *       dstObj
+    *       ladd
+    *         lmul
+    *           dstOff
+    *           lconst 2
+    *         hdrSize
+    *     iconst 0 (dummy: table node)
+    *     iconst 0xffff (term char node)
+    *     length
+    *     iconst -1 (dummy: stop index node)
+    */
+   static bool verboseLatin1inflate = (feGetEnv("TR_verboseLatin1inflate") != NULL);
+   if (verboseLatin1inflate)
+      {
+      fprintf(stderr, "Recognize StringLatin1.inflate([BI[BII)V: %s @ %s\n",
+         comp()->signature(),
+         comp()->getHotnessName(comp()->getMethodHotness()));
+      }
+
+   TR_ASSERT_FATAL(comp()->cg()->getSupportsArrayTranslateTROTNoBreak(), "Support for arraytranslateTROTNoBreak is required");
+
+   // Anchor a copy of the call node just before treetop so that all of the
+   // children will be commoned across the split point, and all of the temps
+   // will be initialized before the first opportunity to go to the fallback
+   // path. Otherwise, the fallback path could end up using temps that are
+   // sometimes uninitialized. This copy will be removed just after splitting.
+   TR::TreeTop *callCopyTT = TR::TreeTop::create(
+      comp(), TR::Node::create(node, TR::treetop, 1, node->duplicateTree(false)));
+
+   treetop->insertBefore(callCopyTT);
+
+   bool is64BitTarget = comp()->target().is64Bit();
+
+   TR::Node *srcObj = node->getChild(0);
+   TR::Node *srcOff = node->getChild(1);
+   TR::Node *dstObj = node->getChild(2);
+   TR::Node *dstOff = node->getChild(3);
+   TR::Node *length = node->getChild(4);
+
+   TR::Node *arrayTranslateNode = TR::Node::create(node, TR::arraytranslate, 6);
+   arrayTranslateNode->setSourceIsByteArrayTranslate(true);
+   arrayTranslateNode->setTargetIsByteArrayTranslate(false);
+   arrayTranslateNode->setTermCharNodeIsHint(false);
+   arrayTranslateNode->setSourceCellIsTermChar(false);
+   arrayTranslateNode->setTableBackedByRawStorage(true);
+   arrayTranslateNode->setSymbolReference(comp()->getSymRefTab()->findOrCreateArrayTranslateSymbol());
+
+   TR::Node *tmpNode = TR::TransformUtil::generateConvertArrayElementIndexToOffsetTrees(comp(), srcOff, NULL, 1, false);
+   TR::Node *srcAddr = TR::TransformUtil::generateArrayElementAddressTrees(comp(), srcObj, tmpNode);
+   tmpNode = TR::TransformUtil::generateConvertArrayElementIndexToOffsetTrees(comp(), dstOff, NULL, 2, false);
+   TR::Node *dstAddr = TR::TransformUtil::generateArrayElementAddressTrees(comp(), dstObj, tmpNode);
+
+   TR::Node *termCharNode = TR::Node::create(node, TR::iconst, 0, 0xffff); // mask for ISO 8859-1 decoder
+   TR::Node *tableNode = TR::Node::create(node, TR::iconst, 0, 0); // dummy table node
+   TR::Node *stoppingNode = TR::Node::create(node, TR::iconst, 0, -1); // dummy stop index node
+
+   arrayTranslateNode->setAndIncChild(0, srcAddr);
+   arrayTranslateNode->setAndIncChild(1, dstAddr);
+   arrayTranslateNode->setAndIncChild(2, tableNode);
+   arrayTranslateNode->setAndIncChild(3, termCharNode);
+   arrayTranslateNode->setAndIncChild(4, length);
+   arrayTranslateNode->setAndIncChild(5, stoppingNode);
+
+   TR::CFG *cfg = comp()->getFlowGraph();
+
+   // if (length < 0) { call the original method }
+   TR::Node *constZeroNode1 = TR::Node::create(node, TR::iconst, 0, 0);
+   TR::Node *ifCmpNode1 = TR::Node::createif(TR::ificmplt, length, constZeroNode1);
+   TR::TreeTop *ifCmpTreeTop1 = TR::TreeTop::create(comp(), treetop->getPrevTreeTop(), ifCmpNode1);
+   // if (srcOff < 0) { call the original method }
+   TR::Node *constZeroNode2 = TR::Node::create(node, TR::iconst, 0, 0);
+   TR::Node *ifCmpNode2 = TR::Node::createif(TR::ificmplt, srcOff, constZeroNode2);
+   TR::TreeTop *ifCmpTreeTop2 = TR::TreeTop::create(comp(), ifCmpTreeTop1, ifCmpNode2);
+   // if (srcObj.length < srcOff + length) { call the original method }
+   TR::Node *arrayLenNode1 = TR::Node::create(node, TR::arraylength, 1, srcObj);
+   TR::Node *iaddNode1 = TR::Node::create(node, TR::iadd, 2, srcOff, length);
+   TR::Node *ifCmpNode3 = TR::Node::createif(TR::ificmplt, arrayLenNode1, iaddNode1);
+   TR::TreeTop *ifCmpTreeTop3 = TR::TreeTop::create(comp(), ifCmpTreeTop2, ifCmpNode3);
+   // if (dstOff < 0) { call the original method }
+   TR::Node *constZeroNode3 = TR::Node::create(node, TR::iconst, 0, 0);
+   TR::Node *ifCmpNode4 = TR::Node::createif(TR::ificmplt, dstOff, constZeroNode3);
+   TR::TreeTop *ifCmpTreeTop4 = TR::TreeTop::create(comp(), ifCmpTreeTop3, ifCmpNode4);
+   // if ((dstObj.length >> 1) < dstOff + length) { call the original method }
+   TR::Node *arrayLenNode2 = TR::Node::create(node, TR::arraylength, 1, dstObj);
+   TR::Node *constOneNode = TR::Node::create(node, TR::iconst, 0, 1);
+   TR::Node *ishrNode = TR::Node::create(node, TR::ishr, 2, arrayLenNode2, constOneNode);
+   TR::Node *iaddNode2 = TR::Node::create(node, TR::iadd, 2, dstOff, length);
+   TR::Node *ifCmpNode5 = TR::Node::createif(TR::ificmplt, ishrNode, iaddNode2);
+   TR::TreeTop *ifCmpTreeTop5 = TR::TreeTop::create(comp(), ifCmpTreeTop4, ifCmpNode5);
+
+   TR::TreeTop *arrayTranslateTreeTop = TR::TreeTop::create(comp(), ifCmpTreeTop5, arrayTranslateNode);
+
+   TR::Block *ifCmpBlock1 = ifCmpTreeTop1->getEnclosingBlock();
+   TR::Block *ifCmpBlock2 = ifCmpBlock1->split(ifCmpTreeTop2, cfg, true /* fixUpCommoning */, true /* copyExceptionSuccessors */);
+   TR::Block *ifCmpBlock3 = ifCmpBlock2->split(ifCmpTreeTop3, cfg, true /* fixUpCommoning */, true /* copyExceptionSuccessors */);
+   TR::Block *ifCmpBlock4 = ifCmpBlock3->split(ifCmpTreeTop4, cfg, true /* fixUpCommoning */, true /* copyExceptionSuccessors */);
+   TR::Block *ifCmpBlock5 = ifCmpBlock4->split(ifCmpTreeTop5, cfg, true /* fixUpCommoning */, true /* copyExceptionSuccessors */);
+   TR::Block *fallThroughPathBlock = ifCmpBlock5->split(arrayTranslateTreeTop, cfg, true /* fixUpCommoning */, true /* copyExceptionSuccessors */);
+   // This block contains the original call node
+   TR::Block *fallbackPathBlock = fallThroughPathBlock->split(treetop, cfg, true /* fixUpCommoning */, true /* copyExceptionSuccessors */);
+   TR::Block *tailBlock = fallbackPathBlock->split(treetop->getNextTreeTop(), cfg, true /* fixUpCommoning */, true /* copyExceptionSuccessors */);
+
+   TR::TransformUtil::removeTree(comp(), callCopyTT);
+
+   // Go to the tail block from the fall-through block
+   TR::Node *gotoNode = TR::Node::create(node, TR::Goto);
+   TR::TreeTop *gotoTree = TR::TreeTop::create(comp(), gotoNode, NULL, NULL);
+   gotoNode->setBranchDestination(tailBlock->getEntry());
+   fallThroughPathBlock->getExit()->insertBefore(gotoTree);
+
+   // Set the ificmp blocks' destinations to the fallback block and update the CFG
+   ifCmpNode1->setBranchDestination(fallbackPathBlock->getEntry());
+   cfg->addEdge(ifCmpBlock1, fallbackPathBlock);
+   ifCmpNode2->setBranchDestination(fallbackPathBlock->getEntry());
+   cfg->addEdge(ifCmpBlock2, fallbackPathBlock);
+   ifCmpNode3->setBranchDestination(fallbackPathBlock->getEntry());
+   cfg->addEdge(ifCmpBlock3, fallbackPathBlock);
+   ifCmpNode4->setBranchDestination(fallbackPathBlock->getEntry());
+   cfg->addEdge(ifCmpBlock4, fallbackPathBlock);
+   ifCmpNode5->setBranchDestination(fallbackPathBlock->getEntry());
+   cfg->addEdge(ifCmpBlock5, fallbackPathBlock);
+   cfg->addEdge(fallThroughPathBlock, tailBlock);
+   cfg->removeEdge(fallThroughPathBlock, fallbackPathBlock);
+
+   // The original call to StringLatin1.inflate([BI[BII)V will only be used
+   // if an exception needs to be thrown.  Mark it as cold.
+   fallbackPathBlock->setFrequency(UNKNOWN_COLD_BLOCK_COUNT);
+   fallbackPathBlock->setIsCold();
+   }
+
 void J9::RecognizedCallTransformer::process_java_lang_StringUTF16_toBytes(TR::TreeTop* treetop, TR::Node* node)
    {
    TR_J9VMBase* fej9 = static_cast<TR_J9VMBase*>(comp()->fe());
@@ -442,6 +586,65 @@ void J9::RecognizedCallTransformer::process_java_lang_StringUTF16_toBytes(TR::Tr
    fallbackPathBlock->setIsCold();
    }
 
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+// helper function for process_jdk_internal_util_ArraysSupport_vectorizedMismatch
+// see comments there for more details
+static TR::Node* insertVectorizedMisMatchArgumentChecksAndAdjustForOffHeap(TR::Compilation* comp,
+                     TR::Node* node,               // node of the parameter a/b
+                     TR::Block* currentBlock,      // the block before callBlock
+                     TR::Block* callBlock,         // original callBlock
+                     bool insertArrayCheck,        // whether we need to do a type check
+                     TR::CFG* cfg)
+   {
+   // create the storeTree to store the value of the array in a symRef
+   TR::SymbolReference* symRef = comp->getSymRefTab()->createTemporary(comp->getMethodSymbol(), TR::Address);
+   symRef->getSymbol()->setNotCollected();
+   TR::Node* storeNode = TR::Node::createStore(symRef, node);
+   TR::TreeTop* storeTree = TR::TreeTop::create(comp, storeNode);
+   currentBlock->getExit()->insertBefore(storeTree);
+
+   // insert the trees 0/3
+   TR::Block* nullCheckBlock = callBlock;
+   TR::Block* newCallBlock =
+      nullCheckBlock->split(nullCheckBlock->getEntry()->getNextTreeTop(), cfg);
+   TR::Block* adjustBlock = nullCheckBlock->split(nullCheckBlock->getExit(), cfg);
+
+   // insert null check tree 1/3
+   TR::Node* nullCheckNode = TR::Node::createif(TR::ifacmpeq,
+                                                node->duplicateTree(),
+                                                TR::Node::aconst(node, 0),
+                                                newCallBlock->getEntry());
+   nullCheckBlock->append(TR::TreeTop::create(comp, nullCheckNode));
+   cfg->addEdge(nullCheckBlock, newCallBlock);
+
+   // insert array check tree 2/3
+   if (insertArrayCheck)
+      {
+      TR::Block* arrayCheckBlock = callBlock->split(callBlock->getExit(), cfg);
+
+      TR::Node* vftLoad = TR::Node::createWithSymRef(TR::aloadi, 1, 1,
+         node->duplicateTree(), comp->getSymRefTab()->findOrCreateVftSymbolRef());
+      TR::Node* maskedIsArrayClassNode = comp->fej9()->testIsClassArrayType(vftLoad);
+      TR::Node* arrayCheckNode = TR::Node::createif(TR::ificmpeq, maskedIsArrayClassNode,
+                                                   TR::Node::iconst(node, 0),
+                                                   newCallBlock->getEntry());
+
+      arrayCheckBlock->append(TR::TreeTop::create(comp, arrayCheckNode, NULL, NULL));
+      cfg->addEdge(callBlock, newCallBlock);
+      }
+
+   // insert newStoreTree 3/3
+   TR::Node* adjustedNode = TR::TransformUtil::generateDataAddrLoadTrees(comp,
+                                                                  node->duplicateTree());
+   TR::Node* newStore = TR::Node::createStore(symRef, adjustedNode);
+   TR::TreeTop* newStoreTree = TR::TreeTop::create(comp, newStore);
+   adjustBlock->append(newStoreTree);
+
+   TR::Node* resultNode = TR::Node::createLoad(node, symRef);
+   return resultNode;
+   }
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+
 void J9::RecognizedCallTransformer::process_jdk_internal_util_ArraysSupport_vectorizedMismatch(TR::TreeTop* treetop, TR::Node* node)
    {
    TR::Node* a = node->getChild(0);
@@ -450,6 +653,113 @@ void J9::RecognizedCallTransformer::process_jdk_internal_util_ArraysSupport_vect
    TR::Node* bOffset = node->getChild(3);
    TR::Node* length = node->getChild(4);
    TR::Node* log2ArrayIndexScale = node->getChild(5);
+
+   anchorAllChildren(node, treetop);
+
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+   if (TR::Compiler->om.isOffHeapAllocationEnabled())
+      {
+      int aLen, bLen;
+      const char* aObjTypeSig = a->getSymbolReference() ?
+         a->getSymbolReference()->getTypeSignature(aLen) : NULL;
+      const char* bObjTypeSig = b->getSymbolReference() ?
+         b->getSymbolReference()->getTypeSignature(bLen) : NULL;
+
+      // if the object type is not known at compile time we need to check for arrays at runtime
+      bool aCheckNeeded = (aObjTypeSig == NULL);
+      bool bCheckNeeded = (bObjTypeSig == NULL);
+      if (!aCheckNeeded) // we do know it on compile
+         {
+         TR_OpaqueClassBlock* aClass = comp()->fej9()->getClassFromSignature(aObjTypeSig,
+            aLen, a->getSymbolReference()->getOwningMethod(comp()));
+         aCheckNeeded = aClass == NULL ||
+                        aClass == comp()->getObjectClassPointer() ||
+                        TR::Compiler->cls.isInterfaceClass(comp(), aClass);
+         }
+
+      if (!bCheckNeeded)
+         {
+         TR_OpaqueClassBlock* bClass = comp()->fej9()->getClassFromSignature(bObjTypeSig,
+            bLen, b->getSymbolReference()->getOwningMethod(comp()));
+         bCheckNeeded = bClass == NULL ||
+                        bClass == comp()->getObjectClassPointer() ||
+                        TR::Compiler->cls.isInterfaceClass(comp(), bClass);
+         }
+
+
+      // true if the object type is either an array, or not known at compile time
+      bool aAdjustmentNeeded = aCheckNeeded || (aObjTypeSig[0] == '[');
+      bool bAdjustmentNeeded = bCheckNeeded || (bObjTypeSig[0] == '[');
+
+      TR::TransformUtil::separateNullCheck(comp(), treetop);
+
+      // If neither a nor b is an array, then the address is simply ref + offset, identical to
+      // the default implementation, allowing us to skip the adjustments
+      //
+      // If we are certain a or b is an array during compile time, we just need to load its
+      // starting point when needed after a null check.
+      //
+      // Otherwise, we will do an additional check at run time, and skip the loading if the objects
+      // are not an array and fall through to the default implementation.
+      //
+      // The resulting blocks should look like this:
+      // CurrentBlock:
+      //    Trees anchoring the callNode's children
+      //    Trees preceding the callNode's tree
+      // ------ done by insertVectorizedMisMatchArgumentChecksAndAdjustForOffHeap
+      //    storeTree
+      // callBlock i.e. nullCheckBlock:
+      //    Tree for null check
+      // arrayCheckBlock (only if type is uncertain on compile):
+      //    Tree for type check
+      // adjustBlock:
+      //    newStoreTree
+      // newCallBlock:
+      //    Tree containing callNode (later transformed into iselect)
+      // ------ back to mainline
+      // nextBlock:
+      //    Trees after callNode's tree
+      if (aAdjustmentNeeded || bAdjustmentNeeded)
+         {
+         // callBlock should contain the tree of this treetop only
+         TR::CFG* cfg = comp()->getFlowGraph();
+         TR::Block* currentBlock = treetop->getEnclosingBlock();
+         TR::Block* callBlock = currentBlock->split(treetop, cfg, true);
+         TR::Block* nextBlock = callBlock->split(treetop->getNextTreeTop(), cfg, true);
+
+         if (aAdjustmentNeeded)
+            {
+            // create and arrange nullCheckBlock, arrayCheckBlock, adjustBlock, and newCallBlock
+            // also create storeTree in currentBlock
+            a = insertVectorizedMisMatchArgumentChecksAndAdjustForOffHeap(comp(),
+               a, currentBlock, callBlock, aCheckNeeded, cfg);
+            }
+         else
+            {
+            a = a->duplicateTree();
+            }
+
+         if (bAdjustmentNeeded)
+            {
+            // create and arrange nullCheckBlock, arrayCheckBlock, adjustBlock, and newCallBlock
+            // also create storeTree in currentBlock
+            b = insertVectorizedMisMatchArgumentChecksAndAdjustForOffHeap(comp(),
+               b, currentBlock, callBlock, bCheckNeeded, cfg);
+            }
+         else
+            {
+            b = b->duplicateTree();
+            }
+
+         // all the children need to be duplicated after the block split
+         aOffset = aOffset->duplicateTree();
+         bOffset = bOffset->duplicateTree();
+         length = length->duplicateTree();
+         log2ArrayIndexScale = log2ArrayIndexScale->duplicateTree();
+         }
+      }
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+
    TR::Node* log2ArrayIndexScale64Bits = TR::Node::create(node, TR::iu2l, 1, log2ArrayIndexScale);
 
    TR::Node* lengthInBytes = TR::Node::create(node, TR::lshl, 2,
@@ -467,8 +777,8 @@ void J9::RecognizedCallTransformer::process_jdk_internal_util_ArraysSupport_vect
       TR::Node::create(node, TR::lxor, 2, mask, TR::Node::lconst(node, -1)));
 
    TR::Node* mismatchByteIndex = TR::Node::create(node, TR::arraycmplen, 3);
-   // TODO: replace the following aladd's with generateDataAddrLoadTrees when off-heap memory changes come in
-   // See OpenJ9 issue #16717 https://github.com/eclipse-openj9/openj9/issues/16717
+
+
    mismatchByteIndex->setAndIncChild(0, TR::Node::create(node, TR::aladd, 2, a, aOffset));
    mismatchByteIndex->setAndIncChild(1, TR::Node::create(node, TR::aladd, 2, b, bOffset));
    mismatchByteIndex->setAndIncChild(2, lengthToCompare);
@@ -484,7 +794,6 @@ void J9::RecognizedCallTransformer::process_jdk_internal_util_ArraysSupport_vect
    TR::Node* mismatchElementIndex = TR::Node::create(node, TR::l2i, 1, TR::Node::create(node, TR::lshr, 2, mismatchByteIndex, log2ArrayIndexScale));
    TR::Node* noMismatchFound = TR::Node::create(node, TR::lcmpeq, 2, mismatchByteIndex, lengthToCompare);
 
-   anchorAllChildren(node, treetop);
    prepareToReplaceNode(node);
 
    TR::Node::recreate(node, TR::iselect);
@@ -512,10 +821,24 @@ void J9::RecognizedCallTransformer::process_java_lang_StrictMath_and_Math_sqrt(T
 /*
 Transform an Unsafe atomic call to diamonds with equivalent semantics
 
+If OffHeap is enabled, a runtime isArray check is added to determine
+if loading the dataAddrPtr is necessary.
+
                           yes
 isObjectNull [A] ------------------------------------------>
     |                                                      |
     | no                                                   |
+#if OffHeap                                                |
+    |                yes                                   |
+isArray [I] ------------------------>                      |
+    |                               |                      |
+    |                use the dataAddrPtr of the array      |
+    |                 xcall atomic method helper [J]       |
+    |                               |                      |
+    |                              [H]                     |
+    | no                                                   |
+    |                                                      |
+#endif OffHeap                                             |
     |                     yes                              |
 isNotLowTagged [B] ---------------------------------------->
     |                                                      |
@@ -562,6 +885,18 @@ ifacmpeq -> <Block_E>
   aconst null
 end Block_A
 
+#if OffHeap
+start Block_I
+ifacmpne -> <Block_J>
+   andi
+     lloadi <isClassDepthAndFlags>
+       aloadi  <vft-symbol>
+         aload  <object-1>
+     iconst 0x10000 // array-flag
+   iconst 0
+end Block_I
+#endif OffHeap
+
 start Block_B
 iflcmpne -> <Block_E>
   land
@@ -599,6 +934,20 @@ xstore
   ==>xcall
 goto --> block_H
 end Block_G
+
+#if OffHeap
+start Block_J
+xcall atomic method helper
+  aladd
+    aloadi <contiguousArrayDataAddrField>
+      aload <object-1>
+    lload <offset>
+  xload value
+xstore
+  ==>xcall
+goto --> block_H
+end Block_J
+#endif OffHeap
 
 start Block_E
 xcall atomic method helper
@@ -638,6 +987,8 @@ void J9::RecognizedCallTransformer::processUnsafeAtomicCall(TR::TreeTop* treetop
    TR::CFG*     cfg = comp()->getMethodSymbol()->getFlowGraph();
    TR::Node*    isObjectNullNode = NULL;
    TR::TreeTop* isObjectNullTreeTop = NULL;
+   TR::Node*    isObjectArrayNode = NULL;
+   TR::TreeTop* isObjectArrayTreeTop = NULL;
    TR::Node*    isNotLowTaggedNode = NULL;
    TR::TreeTop* isNotLowTaggedTreeTop = NULL;
 
@@ -656,10 +1007,52 @@ void J9::RecognizedCallTransformer::processUnsafeAtomicCall(TR::TreeTop* treetop
    if (isNotStaticField)
       {
       // It is safe to skip diamond, the address can be calculated directly via [object+offset]
-      address = comp()->target().is32Bit() ? TR::Node::create(TR::aiadd, 2, objectNode, TR::Node::create(TR::l2i, 1, offsetNode)) :
-                                              TR::Node::create(TR::aladd, 2, objectNode, offsetNode);
-      if (enableTrace)
-         traceMsg(comp(), "Field is not static, use the object and offset directly\n");
+
+      // Except if OffHeap is used, then check if object is array
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+      if (TR::Compiler->om.isOffHeapAllocationEnabled())
+         {
+         // Generate null-check and array-check blocks
+         TR::TransformUtil::createTempsForCall(this, treetop);
+         objectNode = unsafeCall->getChild(1);
+         offsetNode = unsafeCall->getChild(2);
+
+         // Test if object is null
+         isObjectNullNode = TR::Node::createif(TR::ifacmpeq, objectNode->duplicateTree(), TR::Node::aconst(0), NULL);
+         isObjectNullTreeTop = TR::TreeTop::create(comp(), isObjectNullNode);
+         treetop->insertBefore(isObjectNullTreeTop);
+         treetop->getEnclosingBlock()->split(treetop, cfg, fixupCommoning);
+
+         if (enableTrace)
+            traceMsg(comp(), "Created isObjectNull test node n%dn, non-null object will fall through to Block_%d\n", isObjectNullNode->getGlobalIndex(), treetop->getEnclosingBlock()->getNumber());
+
+         //generate array check treetop
+         TR::Node *vftLoad = TR::Node::createWithSymRef(TR::aloadi, 1, 1,
+                                                        objectNode->duplicateTree(),
+                                                        comp()->getSymRefTab()->findOrCreateVftSymbolRef());
+
+         isObjectArrayNode = TR::Node::createif(TR::ificmpne,
+                                                comp()->fej9()->testIsClassArrayType(vftLoad),
+                                                TR::Node::create(TR::iconst, 0),
+                                                NULL);
+         isObjectArrayTreeTop = TR::TreeTop::create(comp(), isObjectArrayNode, NULL, NULL);
+         treetop->insertBefore(isObjectArrayTreeTop);
+         treetop->getEnclosingBlock()->split(treetop, cfg, fixupCommoning);
+
+         if (enableTrace)
+            traceMsg(comp(), "Created isObjectArray test node n%dn, array will branch to array access block\n", isObjectArrayNode->getGlobalIndex());
+
+         address = comp()->target().is32Bit() ? TR::Node::create(TR::aiadd, 2, objectNode->duplicateTree(), TR::Node::create(TR::l2i, 1, offsetNode->duplicateTree())) :
+                                              TR::Node::create(TR::aladd, 2, objectNode->duplicateTree(), offsetNode->duplicateTree());
+         }
+      else
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
+         {
+         address = comp()->target().is32Bit() ? TR::Node::create(TR::aiadd, 2, objectNode, TR::Node::create(TR::l2i, 1, offsetNode)) :
+                                                TR::Node::create(TR::aladd, 2, objectNode, offsetNode);
+         if (enableTrace)
+            traceMsg(comp(), "Field is not static, use the object and offset directly\n");
+         }
       }
    else
       {
@@ -691,6 +1084,28 @@ void J9::RecognizedCallTransformer::processUnsafeAtomicCall(TR::TreeTop* treetop
 
       if (enableTrace)
          traceMsg(comp(), "Created isObjectNull test node n%dn, non-null object will fall through to Block_%d\n", isObjectNullNode->getGlobalIndex(), treetop->getEnclosingBlock()->getNumber());
+
+      // Test if object is array - offheap only
+   #if defined (J9VM_GC_SPARSE_HEAP_ALLOCATION)
+      if (TR::Compiler->om.isOffHeapAllocationEnabled() && comp()->target().is64Bit())
+         {
+         //generate array check treetop
+         TR::Node *vftLoad = TR::Node::createWithSymRef(TR::aloadi, 1, 1,
+                                                        objectNode->duplicateTree(),
+                                                        comp()->getSymRefTab()->findOrCreateVftSymbolRef());
+
+         isObjectArrayNode = TR::Node::createif(TR::ificmpne,
+                                                comp()->fej9()->testIsClassArrayType(vftLoad),
+                                                TR::Node::create(TR::iconst, 0),
+                                                NULL);
+         isObjectArrayTreeTop = TR::TreeTop::create(comp(), isObjectArrayNode, NULL, NULL);
+         treetop->insertBefore(isObjectArrayTreeTop);
+         treetop->getEnclosingBlock()->split(treetop, cfg, fixupCommoning);
+
+         if (enableTrace)
+            traceMsg(comp(), "Created isObjectArray test node n%dn, array will branch to array access block\n", isObjectArrayNode->getGlobalIndex());
+         }
+   #endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
 
       // Test if low tag is set
       isNotLowTaggedNode = TR::Node::createif(TR::iflcmpne,
@@ -771,7 +1186,8 @@ void J9::RecognizedCallTransformer::processUnsafeAtomicCall(TR::TreeTop* treetop
    unsafeCall->removeChild(1); // remove object node
    unsafeCall->setSymbolReference(comp()->getSymRefTab()->findOrCreateCodeGenInlinedHelper(helper));
 
-   if (!isNotStaticField)
+   // Setup and connect check blocks if generated
+   if (isObjectNullTreeTop)
       {
       // Split so that the return value from the atomic method helper call will be stored into a temp if required
       TR::TreeTop *nextTreeTop = treetop->getNextTreeTop();
@@ -793,54 +1209,152 @@ void J9::RecognizedCallTransformer::processUnsafeAtomicCall(TR::TreeTop* treetop
             }
          }
 
-      /* Example of the atomic method helper
-       * n92n  treetop
-       * n93n    icall  <atomicFetchAndAdd>
-       * n94n      aladd
-       * n95n        aload  <temp slot 5>
-       * n96n        lload  <temp slot 3>
-       * n97n      iload  <temp slot 4>
-       */
-      // Create another helper call that loads from ramStatics
-      TR::TreeTop *unsafeCallRamStaticsTT = treetop->duplicateTree();
-      TR::Node *unsafeCallRamStaticsNode = unsafeCallRamStaticsTT->getNode()->getFirstChild();
-      TR::Node *addressNode = unsafeCallRamStaticsNode->getFirstChild();
-      TR::Node *loadNode = addressNode->getFirstChild();
-
-      loadNode->setSymbolReference(newSymbolReference); // Use the same symRef as the objectAdjustmentNode
-      treetop->insertBefore(unsafeCallRamStaticsTT);
-
-      // Store the return value from the helper call that loads from ramStatics
-      if (storeReturnNode)
+      // If isNotStaticField and array-check is generated then
+      // setup and connect the null and array check blocks
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+      if (isNotStaticField && isObjectArrayTreeTop)
          {
-         TR::Node *storeNode = TR::Node::createStore(unsafeCall, storeReturnNode->getSymbolReference(), unsafeCallRamStaticsNode);
-         treetop->insertBefore(TR::TreeTop::create(comp(), storeNode));
+         // Generate array access block
+         TR::TreeTop *arrayAccessTreeTop = treetop->duplicateTree();
+         TR::Node *addrToAccessNode = arrayAccessTreeTop->getNode()->getChild(0)->getChild(0);
+         TR::Block *arrayAccessBlock = TR::Block::createEmptyBlock(arrayAccessTreeTop->getNode(), comp(),
+                                                                   treetop->getEnclosingBlock()->getFrequency());
+         arrayAccessBlock->append(arrayAccessTreeTop);
+
+         //load dataAddr
+         TR::Node *objBaseAddrNode = addrToAccessNode->getChild(0);
+         TR::Node *dataAddrNode = TR::TransformUtil::generateDataAddrLoadTrees(comp(), objBaseAddrNode);
+         addrToAccessNode->setChild(0, dataAddrNode);
+
+         //correct refcounts
+         objBaseAddrNode->decReferenceCount();
+         dataAddrNode->incReferenceCount();
+
+         //set as array test destination and insert array access into IL trees
+         // - if object is array, goto array access block
+         // - else, fall through to non-array access
+         treetop->getEnclosingBlock()->getExit()->insertTreeTopsAfterMe(arrayAccessBlock->getEntry(), arrayAccessBlock->getExit());
+         isObjectArrayNode->setBranchDestination(arrayAccessTreeTop->getEnclosingBlock()->getEntry());
+
+         treetop->getEnclosingBlock()->append(TR::TreeTop::create(comp(), TR::Node::create(arrayAccessTreeTop->getNode(),
+                                                                              TR::Goto, 0,
+                                                                              returnBlock->getEntry())));
+         cfg->addNode(arrayAccessBlock);
+         cfg->addEdge(TR::CFGEdge::createEdge(isObjectArrayTreeTop->getEnclosingBlock(), arrayAccessBlock, comp()->trMemory()));
+         cfg->addEdge(TR::CFGEdge::createEdge(arrayAccessBlock, returnBlock, comp()->trMemory()));
+
+         // Store the return value from the helper call for array access
+         if (storeReturnNode)
+            {
+            TR::Node *storeNode = TR::Node::createStore(unsafeCall, storeReturnNode->getSymbolReference(), arrayAccessTreeTop->getNode()->getFirstChild());
+            arrayAccessTreeTop->insertTreeTopsAfterMe(TR::TreeTop::create(comp(), storeNode));
+            }
+
+         isObjectNullNode->setBranchDestination(treetop->getEnclosingBlock()->getEntry());
+         cfg->addEdge(TR::CFGEdge::createEdge(isObjectNullTreeTop->getEnclosingBlock(), treetop->getEnclosingBlock(), comp()->trMemory()));
+
+         if (enableTrace)
+            traceMsg(comp(), "Created array access helper block_%d that loads dataAddr pointer from array object address\n", arrayAccessBlock->getNumber());
          }
+      else
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
+      // If not isNotStaticField then setup and connect all
+      // generated check blocks
+      if (!isNotStaticField)
+         {
+         // Create another helper call that loads from ramStatics
+         /* Example of the atomic method helper
+         * n92n  treetop
+         * n93n    icall  <atomicFetchAndAdd>
+         * n94n      aladd
+         * n95n        aload  <temp slot 5>
+         * n96n        lload  <temp slot 3>
+         * n97n      iload  <temp slot 4>
+         */
+         TR::TreeTop *unsafeCallRamStaticsTT = treetop->duplicateTree();
+         TR::Node *unsafeCallRamStaticsNode = unsafeCallRamStaticsTT->getNode()->getFirstChild();
+         TR::Node *addressNode = unsafeCallRamStaticsNode->getFirstChild();
+         TR::Node *loadNode = addressNode->getFirstChild();
 
-      // Insert goto from the helper call that loads from ramStatics to the final return block
-      TR::Node *gotoNode = TR::Node::create(unsafeCall, TR::Goto);
-      gotoNode->setBranchDestination(returnBlock->getEntry());
-      treetop->insertBefore(TR::TreeTop::create(comp(), gotoNode));
+         loadNode->setSymbolReference(newSymbolReference); // Use the same symRef as the objectAdjustmentNode
+         treetop->insertBefore(unsafeCallRamStaticsTT);
 
-      if (enableTrace)
-         traceMsg(comp(), "Created atomic method helper block_%d that loads from ramStatics treetop n%dn. returnBlock block_%d\n",
-            unsafeCallRamStaticsTT->getEnclosingBlock()->getNumber(), unsafeCallRamStaticsTT->getNode()->getGlobalIndex(), returnBlock->getNumber());
+         // Store the return value from the helper call that loads from ramStatics
+         if (storeReturnNode)
+            {
+            TR::Node *storeNode = TR::Node::createStore(unsafeCall, storeReturnNode->getSymbolReference(), unsafeCallRamStaticsNode);
+            treetop->insertBefore(TR::TreeTop::create(comp(), storeNode));
+            }
 
-      // Split the block that contains the original helper call into a separate block
-      treetop->getEnclosingBlock()->split(treetop, cfg, fixupCommoning);
+         // Insert goto from the helper call that loads from ramStatics to the final return block
+         TR::Node *gotoNode = TR::Node::create(unsafeCall, TR::Goto);
+         gotoNode->setBranchDestination(returnBlock->getEntry());
+         treetop->insertBefore(TR::TreeTop::create(comp(), gotoNode));
 
-      // Setup CFG edges
-      cfg->addEdge(unsafeCallRamStaticsTT->getEnclosingBlock(), returnBlock);
+         if (enableTrace)
+            traceMsg(comp(), "Created atomic method helper block_%d that loads from ramStatics treetop n%dn. returnBlock block_%d\n",
+               unsafeCallRamStaticsTT->getEnclosingBlock()->getNumber(), unsafeCallRamStaticsTT->getNode()->getGlobalIndex(), returnBlock->getNumber());
 
-      if (enableTrace)
-         traceMsg(comp(), "Block_%d contains call to atomic method helper, and is the target of isObjectNull and isNotLowTagged tests\n", treetop->getEnclosingBlock()->getNumber());
+         // Split the block that contains the original helper call into a separate block
+         treetop->getEnclosingBlock()->split(treetop, cfg, fixupCommoning);
 
-      isObjectNullNode->setBranchDestination(treetop->getEnclosingBlock()->getEntry());
-      cfg->addEdge(TR::CFGEdge::createEdge(isObjectNullTreeTop->getEnclosingBlock(), treetop->getEnclosingBlock(), comp()->trMemory()));
-      isNotLowTaggedNode->setBranchDestination(treetop->getEnclosingBlock()->getEntry());
-      cfg->addEdge(TR::CFGEdge::createEdge(isNotLowTaggedTreeTop->getEnclosingBlock(), treetop->getEnclosingBlock(), comp()->trMemory()));
+         // Create another helper call for array access (offheap only)
+      #if defined (J9VM_GC_SPARSE_HEAP_ALLOCATION)
+         if (isObjectArrayTreeTop != NULL)
+            {
+            TR::TreeTop *arrayAccessTreeTop = treetop->duplicateTree();
+            TR::Node *addrToAccessNode = arrayAccessTreeTop->getNode()->getChild(0)->getChild(0);
+            TR::Block *arrayAccessBlock = TR::Block::createEmptyBlock(arrayAccessTreeTop->getNode(), comp(),
+                                                                     treetop->getEnclosingBlock()->getFrequency());
+            arrayAccessBlock->append(arrayAccessTreeTop);
+            arrayAccessBlock->append(TR::TreeTop::create(comp(), TR::Node::create(arrayAccessTreeTop->getNode(),
+                                                                                 TR::Goto, 0,
+                                                                                 returnBlock->getEntry())));
 
-      cfg->removeEdge(unsafeCallRamStaticsTT->getEnclosingBlock(), treetop->getEnclosingBlock());
+            //load dataAddr
+            TR::Node *objBaseAddrNode = addrToAccessNode->getChild(0);
+            TR::Node *dataAddrNode = TR::TransformUtil::generateDataAddrLoadTrees(comp(), objBaseAddrNode);
+            addrToAccessNode->setChild(0, dataAddrNode);
+
+            //correct refcounts
+            objBaseAddrNode->decReferenceCount();
+            dataAddrNode->incReferenceCount();
+
+            //set as array test destination and insert array access into IL trees
+            // - if object is array, goto array access block
+            // - else, fall through to lowtag test
+            unsafeCallRamStaticsTT->getEnclosingBlock()->getExit()->insertTreeTopsAfterMe(arrayAccessBlock->getEntry(), arrayAccessBlock->getExit());
+            isObjectArrayNode->setBranchDestination(arrayAccessTreeTop->getEnclosingBlock()->getEntry());
+
+            cfg->addNode(arrayAccessBlock);
+            cfg->addEdge(TR::CFGEdge::createEdge(isObjectArrayTreeTop->getEnclosingBlock(), arrayAccessBlock, comp()->trMemory()));
+            cfg->addEdge(TR::CFGEdge::createEdge(arrayAccessBlock, returnBlock, comp()->trMemory()));
+
+            // Store the return value from the helper call for array access
+            if (storeReturnNode)
+               {
+               TR::Node *storeNode = TR::Node::createStore(unsafeCall, storeReturnNode->getSymbolReference(), arrayAccessTreeTop->getNode()->getFirstChild());
+               arrayAccessTreeTop->insertTreeTopsAfterMe(TR::TreeTop::create(comp(), storeNode));
+               }
+
+            if (enableTrace)
+               traceMsg(comp(), "Created array access helper block_%d that loads dataAddr pointer from array object address\n", arrayAccessBlock->getNumber());
+            }
+      #endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
+
+         // Setup CFG edges
+         cfg->addEdge(unsafeCallRamStaticsTT->getEnclosingBlock(), returnBlock);
+
+         if (enableTrace)
+            traceMsg(comp(), "Block_%d contains call to atomic method helper, and is the target of isObjectNull and isNotLowTagged tests\n", treetop->getEnclosingBlock()->getNumber());
+
+         isObjectNullNode->setBranchDestination(treetop->getEnclosingBlock()->getEntry());
+         cfg->addEdge(TR::CFGEdge::createEdge(isObjectNullTreeTop->getEnclosingBlock(), treetop->getEnclosingBlock(), comp()->trMemory()));
+         isNotLowTaggedNode->setBranchDestination(treetop->getEnclosingBlock()->getEntry());
+         cfg->addEdge(TR::CFGEdge::createEdge(isNotLowTaggedTreeTop->getEnclosingBlock(), treetop->getEnclosingBlock(), comp()->trMemory()));
+
+         cfg->removeEdge(unsafeCallRamStaticsTT->getEnclosingBlock(), treetop->getEnclosingBlock());
+         }
       }
    }
 
@@ -1184,7 +1698,7 @@ void J9::RecognizedCallTransformer::process_java_lang_invoke_MethodHandle_linkTo
       "java/lang/invoke/MemberName.vmindex J");
 
    TR::Node *vftOffset =
-      TR::Node::createWithSymRef(node, TR::aloadi, 1, memberNameNode, vmIndexSymRef);
+      TR::Node::createWithSymRef(node, TR::lloadi, 1, memberNameNode, vmIndexSymRef);
 
    if (!comp()->target().is64Bit())
       vftOffset = TR::Node::create(node, TR::l2i, 1, vftOffset);
@@ -1356,6 +1870,14 @@ bool J9::RecognizedCallTransformer::isInlineable(TR::TreeTop* treetop)
          case TR::java_lang_Long_rotateLeft:
          case TR::java_lang_Long_rotateRight:
             return comp()->target().cpu.getSupportsHardware64bitRotate();
+         case TR::java_lang_Integer_compress:
+            return cg()->getSupports32BitCompress();
+         case TR::java_lang_Long_compress:
+            return cg()->getSupports64BitCompress();
+         case TR::java_lang_Integer_expand:
+            return cg()->getSupports32BitExpand();
+         case TR::java_lang_Long_expand:
+            return cg()->getSupports64BitExpand();
          case TR::java_lang_Math_abs_I:
          case TR::java_lang_Math_abs_L:
             return cg()->supportsIntAbs();
@@ -1367,6 +1889,11 @@ bool J9::RecognizedCallTransformer::isInlineable(TR::TreeTop* treetop)
          case TR::java_lang_Math_max_L:
          case TR::java_lang_Math_min_L:
             return !comp()->getOption(TR_DisableMaxMinOptimization);
+         case TR::java_lang_Math_max_F:
+         case TR::java_lang_Math_min_F:
+         case TR::java_lang_Math_max_D:
+         case TR::java_lang_Math_min_D:
+            return !comp()->getOption(TR_DisableMaxMinOptimization) && cg()->getSupportsInlineMath_MaxMin_FD();
          case TR::java_lang_Math_multiplyHigh:
             return cg()->getSupportsLMulHigh();
          case TR::java_lang_StringUTF16_toBytes:
@@ -1377,12 +1904,14 @@ bool J9::RecognizedCallTransformer::isInlineable(TR::TreeTop* treetop)
          case TR::java_lang_Short_reverseBytes:
          case TR::java_lang_Integer_reverseBytes:
          case TR::java_lang_Long_reverseBytes:
-            return comp()->cg()->supportsByteswap();
+            return cg()->supportsByteswap();
          case TR::java_lang_StringCoding_encodeASCII:
          case TR::java_lang_String_encodeASCII:
-            return comp()->cg()->getSupportsInlineEncodeASCII();
+            return cg()->getSupportsInlineEncodeASCII();
+         case TR::java_lang_StringLatin1_inflate_BIBII:
+            return (cg()->getSupportsArrayTranslateTROTNoBreak() && !comp()->target().cpu.isPower());
          case TR::jdk_internal_util_ArraysSupport_vectorizedMismatch:
-            return comp()->cg()->getSupportsInlineVectorizedMismatch();
+            return cg()->getSupportsInlineVectorizedMismatch();
          default:
             return false;
          }
@@ -1471,6 +2000,18 @@ void J9::RecognizedCallTransformer::transform(TR::TreeTop* treetop)
 
             break;
             }
+         case TR::java_lang_Integer_compress:
+            processIntrinsicFunction(treetop, node, TR::icompressbits);
+            break;
+         case TR::java_lang_Long_compress:
+            processIntrinsicFunction(treetop, node, TR::lcompressbits);
+            break;
+         case TR::java_lang_Integer_expand:
+            processIntrinsicFunction(treetop, node, TR::iexpandbits);
+            break;
+         case TR::java_lang_Long_expand:
+            processIntrinsicFunction(treetop, node, TR::lexpandbits);
+            break;
          case TR::java_lang_Math_abs_I:
             processIntrinsicFunction(treetop, node, TR::iabs);
             break;
@@ -1495,6 +2036,18 @@ void J9::RecognizedCallTransformer::transform(TR::TreeTop* treetop)
          case TR::java_lang_Math_min_L:
             processIntrinsicFunction(treetop, node, TR::lmin);
             break;
+         case TR::java_lang_Math_max_F:
+            processIntrinsicFunction(treetop, node, TR::fmax);
+            break;
+        case TR::java_lang_Math_min_F:
+            processIntrinsicFunction(treetop, node, TR::fmin);
+            break;
+        case TR::java_lang_Math_max_D:
+            processIntrinsicFunction(treetop, node, TR::dmax);
+            break;
+        case TR::java_lang_Math_min_D:
+            processIntrinsicFunction(treetop, node, TR::dmin);
+            break;
          case TR::java_lang_Math_multiplyHigh:
             processIntrinsicFunction(treetop, node, TR::lmulh);
             break;
@@ -1504,6 +2057,9 @@ void J9::RecognizedCallTransformer::transform(TR::TreeTop* treetop)
          case TR::java_lang_StringCoding_encodeASCII:
          case TR::java_lang_String_encodeASCII:
             process_java_lang_StringCoding_encodeASCII(treetop, node);
+            break;
+         case TR::java_lang_StringLatin1_inflate_BIBII:
+            process_java_lang_StringLatin1_inflate_BIBII(treetop, node);
             break;
          case TR::java_lang_StrictMath_sqrt:
          case TR::java_lang_Math_sqrt:

@@ -61,7 +61,7 @@ extern J9JavaVM *BFUjavaVM; /* from jvm.c */
  * b) If performing a hash operation, it assumes the caller has already locked vm->classLoaderModuleAndLocationMutex
  */
 static UDATA hashPackageTableDelete(J9VMThread * currentThread, J9ClassLoader * classLoader, const char *packageName);
-static J9Package * createPackage(J9VMThread * currentThread, J9Module * fromModule, const char *package);
+static J9Package *createPackage(J9VMThread *currentThread, J9Module *fromModule, J9UTF8 *package);
 static void freePackageDefinition(J9VMThread * currentThread, J9ClassLoader * classLoader, const char *packageName);
 static BOOLEAN removePackageDefinition(J9VMThread * currentThread, J9Module * fromModule, const char *packageName);
 static BOOLEAN addPackageDefinition(J9VMThread * currentThread, J9Module * fromModule, const char *package);
@@ -71,7 +71,7 @@ static UDATA addModuleDefinition(J9VMThread * currentThread, J9Module * fromModu
 static BOOLEAN isPackageDefined(J9VMThread * currentThread, J9ClassLoader * classLoader, const char *packageName);
 static BOOLEAN areNoPackagesDefined(J9VMThread * currentThread, J9ClassLoader * classLoader, const char* const* packages, U_32 numPackages);
 static UDATA exportPackageToAll(J9VMThread * currentThread, J9Module * fromModule, const char *package);
-static UDATA exportPackageToAllUnamed(J9VMThread * currentThread, J9Module * fromModule, const char *package);
+static UDATA exportPackageToAllUnnamed(J9VMThread *currentThread, J9Module *fromModule, const char *package);
 static UDATA exportPackageToModule(J9VMThread * currentThread, J9Module * fromModule, const char *package, J9Module * toModule);
 static void trcModulesCreationPackage(J9VMThread * currentThread, J9Module * fromModule, const char *package);
 static void trcModulesAddModuleExportsToAll(J9VMThread * currentThread, J9Module * fromModule, const char *package);
@@ -80,9 +80,12 @@ static void trcModulesAddModuleExports(J9VMThread * currentThread, J9Module * fr
 static void trcModulesAddModulePackage(J9VMThread *currentThread, J9Module *j9mod, const char *package);
 static UDATA hashTableAtPut(J9HashTable * table, void * value, BOOLEAN collisionIsFailure);
 static void throwExceptionHelper(J9VMThread * currentThread, UDATA errCode);
-static void freePackage(J9VMThread * currentThread, J9Package * j9package);
+static void freePackage(J9VMThread *currentThread, J9Package *j9package);
 static J9ClassLoader * getModuleObjectClassLoader(J9VMThread * currentThread, j9object_t moduleObject);
-static J9Module * createModule(J9VMThread * currentThread, j9object_t moduleObject, J9ClassLoader * classLoader, j9object_t moduleName);
+static J9Module *createModule(J9VMThread *currentThread, j9object_t moduleObject, J9ClassLoader *classLoader, J9UTF8 *moduleName);
+#if defined(J9VM_OPT_SNAPSHOTS)
+static J9Module *restoreModule(J9VMThread *currentThread, J9ClassLoader *classLoader, J9UTF8 *moduleName, j9object_t moduleObject, jstring moduleVersion);
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
 static J9Module * getJ9Module(J9VMThread * currentThread, jobject module);
 static BOOLEAN isModuleNameValid(j9object_t moduleName);
 static BOOLEAN isModuleJavaBase(j9object_t moduleName);
@@ -200,37 +203,41 @@ throwExceptionHelper(J9VMThread *currentThread, UDATA errCode)
 }
 
 static void
-freePackage(J9VMThread * currentThread, J9Package * j9package)
+freePackage(J9VMThread *currentThread, J9Package *j9package)
 {
 	if (NULL != j9package) {
-		J9JavaVM * const vm = currentThread->javaVM;
+		J9JavaVM *const vm = currentThread->javaVM;
 		PORT_ACCESS_FROM_JAVAVM(vm);
 
 		if (NULL != j9package->exportsHashTable) {
 			hashTableFree(j9package->exportsHashTable);
 		}
-		j9mem_free_memory((void *) j9package->packageName);
+#if defined(J9VM_OPT_SNAPSHOTS)
+		if (IS_SNAPSHOTTING_ENABLED(vm)) {
+			VMSNAPSHOTIMPLPORT_ACCESS_FROM_JAVAVM(vm);
+			vmsnapshot_free_memory((void *)j9package->packageName);
+		} else
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+		{
+			j9mem_free_memory((void *)j9package->packageName);
+		}
 		pool_removeElement(vm->modularityPool, j9package);
 	}
 }
 
 static J9Package *
-createPackage(J9VMThread * currentThread, J9Module * fromModule, const char *package)
+createPackage(J9VMThread *currentThread, J9Module *fromModule, J9UTF8 *packageName)
 {
-	J9JavaVM * const vm = currentThread->javaVM;
-	J9InternalVMFunctions const * const vmFuncs = vm->internalVMFunctions;
-	J9Package * retval = NULL;
+	J9JavaVM *const vm = currentThread->javaVM;
+	J9InternalVMFunctions const *const vmFuncs = vm->internalVMFunctions;
+	J9Package *retval = NULL;
 
-	J9ClassLoader * const classLoader = fromModule->classLoader;
-	J9Package * j9package = pool_newElement(vm->modularityPool);
+	J9Package *j9package = pool_newElement(vm->modularityPool);
 
 	if (NULL != j9package) {
 		j9package->module = fromModule;
 		j9package->classLoader = fromModule->classLoader;
-		if (!addUTFNameToPackage(currentThread, j9package, package, NULL, 0)) {
-			freePackage(currentThread, j9package);
-			return retval;
-		}
+		j9package->packageName = packageName;
 		j9package->exportsHashTable = vmFuncs->hashModulePointerTableNew(vm, INITIAL_INTERNAL_MODULE_HASHTABLE_SIZE);
 		if (NULL != j9package->exportsHashTable) {
 			retval = j9package;
@@ -249,6 +256,9 @@ createPackage(J9VMThread * currentThread, J9Module * fromModule, const char *pac
 }
 
 /** @note It assumes moduleObject is guaranteed not to be NULL
+ *
+ * This method has potential GC point.
+ *
  *  @return Pointer to module's classloader
  */
 static J9ClassLoader *
@@ -269,7 +279,7 @@ getModuleObjectClassLoader(J9VMThread * currentThread, j9object_t moduleObject)
 
 /** @throws OutOfMemory exception if memory cannot be allocated */
 static J9Module *
-createModule(J9VMThread * currentThread, j9object_t moduleObject, J9ClassLoader * classLoader, j9object_t moduleName)
+createModule(J9VMThread *currentThread, j9object_t moduleObject, J9ClassLoader *classLoader, J9UTF8 *moduleName)
 {
 	J9JavaVM * const vm = currentThread->javaVM;
 	J9InternalVMFunctions const * const vmFuncs = vm->internalVMFunctions;
@@ -281,7 +291,7 @@ createModule(J9VMThread * currentThread, j9object_t moduleObject, J9ClassLoader 
 	} else {
 		if (NULL == moduleName) {
 			/* moduleName is passed as NULL for the unnamed module for bootloader created by JVM_SetBootLoaderUnnamedModule() */
-			j9mod = vm->unamedModuleForSystemLoader;
+			j9mod = vm->unnamedModuleForSystemLoader;
 		} else {
 			j9mod = vm->javaBaseModule;
 			j9mod->isLoose = TRUE;
@@ -315,6 +325,106 @@ createModule(J9VMThread * currentThread, j9object_t moduleObject, J9ClassLoader 
 	return retval;
 }
 
+#if defined(J9VM_OPT_SNAPSHOTS)
+static J9Module *
+restoreModule(J9VMThread *currentThread, J9ClassLoader *classLoader, J9UTF8 *moduleName, j9object_t moduleObject, jstring moduleVersion)
+{
+	J9JavaVM *vm = currentThread->javaVM;
+	J9InternalVMFunctions const *const vmFuncs = vm->internalVMFunctions;
+	J9ClassLoader *systemClassLoader = vm->systemClassLoader;
+	BOOLEAN firstModule = J9_ARE_NO_BITS_SET(vm->runtimeFlags, J9_RUNTIME_JAVA_BASE_MODULE_CREATED);
+	J9Module *ret = NULL;
+	PORT_ACCESS_FROM_VMC(currentThread);
+
+	J9Module *module = hashModuleTableAtWithUTF8Name(currentThread, classLoader, moduleName);
+
+	if (NULL != module) {
+		const char *moduleNameData = (const char *)J9UTF8_DATA(moduleName);
+		module->moduleObject = moduleObject;
+		/* Bind J9Module and module object via the hidden field. */
+		J9OBJECT_ADDRESS_STORE(currentThread, moduleObject, vm->modulePointerOffset, module);
+
+		if (NULL != moduleVersion) {
+			module->version = J9_JNI_UNWRAP_REFERENCE(moduleVersion);
+		}
+
+		if (firstModule) {
+			/* The first module must be "java.base". */
+			J9ClassWalkState classWalkState = {0};
+			J9Class *clazz = NULL;
+
+			Assert_SC_true(0 == strcmp(moduleNameData, JAVA_BASE_MODULE));
+
+			clazz = vmFuncs->allClassesStartDo(&classWalkState, vm, systemClassLoader);
+			/* TODO: There are clazz objects from systemClassLoader that are not in the java.base
+			 * module (e.g. other modules include openj9.jvm and jdk.proxy1). For now, rather than
+			 * asserting like the non-persisted path, do a string compare with the moduleName so
+			 * that only the proper clazz->classObjects are being restored.
+			 * Revisit this to ensure proper functionality. Also, clean this up. There is duplicated
+			 * code with with non-restore (and else) path.
+			 */
+			while (NULL != clazz) {
+				J9Module *clazzModule = clazz->module;
+
+				if (NULL != clazzModule) {
+					J9UTF8 *moduleName = clazzModule->moduleName;
+					if ((NULL != moduleName) && (0 == strcmp(J9UTF8_DATA(moduleName), JAVA_BASE_MODULE))) {
+						J9VMJAVALANGCLASS_SET_MODULE(currentThread, clazz->classObject, moduleObject);
+					} else {
+						if (classLoader == systemClassLoader) {
+							const char *moduleName = "openj9.sharedclasses";
+
+							if (0 == strcmp(moduleNameData, moduleName)) {
+								J9VMDllLoadInfo *entry = FIND_DLL_TABLE_ENTRY(J9_SHARED_DLL_NAME);
+
+								if ((NULL == entry) || (J9_ARE_ALL_BITS_SET(entry->loadFlags, FAILED_TO_LOAD))) {
+									j9nls_printf(PORTLIB, J9NLS_WARNING, J9NLS_VM_FAILED_TO_LOAD_MODULE_REQUIRED_DLL, J9_SHARED_DLL_NAME, moduleName);
+								}
+							}
+						}
+					}
+				}
+				clazz = vmFuncs->allClassesNextDo(&classWalkState);
+			}
+			vmFuncs->allClassesEndDo(&classWalkState);
+
+			if (vm->anonClassCount > 0) {
+				J9ClassWalkState classWalkStateAnon = {0};
+				J9Class *clazzAnon = NULL;
+
+				Assert_SC_notNull(vm->anonClassLoader);
+				clazzAnon = vmFuncs->allClassesStartDo(&classWalkStateAnon, vm, vm->anonClassLoader);
+				while (NULL != clazzAnon) {
+					Assert_SC_true(clazzAnon->module == vm->javaBaseModule);
+					J9VMJAVALANGCLASS_SET_MODULE(currentThread, clazzAnon->classObject, moduleObject);
+					clazzAnon = vmFuncs->allClassesNextDo(&classWalkStateAnon);
+				}
+				vmFuncs->allClassesEndDo(&classWalkStateAnon);
+			}
+			vm->runtimeFlags |= J9_RUNTIME_JAVA_BASE_MODULE_CREATED;
+			Trc_MODULE_defineModule(currentThread, "java.base", module);
+		} else {
+			Trc_MODULE_defineModule(currentThread, moduleNameData, module);
+			if (classLoader == systemClassLoader) {
+				const char *moduleName = "openj9.sharedclasses";
+
+				if (0 == strcmp(moduleNameData, moduleName)) {
+					J9VMDllLoadInfo *entry = FIND_DLL_TABLE_ENTRY(J9_SHARED_DLL_NAME);
+
+					if ((NULL == entry) || (J9_ARE_ALL_BITS_SET(entry->loadFlags, FAILED_TO_LOAD))) {
+						j9nls_printf(PORTLIB, J9NLS_WARNING, J9NLS_VM_FAILED_TO_LOAD_MODULE_REQUIRED_DLL, J9_SHARED_DLL_NAME, moduleName);
+					}
+				}
+			}
+		}
+		TRIGGER_J9HOOK_VM_MODULE_LOAD(vm->hookInterface, currentThread, module);
+		ret = module;
+	}
+
+	return ret;
+}
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+
 static void
 freePackageDefinition(J9VMThread * currentThread, J9ClassLoader * classLoader, const char *packageName)
 {
@@ -338,36 +448,64 @@ removePackageDefinition(J9VMThread * currentThread, J9Module * fromModule, const
 }
 
 static void
-trcModulesCreationPackage(J9VMThread * currentThread, J9Module * fromModule, const char *package)
+trcModulesCreationPackage(J9VMThread *currentThread, J9Module *fromModule, const char *package)
 {
 	PORT_ACCESS_FROM_VMC(currentThread);
-	J9InternalVMFunctions const * const vmFuncs = currentThread->javaVM->internalVMFunctions;
-	char moduleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char *moduleNameUTF = vmFuncs->copyStringToUTF8WithMemAlloc(
-		currentThread, fromModule->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, moduleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-
-	if (NULL != moduleNameUTF) {
-		if (0 == strcmp(moduleNameUTF, JAVA_BASE_MODULE)) {
-			Trc_MODULE_createPackage(currentThread, package, "java.base", fromModule);
-		} else {
-			Trc_MODULE_createPackage(currentThread, package, moduleNameUTF, fromModule);
-		}
-		if (moduleNameBuf != moduleNameUTF) {
-			j9mem_free_memory(moduleNameUTF);
-		}
-	} else {
-		vmFuncs->setNativeOutOfMemoryError(currentThread, 0, 0);
+	J9UTF8 *moduleName = fromModule->moduleName;
+	if (NULL != moduleName) {
+		Trc_MODULE_createPackage(currentThread, package, (const char *)J9UTF8_DATA(moduleName), fromModule);
 	}
 }
 
 static BOOLEAN
-addPackageDefinition(J9VMThread * currentThread, J9Module * fromModule, const char *package)
+addPackageDefinition(J9VMThread *currentThread, J9Module *fromModule, const char *package)
 {
-	J9ClassLoader * const classLoader = fromModule->classLoader;
+	J9JavaVM *vm = currentThread->javaVM;
+	J9InternalVMFunctions const *const vmFuncs = vm->internalVMFunctions;
+	J9ClassLoader *const classLoader = fromModule->classLoader;
 
 	BOOLEAN retval = FALSE;
 
-	J9Package * j9package = createPackage(currentThread, fromModule, package);
+	PORT_ACCESS_FROM_VMC(currentThread);
+#if defined(J9VM_OPT_SNAPSHOTS)
+	VMSNAPSHOTIMPLPORT_ACCESS_FROM_JAVAVM(vm);
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+	J9Package *j9package = NULL;
+	J9UTF8 *packageName = NULL;
+	UDATA packageNameLength = strlen(package);
+	if (packageNameLength < J9VM_PACKAGE_NAME_BUFFER_LENGTH) {
+		UDATA packageNameJ9UTF8Size = packageNameLength + sizeof(J9UTF8) + 1; /* +1 for null-terminator. */
+#if defined(J9VM_OPT_SNAPSHOTS)
+		if (IS_SNAPSHOTTING_ENABLED(vm)) {
+			packageName = (J9UTF8 *)vmsnapshot_allocate_memory(packageNameJ9UTF8Size, OMRMEM_CATEGORY_VM);
+		} else
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+		{
+			packageName = (J9UTF8 *)j9mem_allocate_memory(packageNameJ9UTF8Size, OMRMEM_CATEGORY_VM);
+		}
+		if (NULL == packageName) {
+			vmFuncs->setNativeOutOfMemoryError(currentThread, 0, 0);
+			return retval;
+		}
+		memcpy(J9UTF8_DATA(packageName), (void *)package, packageNameLength);
+		J9UTF8_DATA(packageName)[packageNameLength] = '\0';
+		J9UTF8_SET_LENGTH(packageName, (U_16)packageNameLength);
+	} else {
+		vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, NULL);
+		return retval;
+	}
+
+#if defined(J9VM_OPT_SNAPSHOTS)
+	if (IS_RESTORE_RUN(vm)) {
+		j9package = hashPackageTableAtWithUTF8Name(currentThread, classLoader, packageName);
+		if (NULL != j9package) {
+			vmsnapshot_free_memory(packageName);
+			return TRUE;
+		}
+	}
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+
+	j9package = createPackage(currentThread, fromModule, packageName);
 
 	if (NULL != j9package) {
 		Trc_MODULE_invokeHashTableAtPut(currentThread, "addPackageDefinition", classLoader, classLoader->packageHashTable, &j9package, j9package, "true");
@@ -386,15 +524,16 @@ addPackageDefinition(J9VMThread * currentThread, J9Module * fromModule, const ch
 }
 
 static void
-removeMulPackageDefinitions(J9VMThread * currentThread, J9Module * fromModule, const char* const* packages, U_32 packagesIndex)
+removeMulPackageDefinitions(J9VMThread *currentThread, J9Module *fromModule, const char *const *packages, U_32 packagesIndex)
 {
 	BOOLEAN stopLoop = FALSE;
 	U_32 i = packagesIndex;
 
 	while (!stopLoop) {
 		const char *packageName = packages[i];
+		BOOLEAN removed = removePackageDefinition(currentThread, fromModule, packageName);
 
-		Assert_SC_true(removePackageDefinition(currentThread, fromModule, packageName));
+		Assert_SC_true(removed);
 
 		stopLoop = (0 == i);
 		--i;
@@ -517,15 +656,9 @@ static void
 trcModulesAddModuleExportsToAll(J9VMThread * currentThread, J9Module * fromModule, const char *package)
 {
 	PORT_ACCESS_FROM_VMC(currentThread);
-	J9InternalVMFunctions const * const vmFuncs = currentThread->javaVM->internalVMFunctions;
-	char fromModuleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char *fromModuleNameUTF = vmFuncs->copyStringToUTF8WithMemAlloc(
-		currentThread, fromModule->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, fromModuleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-	if (NULL != fromModuleNameUTF) {
-		Trc_MODULE_addModuleExportsToAll(currentThread, package, fromModuleNameUTF, fromModule);
-		if (fromModuleNameBuf != fromModuleNameUTF) {
-			j9mem_free_memory(fromModuleNameUTF);
-		}
+	J9UTF8 *moduleName = fromModule->moduleName;
+	if (NULL != moduleName) {
+		Trc_MODULE_addModuleExportsToAll(currentThread, package, (const char *)J9UTF8_DATA(moduleName), fromModule);
 	}
 }
 
@@ -545,23 +678,17 @@ exportPackageToAll(J9VMThread * currentThread, J9Module * fromModule, const char
 }
 
 static void
-trcModulesAddModuleExportsToAllUnnamed(J9VMThread * currentThread, J9Module * fromModule, const char *package)
+trcModulesAddModuleExportsToAllUnnamed(J9VMThread *currentThread, J9Module *fromModule, const char *package)
 {
 	PORT_ACCESS_FROM_VMC(currentThread);
-	J9InternalVMFunctions const * const vmFuncs = currentThread->javaVM->internalVMFunctions;
-	char fromModuleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char *fromModuleNameUTF = vmFuncs->copyStringToUTF8WithMemAlloc(
-		currentThread, fromModule->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, fromModuleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-	if (NULL != fromModuleNameUTF) {
-		Trc_MODULE_addModuleExportsToAllUnnamed(currentThread, package, fromModuleNameUTF, fromModule);
-		if (fromModuleNameBuf != fromModuleNameUTF) {
-			j9mem_free_memory(fromModuleNameUTF);
-		}
+	J9UTF8 *moduleName = fromModule->moduleName;
+	if (NULL != moduleName) {
+		Trc_MODULE_addModuleExportsToAllUnnamed(currentThread, package, (const char *)J9UTF8_DATA(moduleName), fromModule);
 	}
 }
 
 static UDATA
-exportPackageToAllUnamed(J9VMThread * currentThread, J9Module * fromModule, const char *package)
+exportPackageToAllUnnamed(J9VMThread * currentThread, J9Module * fromModule, const char *package)
 {
 	UDATA retval = ERRCODE_GENERAL_FAILURE;
 	J9Package * const j9package = getPackageDefinition(currentThread, fromModule, package, &retval);
@@ -620,21 +747,11 @@ static void
 trcModulesAddModuleExports(J9VMThread *currentThread, J9Module *fromModule, const char *package, J9Module *toModule)
 {
 	PORT_ACCESS_FROM_VMC(currentThread);
-	J9InternalVMFunctions const * const vmFuncs = currentThread->javaVM->internalVMFunctions;
-	char fromModuleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char toModuleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char *fromModuleNameUTF = vmFuncs->copyStringToUTF8WithMemAlloc(
-		currentThread, fromModule->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, fromModuleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-	char *toModuleNameUTF = vmFuncs->copyStringToUTF8WithMemAlloc(
-		currentThread, toModule->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, toModuleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-	if ((NULL != fromModuleNameUTF) && (NULL != toModuleNameUTF)) {
-		Trc_MODULE_addModuleExports(currentThread, package, fromModuleNameUTF, fromModule, toModuleNameUTF, toModule);
-	}
-	if (fromModuleNameBuf != fromModuleNameUTF) {
-		j9mem_free_memory(fromModuleNameUTF);
-	}
-	if (toModuleNameBuf != toModuleNameUTF) {
-		j9mem_free_memory(toModuleNameUTF);
+	J9UTF8 *fromModuleName = fromModule->moduleName;
+	J9UTF8 *toModuleName = toModule->moduleName;
+	if ((NULL != fromModuleName) && (NULL != toModuleName)) {
+		Trc_MODULE_addModuleExports(
+			currentThread, package, (const char *)J9UTF8_DATA(fromModuleName), fromModule, (const char *)J9UTF8_DATA(toModuleName), toModule);
 	}
 }
 
@@ -674,8 +791,11 @@ exportPackageToModule(J9VMThread * currentThread, J9Module * fromModule, const c
 			retval = ERRCODE_MODULE_WASNT_FOUND;
 		}
 	}
-	if (ERRCODE_SUCCESS == retval && TrcEnabled_Trc_MODULE_addModuleExports) {
-		trcModulesAddModuleExports(currentThread, fromModule, package, toModule);
+	if (ERRCODE_SUCCESS == retval) {
+		TRIGGER_J9HOOK_PACKAGE_EXPORTED_TO_MODULE(currentThread->javaVM->hookInterface, currentThread, fromModule, j9package, toModule);
+		if (TrcEnabled_Trc_MODULE_addModuleExports) {
+			trcModulesAddModuleExports(currentThread, fromModule, package, toModule);
+		}
 	}
 
 	return retval;
@@ -763,8 +883,8 @@ JVM_DefineModule(JNIEnv * env, jobject module, jboolean isOpen, jstring version,
 	jsize numPackages = 0;
 	UDATA packagesNumBytes = 0;
 	const char** packages = NULL;
-	PORT_ACCESS_FROM_ENV(env);
 #endif /* JAVA_SPEC_VERSION >= 15 */
+	PORT_ACCESS_FROM_ENV(env);
 	BOOLEAN firstModule = J9_ARE_NO_BITS_SET(vm->runtimeFlags, J9_RUNTIME_JAVA_BASE_MODULE_CREATED);
 
 	vmFuncs->internalEnterVMFromJNI(currentThread);
@@ -789,8 +909,12 @@ JVM_DefineModule(JNIEnv * env, jobject module, jboolean isOpen, jstring version,
 			j9array_t array = (j9array_t)J9_JNI_UNWRAP_REFERENCE(packageArray);
 			j9object_t stringObject = J9JAVAARRAYOFOBJECT_LOAD(currentThread, array, pkgIndex);
 			if (NULL != stringObject) {
-				UDATA utfLength = vmFuncs->getStringUTF8Length(currentThread, stringObject) + 1;
-				char *packageName = (char*)j9mem_allocate_memory(utfLength, OMRMEM_CATEGORY_VM);
+				UDATA utfLength = vmFuncs->getStringUTF8Length(currentThread, stringObject);
+				char *packageName = NULL;
+				if (utfLength < UDATA_MAX) {
+					utfLength += 1;
+					packageName = (char *)j9mem_allocate_memory(utfLength, OMRMEM_CATEGORY_VM);
+				}
 				if (NULL == packageName) {
 					oom = TRUE;
 					break;
@@ -814,9 +938,12 @@ JVM_DefineModule(JNIEnv * env, jobject module, jboolean isOpen, jstring version,
 	} else {
 		j9object_t modObj = J9_JNI_UNWRAP_REFERENCE(module);
 		J9ClassLoader *systemClassLoader = vm->systemClassLoader;
-
 		J9ClassLoader * const classLoader = getModuleObjectClassLoader(currentThread, modObj);
-		j9object_t moduleName = J9VMJAVALANGMODULE_NAME(currentThread, modObj);
+		j9object_t moduleNameObject = NULL;
+
+		/* refetch module object reference after GC point */
+		modObj = J9_JNI_UNWRAP_REFERENCE(module);
+		moduleNameObject = J9VMJAVALANGMODULE_NAME(currentThread, modObj);
 
 		/* extensionClassLoader holds the platform class loader in Java 11+ */
 		if ((classLoader != systemClassLoader) && (classLoader != vm->extensionClassLoader)) {
@@ -833,26 +960,45 @@ JVM_DefineModule(JNIEnv * env, jobject module, jboolean isOpen, jstring version,
 			}
 		}
 
-		if (NULL == moduleName) {
+		if (NULL == moduleNameObject) {
 			vmFuncs->setCurrentExceptionNLS(currentThread, J9VMCONSTANTPOOL_JAVALANGILLEGALARGUMENTEXCEPTION, J9NLS_VM_MODULE_IS_UNNAMED);
-		} else if (!isModuleNameValid(moduleName)) {
+		} else if (!isModuleNameValid(moduleNameObject)) {
 			vmFuncs->setCurrentExceptionNLS(currentThread, J9VMCONSTANTPOOL_JAVALANGILLEGALARGUMENTEXCEPTION, J9NLS_VM_MODULE_NAME_IS_INVALID);
 		} else if (NULL == classLoader) {
 			/* An exception should be pending if classLoader is null */
 			Assert_SC_true(NULL != currentThread->currentException);
 		} else {
-			char buf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-			char *nameUTF = buf;
-
-			PORT_ACCESS_FROM_VMC(currentThread);
-			nameUTF = vmFuncs->copyStringToUTF8WithMemAlloc(
-				currentThread, moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, buf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-			if (NULL == nameUTF) {
+			J9UTF8 *moduleName = NULL;
+#if defined(J9VM_OPT_SNAPSHOTS)
+			if (IS_SNAPSHOTTING_ENABLED(vm)) {
+				moduleName = vmFuncs->copyStringToJ9UTF8WithPortLib(
+						currentThread, moduleNameObject, J9_STR_NULL_TERMINATE_RESULT, "", 0, VMSNAPSHOTIMPL_OMRPORT_FROM_JAVAVM(vm));
+			} else
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+			{
+				moduleName = vmFuncs->copyStringToJ9UTF8WithMemAlloc(
+						currentThread, moduleNameObject, J9_STR_NULL_TERMINATE_RESULT, "", 0, NULL, 0);
+			}
+			if (NULL == moduleName) {
 				vmFuncs->setNativeOutOfMemoryError(currentThread, 0, 0);
-			} else if ((classLoader != systemClassLoader) && (0 == strcmp(nameUTF, JAVA_BASE_MODULE))) {
+				goto done;
+			}
+			const char *moduleNameData = (const char *)J9UTF8_DATA(moduleName);
+			if ((classLoader != systemClassLoader) && (0 == strcmp(moduleNameData, JAVA_BASE_MODULE))) {
 				vmFuncs->setCurrentExceptionNLS(currentThread, J9VMCONSTANTPOOL_JAVALANGLAYERINSTANTIATIONEXCEPTION, J9NLS_VM_ONLY_BOOTCLASSLOADER_LOAD_MODULE_JAVABASE);
 			} else {
-				J9Module *j9mod = createModule(currentThread, modObj, classLoader, moduleName);
+				J9Module *j9mod = NULL;
+
+#if defined(J9VM_OPT_SNAPSHOTS)
+				if (IS_RESTORE_RUN(vm)) {
+					j9mod = restoreModule(currentThread, classLoader, moduleName, modObj, version);
+					if (NULL != j9mod) {
+						goto done;
+					}
+				}
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+
+				j9mod = createModule(currentThread, modObj, classLoader, moduleName);
 				if (NULL != j9mod) {
 					BOOLEAN success = FALSE;
 					UDATA rc = addModuleDefinition(currentThread, j9mod, packages, (U_32) numPackages, version);
@@ -861,21 +1007,21 @@ JVM_DefineModule(JNIEnv * env, jobject module, jboolean isOpen, jstring version,
 					if (success) {
 						/* For "java.base" module setting of jrt URL and patch paths is already done during startup. Avoid doing it here. */
 						if (!firstModule) {
-							Trc_MODULE_defineModule(currentThread, nameUTF, j9mod);
+							Trc_MODULE_defineModule(currentThread, moduleNameData, j9mod);
 							if (classLoader == systemClassLoader) {
-								success = vmFuncs->setBootLoaderModulePatchPaths(vm, j9mod, (const char *)nameUTF);
+								success = vmFuncs->setBootLoaderModulePatchPaths(vm, j9mod, moduleNameData);
 								if (FALSE == success) {
 									vmFuncs->setNativeOutOfMemoryError(currentThread, 0, 0);
 								} else {
-									const char* moduleName = "openj9.sharedclasses";
+									const char *sharedClassesModuleName = "openj9.sharedclasses";
 
-									if (0 == strcmp(nameUTF, moduleName)) {
+									if (0 == strcmp(moduleNameData, sharedClassesModuleName)) {
 										J9VMDllLoadInfo *entry = FIND_DLL_TABLE_ENTRY(J9_SHARED_DLL_NAME);
 
 										if ((NULL == entry)
 											|| (J9_ARE_ALL_BITS_SET(entry->loadFlags, FAILED_TO_LOAD))
 										) {
-											j9nls_printf(PORTLIB, J9NLS_WARNING, J9NLS_VM_FAILED_TO_LOAD_MODULE_REQUIRED_DLL, J9_SHARED_DLL_NAME, moduleName);
+											j9nls_printf(PORTLIB, J9NLS_WARNING, J9NLS_VM_FAILED_TO_LOAD_MODULE_REQUIRED_DLL, J9_SHARED_DLL_NAME, sharedClassesModuleName);
 										}
 									}
 								}
@@ -885,7 +1031,7 @@ JVM_DefineModule(JNIEnv * env, jobject module, jboolean isOpen, jstring version,
 							J9ClassWalkState classWalkState;
 							J9Class* clazz = NULL;
 
-							Assert_SC_true(0 == strcmp(nameUTF, JAVA_BASE_MODULE));
+							Assert_SC_true(0 == strcmp(moduleNameData, JAVA_BASE_MODULE));
 
 							clazz = vmFuncs->allClassesStartDo(&classWalkState, vm, systemClassLoader);
 							while (NULL != clazz) {
@@ -910,9 +1056,9 @@ JVM_DefineModule(JNIEnv * env, jobject module, jboolean isOpen, jstring version,
 							}
 
 #if JAVA_SPEC_VERSION >= 21
-							/* vm->unamedModuleForSystemLoader->moduleObject was saved by JVM_SetBootLoaderUnnamedModule */
+							/* vm->unnamedModuleForSystemLoader->moduleObject was saved by JVM_SetBootLoaderUnnamedModule */
 							{
-								j9object_t moduleObject = vm->unamedModuleForSystemLoader->moduleObject;
+								j9object_t moduleObject = vm->unnamedModuleForSystemLoader->moduleObject;
 								Assert_SC_notNull(moduleObject);
 								J9VMJAVALANGCLASSLOADER_SET_UNNAMEDMODULE(currentThread, systemClassLoader->classLoaderObject, moduleObject);
 								Trc_MODULE_defineModule_setBootloaderUnnamedModule(currentThread);
@@ -930,9 +1076,6 @@ JVM_DefineModule(JNIEnv * env, jobject module, jboolean isOpen, jstring version,
 						Assert_SC_true(NULL != currentThread->currentException);
 					}
 				}
-			}
-			if (nameUTF != buf) {
-				j9mem_free_memory(nameUTF);
 			}
 		}
 	}
@@ -992,8 +1135,12 @@ JVM_AddModuleExports(JNIEnv * env, jobject fromModule, const char *package, jobj
 #if JAVA_SPEC_VERSION >= 15
 	if (NULL != packageObj) {
 		j9object_t stringObject = J9_JNI_UNWRAP_REFERENCE(packageObj);
-		UDATA utfLength = vmFuncs->getStringUTF8Length(currentThread, stringObject) + 1;
-		char* packageName = (char *)j9mem_allocate_memory(utfLength, OMRMEM_CATEGORY_VM);
+		UDATA utfLength = vmFuncs->getStringUTF8Length(currentThread, stringObject);
+		char *packageName = NULL;
+		if (utfLength < UDATA_MAX) {
+			utfLength += 1;
+			packageName = (char *)j9mem_allocate_memory(utfLength, OMRMEM_CATEGORY_VM);
+		}
 		if (NULL == packageName) {
 			vmFuncs->setNativeOutOfMemoryError(currentThread, 0, 0);
 			goto done;
@@ -1014,7 +1161,7 @@ JVM_AddModuleExports(JNIEnv * env, jobject fromModule, const char *package, jobj
 		J9Module * const j9ToMod = getJ9Module(currentThread, toModule);
 
 		if (isModuleUnnamed(currentThread, J9_JNI_UNWRAP_REFERENCE(toModule))) {
-			rc = exportPackageToAllUnamed(currentThread, j9FromMod, package);
+			rc = exportPackageToAllUnnamed(currentThread, j9FromMod, package);
 		} else {
 			rc = exportPackageToModule(currentThread, j9FromMod, package, j9ToMod);
 		}
@@ -1066,8 +1213,12 @@ JVM_AddModuleExportsToAll(JNIEnv * env, jobject fromModule, const char *package)
 #if JAVA_SPEC_VERSION >= 15
 	if (NULL != packageObj) {
 		j9object_t stringObject = J9_JNI_UNWRAP_REFERENCE(packageObj);
-		UDATA utfLength = vmFuncs->getStringUTF8Length(currentThread, stringObject) + 1;
-		char* packageName = (char *)j9mem_allocate_memory(utfLength, OMRMEM_CATEGORY_VM);
+		UDATA utfLength = vmFuncs->getStringUTF8Length(currentThread, stringObject);
+		char *packageName = NULL;
+		if (utfLength < UDATA_MAX) {
+			utfLength += 1;
+			packageName = (char *)j9mem_allocate_memory(utfLength, OMRMEM_CATEGORY_VM);
+		}
 		if (NULL == packageName) {
 			vmFuncs->setNativeOutOfMemoryError(currentThread, 0, 0);
 			goto done;
@@ -1107,41 +1258,27 @@ static void
 trcModulesAddReadsModule(J9VMThread *currentThread, jobject toModule, J9Module *j9FromMod, J9Module *j9ToMod)
 {
 	PORT_ACCESS_FROM_VMC(currentThread);
-	J9InternalVMFunctions const * const vmFuncs = currentThread->javaVM->internalVMFunctions;
-	char fromModuleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char toModuleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char *fromModuleNameUTF = vmFuncs->copyStringToUTF8WithMemAlloc(
-		currentThread, j9FromMod->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, fromModuleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-	char *toModuleNameUTF = NULL;
-
-	if (NULL != j9ToMod) {
-		if (NULL != j9ToMod->moduleName) {
-			toModuleNameUTF = vmFuncs->copyStringToUTF8WithMemAlloc(
-				currentThread, j9ToMod->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, toModuleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-		} else {
+	const char *toModuleNameUTF = NULL;
+	J9UTF8 *fromModuleName = j9FromMod->moduleName;
+	if (NULL != fromModuleName) {
+		const char *fromModuleNameUTF = (const char *)J9UTF8_DATA(fromModuleName);
+		if (NULL != j9ToMod) {
+			J9UTF8 *toModuleName = j9ToMod->moduleName;
+			if (NULL != toModuleName) {
+				toModuleNameUTF = (const char *)J9UTF8_DATA(toModuleName);
+			} else {
 #define UNNAMED_MODULE "unnamed "
-			PORT_ACCESS_FROM_VMC(currentThread);
-			Assert_SC_true(J9VM_PACKAGE_NAME_BUFFER_LENGTH >= sizeof(UNNAMED_MODULE));
-			memcpy(toModuleNameBuf, UNNAMED_MODULE, sizeof(UNNAMED_MODULE));
-			toModuleNameUTF = toModuleNameBuf;
+				toModuleNameUTF = UNNAMED_MODULE;
 #undef UNNAMED_MODULE
-		}
-	} else {
+			}
+		} else {
 #define LOOSE_MODULE "loose "
-		PORT_ACCESS_FROM_VMC(currentThread);
-		Assert_SC_true(J9VM_PACKAGE_NAME_BUFFER_LENGTH >= sizeof(LOOSE_MODULE));
-		memcpy(toModuleNameBuf, LOOSE_MODULE, sizeof(LOOSE_MODULE));
-		toModuleNameUTF = toModuleNameBuf;
+			toModuleNameUTF = LOOSE_MODULE;
 #undef LOOSE_MODULE
-	}
-	if ((NULL != fromModuleNameUTF) && (NULL != toModuleNameUTF)) {
-		Trc_MODULE_addReadsModule(currentThread, fromModuleNameUTF, j9FromMod, toModuleNameUTF, toModule);
-	}
-	if (fromModuleNameBuf != fromModuleNameUTF) {
-		j9mem_free_memory(fromModuleNameUTF);
-	}
-	if (toModuleNameBuf != toModuleNameUTF) {
-		j9mem_free_memory(toModuleNameUTF);
+		}
+		if ((NULL != fromModuleNameUTF) && (NULL != toModuleNameUTF)) {
+			Trc_MODULE_addReadsModule(currentThread, fromModuleNameUTF, j9FromMod, toModuleNameUTF, toModule);
+		}
 	}
 }
 
@@ -1175,6 +1312,7 @@ JVM_AddReadsModule(JNIEnv * env, jobject fromModule, jobject toModule)
 				if (ERRCODE_SUCCESS != rc) {
 					throwExceptionHelper(currentThread, rc);
 				} else {
+					TRIGGER_J9HOOK_READS_MODULE_ADDED(((J9JavaVM *)vm)->hookInterface, currentThread, j9FromMod, j9ToMod);
 					if (TrcEnabled_Trc_MODULE_addReadsModule) {
 						trcModulesAddReadsModule(currentThread, toModule, j9FromMod, j9ToMod);
 					}
@@ -1232,15 +1370,10 @@ static void
 trcModulesAddModulePackage(J9VMThread *currentThread, J9Module *j9mod, const char *package)
 {
 	PORT_ACCESS_FROM_VMC(currentThread);
-	J9InternalVMFunctions const * const vmFuncs = currentThread->javaVM->internalVMFunctions;
-	char moduleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char *moduleNameUTF = vmFuncs->copyStringToUTF8WithMemAlloc(
-		currentThread, j9mod->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, moduleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
-	if (NULL != moduleNameUTF) {
-		Trc_MODULE_addModulePackage(currentThread, package, moduleNameUTF, j9mod);
-		if (moduleNameBuf != moduleNameUTF) {
-			j9mem_free_memory(moduleNameUTF);
-		}
+	J9InternalVMFunctions const *const vmFuncs = currentThread->javaVM->internalVMFunctions;
+	J9UTF8 *moduleName = j9mod->moduleName;
+	if (NULL != moduleName) {
+		Trc_MODULE_addModulePackage(currentThread, package, (const char *)J9UTF8_DATA(moduleName), j9mod);
 	}
 }
 /**
@@ -1306,8 +1439,12 @@ JVM_AddModuleExportsToAllUnnamed(JNIEnv * env, jobject fromModule, const char *p
 #if JAVA_SPEC_VERSION >= 15
 	if (NULL != packageObj) {
 		j9object_t stringObject = J9_JNI_UNWRAP_REFERENCE(packageObj);
-		UDATA utfLength = vmFuncs->getStringUTF8Length(currentThread, stringObject) + 1;
-		char* packageName = (char *)j9mem_allocate_memory(utfLength, OMRMEM_CATEGORY_VM);
+		UDATA utfLength = vmFuncs->getStringUTF8Length(currentThread, stringObject);
+		char *packageName = NULL;
+		if (utfLength < UDATA_MAX) {
+			utfLength += 1;
+			packageName = (char *)j9mem_allocate_memory(utfLength, OMRMEM_CATEGORY_VM);
+		}
 		if (NULL == packageName) {
 			vmFuncs->setNativeOutOfMemoryError(currentThread, 0, 0);
 			goto done;
@@ -1323,9 +1460,9 @@ JVM_AddModuleExportsToAllUnnamed(JNIEnv * env, jobject fromModule, const char *p
 	{
 		UDATA rc = ERRCODE_GENERAL_FAILURE;
 
-		J9Module * const j9FromMod = getJ9Module(currentThread, fromModule);
+		J9Module *const j9FromMod = getJ9Module(currentThread, fromModule);
 
-		rc = exportPackageToAllUnamed(currentThread, j9FromMod, package);
+		rc = exportPackageToAllUnnamed(currentThread, j9FromMod, package);
 
 		if (ERRCODE_SUCCESS != rc) {
 			throwExceptionHelper(currentThread, rc);
@@ -1485,7 +1622,7 @@ JVM_WaitForReferencePendingList(JNIEnv *env)
 
 /**
  * Adds an unnamed module to the bootLoader
- * JDK21+ saves it to J9JavaVM->unamedModuleForSystemLoader->moduleObject,
+ * JDK21+ saves it to J9JavaVM->unnamedModuleForSystemLoader->moduleObject,
  * and delays bootclassloader.unnamedModule setting until java.base module is created.
  *
  * @param module module
@@ -1507,43 +1644,63 @@ JVM_SetBootLoaderUnnamedModule(JNIEnv *env, jobject module)
 	vmFuncs->internalEnterVMFromJNI(currentThread);
 	if (NULL == module) {
 		vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGNULLPOINTEREXCEPTION, "module is null");
-	} else {
-		j9object_t modObj = J9_JNI_UNWRAP_REFERENCE(module);
+	} else if (NULL == currentThread->currentException) {
 		J9ClassLoader *systemClassLoader = vm->systemClassLoader;
+		J9Class *moduleClass = vmFuncs->internalFindKnownClass(currentThread,
+				J9VMCONSTANTPOOL_JAVALANGMODULE,
+				J9_FINDKNOWNCLASS_FLAG_INITIALIZE);
+		/* fetch module object reference after GC point */
+		j9object_t modObj = J9_JNI_UNWRAP_REFERENCE(module);
 		J9Class *instanceClazz = J9OBJECT_CLAZZ(currentThread, modObj);
-		if (NULL == currentThread->currentException) {
-			J9Class *moduleClass = vmFuncs->internalFindKnownClass(currentThread,
-					J9VMCONSTANTPOOL_JAVALANGMODULE,
-					J9_FINDKNOWNCLASS_FLAG_INITIALIZE);
-			if (!isModuleUnnamed(currentThread, modObj)) {
-				vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGILLEGALARGUMENTEXCEPTION, "named module was supplied");
-			} else if (!isSameOrSuperClassOf(moduleClass, instanceClazz)) {
-				vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGILLEGALARGUMENTEXCEPTION, "module supplied is not same or sub class of java/lang/Module");
-			} else if (instanceClazz->classLoader != systemClassLoader) {
-				vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGILLEGALARGUMENTEXCEPTION, "module was not loaded by the bootclassloader");
-			} else {
+		if (!isModuleUnnamed(currentThread, modObj)) {
+			vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGILLEGALARGUMENTEXCEPTION, "named module was supplied");
+		} else if (!isSameOrSuperClassOf(moduleClass, instanceClazz)) {
+			vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGILLEGALARGUMENTEXCEPTION, "module supplied is not same or sub class of java/lang/Module");
+		} else if (instanceClazz->classLoader != systemClassLoader) {
+			vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGILLEGALARGUMENTEXCEPTION, "module was not loaded by the bootclassloader");
+		} else {
 #if JAVA_SPEC_VERSION >= 21
-				J9Module *unamedModuleForSystemLoader = vm->unamedModuleForSystemLoader;
-				/* can't set bootclassloader.unnamedModule since bootclassloader hasn't finished the initialization yet */
-				if (NULL == unamedModuleForSystemLoader) {
-					vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, "unamedModuleForSystemLoader was not initialized");
-				} else if (NULL != unamedModuleForSystemLoader->moduleObject) {
-					vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, "module is already set in the unamedModuleForSystemLoader");
-				} else {
-					J9Module *j9mod = createModule(currentThread, modObj, systemClassLoader, NULL /* NULL name field */);
-					unamedModuleForSystemLoader->moduleObject = modObj;
-					Trc_MODULE_setUnamedModuleForSystemLoaderModuleObject(currentThread, j9mod, unamedModuleForSystemLoader);
+			J9Module *unnamedModuleForSystemLoader = vm->unnamedModuleForSystemLoader;
+			/* can't set bootclassloader.unnamedModule since bootclassloader hasn't finished the initialization yet */
+			if (NULL == unnamedModuleForSystemLoader) {
+				vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, "unnamedModuleForSystemLoader was not initialized");
+			} else if (NULL != unnamedModuleForSystemLoader->moduleObject) {
+				vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, "module is already set in the unnamedModuleForSystemLoader");
+			} else {
+				J9Module *j9mod = NULL;
+#if defined(J9VM_OPT_SNAPSHOTS)
+				if (IS_RESTORE_RUN(vm)) {
+					j9mod = unnamedModuleForSystemLoader;
+					/* Bind J9Module and module object via the hidden field. */
+					J9OBJECT_ADDRESS_STORE(currentThread, modObj, vm->modulePointerOffset, j9mod);
+				} else
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+				{
+					j9mod = createModule(currentThread, modObj, systemClassLoader, NULL /* NULL name field */);
 				}
-#else /* JAVA_SPEC_VERSION >= 21 */
-				if (NULL == J9VMJAVALANGCLASSLOADER_UNNAMEDMODULE(currentThread, systemClassLoader->classLoaderObject)) {
-					J9Module *j9mod = createModule(currentThread, modObj, systemClassLoader, NULL /* NULL name field */);
-					J9VMJAVALANGCLASSLOADER_SET_UNNAMEDMODULE(currentThread, systemClassLoader->classLoaderObject, modObj);
-					Trc_MODULE_setBootloaderUnnamedModule(currentThread, j9mod);
-				} else {
-					vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, "module is already set in the bootclassloader");
-				}
-#endif /* JAVA_SPEC_VERSION >= 21 */
+				unnamedModuleForSystemLoader->moduleObject = modObj;
+				Trc_MODULE_setUnnamedModuleForSystemLoaderModuleObject(currentThread, j9mod, unnamedModuleForSystemLoader);
 			}
+#else /* JAVA_SPEC_VERSION >= 21 */
+			if (NULL == J9VMJAVALANGCLASSLOADER_UNNAMEDMODULE(currentThread, systemClassLoader->classLoaderObject)) {
+				J9Module *j9mod = NULL;
+#if defined(J9VM_OPT_SNAPSHOTS)
+				if (IS_RESTORE_RUN(vm)) {
+					j9mod = vm->unnamedModuleForSystemLoader;
+					vm->unnamedModuleForSystemLoader->moduleObject = modObj;
+					/* Bind J9Module and module object via the hidden field. */
+					J9OBJECT_ADDRESS_STORE(currentThread, modObj, vm->modulePointerOffset, j9mod);
+				} else
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+				{
+					j9mod = createModule(currentThread, modObj, systemClassLoader, NULL /* NULL name field */);
+				}
+				J9VMJAVALANGCLASSLOADER_SET_UNNAMEDMODULE(currentThread, systemClassLoader->classLoaderObject, modObj);
+				Trc_MODULE_setBootloaderUnnamedModule(currentThread, j9mod);
+			} else {
+				vmFuncs->setCurrentExceptionUTF(currentThread, J9VMCONSTANTPOOL_JAVALANGINTERNALERROR, "module is already set in the bootclassloader");
+			}
+#endif /* JAVA_SPEC_VERSION >= 21 */
 		}
 	}
 	vmFuncs->internalExitVMToJNI(currentThread);
@@ -1687,11 +1844,7 @@ JVM_RegisterLambdaProxyClassForArchiving(JNIEnv *env, jclass arg1, jstring arg2,
 }
 
 JNIEXPORT jclass JNICALL
-JVM_LookupLambdaProxyClassFromArchive(JNIEnv *env, jclass arg1, jstring arg2, jobject arg3, jobject arg4, jobject arg5, jobject arg6
-#if JAVA_SPEC_VERSION == 15
-		, jboolean arg7
-#endif /* JAVA_SPEC_VERSION == 15 */
-		)
+JVM_LookupLambdaProxyClassFromArchive(JNIEnv *env, jclass arg1, jstring arg2, jobject arg3, jobject arg4, jobject arg5, jobject arg6)
 {
 	assert(!"JVM_LookupLambdaProxyClassFromArchive unimplemented");
 	return NULL;
@@ -1752,3 +1905,16 @@ JVM_IsUseContainerSupport(void)
 
 	return result;
 }
+
+#if JAVA_SPEC_VERSION >= 17
+/**
+ * @brief Get the default system properties.
+ *
+ * @return an Object array of system property key value pairs
+ */
+JNIEXPORT jobjectArray JNICALL
+JVM_GetProperties(JNIEnv *env)
+{
+	return ((J9VMThread *)env)->javaVM->internalVMFunctions->getSystemPropertyList(env);
+}
+#endif /* JAVA_SPEC_VERSION >= 17 */

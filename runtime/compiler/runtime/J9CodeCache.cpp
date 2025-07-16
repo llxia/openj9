@@ -91,9 +91,9 @@ J9::CodeCache::j9segment()
 
 
 TR::CodeCache *
-J9::CodeCache::allocate(TR::CodeCacheManager *cacheManager, size_t segmentSize, int32_t reservingCompThreadID)
+J9::CodeCache::allocate(TR::CodeCacheManager *cacheManager, size_t segmentSize, int32_t reservingCompThreadID, TR::CodeCacheKind kind)
    {
-   TR::CodeCache *newCodeCache = OMR::CodeCache::allocate(cacheManager, segmentSize, reservingCompThreadID);
+   TR::CodeCache *newCodeCache = OMR::CodeCache::allocate(cacheManager, segmentSize, reservingCompThreadID, kind);
    if (newCodeCache != NULL)
       {
       // Generate a trace point into the Snap file
@@ -107,7 +107,8 @@ J9::CodeCache::allocate(TR::CodeCacheManager *cacheManager, size_t segmentSize, 
 bool
 J9::CodeCache::initialize(TR::CodeCacheManager *manager,
                           TR::CodeCacheMemorySegment *codeCacheSegment,
-                          size_t allocatedCodeCacheSizeInBytes)
+                          size_t allocatedCodeCacheSizeInBytes,
+                          TR::CodeCacheKind kind)
    {
    // make J9 memory segment look all used up
    //J9MemorySegment *j9segment = _segment->segment();
@@ -143,7 +144,7 @@ J9::CodeCache::initialize(TR::CodeCacheManager *manager,
       config._trampolineSpacePercentage = percentageToUse;
       }
 
-   if (!self()->OMR::CodeCache::initialize(manager, codeCacheSegment, allocatedCodeCacheSizeInBytes))
+   if (!self()->OMR::CodeCache::initialize(manager, codeCacheSegment, allocatedCodeCacheSizeInBytes, kind))
       return false;
 
 
@@ -552,7 +553,8 @@ J9::CodeCache::addFreeBlock(void  *voidMetaData)
                {
                // There could be several bodyInfo pointing to the same methodInfo
                // Prevent deallocating twice by freeing only for the last body
-               if (TR::Compiler->mtd.startPC((TR_OpaqueMethodBlock*)metaData->ramMethod) == (uintptr_t)metaData->startPC)
+               uintptr_t ramMethodStartPC = TR::Compiler->mtd.startPC((TR_OpaqueMethodBlock*)metaData->ramMethod);
+               if ((ramMethodStartPC != 0) && (ramMethodStartPC == (uintptr_t)metaData->startPC))
                   {
                   // Clear profile info
                   pmi->setBestProfileInfo(NULL);
@@ -749,8 +751,10 @@ J9::CodeCache::resetTrampolines()
       }
 
    //reset the trampoline marks back to their starting positions
-   _trampolineAllocationMark = _trampolineBase;
-   _trampolineReservationMark = _trampolineBase;
+   // Note that permanent trampolines are allocated from _tempTrampolineBase downwards
+   // see initialize in OMRCodeCache.cpp
+   _trampolineAllocationMark = _tempTrampolineBase;
+   _trampolineReservationMark = _tempTrampolineBase;
 
    OMR::CodeCacheTempTrampolineSyncBlock *syncBlock;
    if (!_tempTrampolinesMax)
@@ -918,7 +922,7 @@ J9::CodeCache::disclaim(TR::CodeCacheManager *manager, bool canDisclaimOnSwap)
       if (trace)
          TR_VerboseLog::writeLineLocked(TR_Vlog_PERF, "WARNING: Failed to use madvise to disclaim memory for code cache");
 
-      if (ret == EINVAL)
+      if (errno != EAGAIN)
          {
          manager->setDisclaimEnabled(false); // Don't try to disclaim again, since support seems to be missing
          if (trace)

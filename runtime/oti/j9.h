@@ -57,6 +57,13 @@
 #include "j2sever.h"
 #include "j9relationship.h"
 
+/* Macros for converting a pointer to a value of type jlong or vice-versa. */
+#define JLONG_FROM_POINTER(ptr) ((jlong)(U_64)(UDATA)(ptr))
+#define JLONG_TO_POINTER(value) ((void *)(UDATA)(U_64)(value))
+
+/* Like JLONG_TO_POINTER, but the source is of type jint. */
+#define JINT_TO_POINTER(value) ((void *)(UDATA)(U_32)(value))
+
 /* Function used to map object fields during clone */
 typedef j9object_t (*MM_objectMapFunction)(struct J9VMThread *currentThread, j9object_t obj, void *objectMapData);
 
@@ -173,22 +180,22 @@ typedef struct J9ClassLoaderWalkState {
 
 #endif /* JAVA_SPEC_VERSION >= 11 */
 
-
-/* UTF8 access macros - all access to J9UTF8 fields should be done through these macros */
-
-#define J9UTF8_LENGTH(j9UTF8Address) (((struct J9UTF8 *)(j9UTF8Address))->length)
-#define J9UTF8_SET_LENGTH(j9UTF8Address, len) (((struct J9UTF8 *)(j9UTF8Address))->length = (len))
-#define J9UTF8_DATA(j9UTF8Address) (((struct J9UTF8 *)(j9UTF8Address))->data)
-#define J9UTF8_TOTAL_SIZE(j9UTF8Address) (sizeof(J9UTF8) + J9UTF8_LENGTH(j9UTF8Address))
-#define J9UTF8_DATA_EQUALS(data1, length1, data2, length2) ((((length1) == (length2)) && (memcmp((data1), (data2), (length1)) == 0)))
-#define J9UTF8_EQUALS(utf1, utf2) (((utf1) == (utf2)) || (J9UTF8_DATA_EQUALS(J9UTF8_DATA(utf1), J9UTF8_LENGTH(utf1), J9UTF8_DATA(utf2), J9UTF8_LENGTH(utf2))))
-#define J9UTF8_LITERAL_EQUALS(data1, length1, cString) (J9UTF8_DATA_EQUALS((data1), (length1), (cString), sizeof(cString) - 1))
-
 /*
  * Equivalent to ((int)strlen(string_literal)) when given a literal string.
  * E.g.: LITERAL_STRLEN("lib") == 3
  */
 #define LITERAL_STRLEN(string_literal) ((IDATA)(sizeof(string_literal) - 1))
+
+/* UTF8 access macros - all access to J9UTF8 fields should be done through these macros. */
+
+#define J9UTF8_LENGTH(j9UTF8Address) ((j9UTF8Address)->length)
+#define J9UTF8_SET_LENGTH(j9UTF8Address, len) ((j9UTF8Address)->length = (len))
+#define J9UTF8_DATA(j9UTF8Address) ((j9UTF8Address)->data)
+#define J9UTF8_TOTAL_SIZE(j9UTF8Address) (sizeof(J9UTF8) + J9UTF8_LENGTH(j9UTF8Address))
+#define J9UTF8_DATA_EQUALS(data1, length1, data2, length2) (((length1) == (length2)) && (0 == memcmp((data1), (data2), (length1))))
+#define J9UTF8_EQUALS(utf1, utf2) (((utf1) == (utf2)) || J9UTF8_DATA_EQUALS(J9UTF8_DATA(utf1), J9UTF8_LENGTH(utf1), J9UTF8_DATA(utf2), J9UTF8_LENGTH(utf2)))
+#define J9UTF8_LITERAL_EQUALS(data1, length1, cString) J9UTF8_DATA_EQUALS((data1), (length1), (cString), LITERAL_STRLEN(cString))
+#define J9UTF8_LITERAL_EQUALS_UTF8(utf8, cString) J9UTF8_LITERAL_EQUALS(J9UTF8_DATA((utf8)), J9UTF8_LENGTH((utf8)), cString)
 
 #define ROUND_UP_TO(granularity, number) ((((number) % (granularity)) ? ((number) + (granularity) - ((number) % (granularity))) : (number)))
 #define ROUND_DOWN_TO(granularity, number) ((number) - ((number) % (granularity)))
@@ -287,7 +294,7 @@ static const struct { \
 #define internalExitVMToJNI internalReleaseVMAccess
 #endif /* !J9VM_INTERP_ATOMIC_FREE_JNI */
 
-#define J9_IS_J9MODULE_UNNAMED(vm, module) ((NULL == module) || (module == vm->unamedModuleForSystemLoader))
+#define J9_IS_J9MODULE_UNNAMED(vm, module) ((NULL == module) || (module == vm->unnamedModuleForSystemLoader))
 
 #define J9_IS_J9MODULE_OPEN(module) (TRUE == module->isOpen)
 
@@ -335,6 +342,10 @@ static const struct { \
 #define J9CLASS_UNPADDED_INSTANCE_SIZE(clazz) J9_VALUETYPE_FLATTENED_SIZE(clazz)
 #define J9_IS_J9CLASS_ALLOW_DEFAULT_VALUE(clazz) J9_ARE_ALL_BITS_SET((clazz)->classFlags, J9ClassAllowsInitialDefaultValue)
 #define J9_IS_J9CLASS_PRIMITIVE_VALUETYPE(clazz) J9_ARE_ALL_BITS_SET((clazz)->classFlags, J9ClassIsPrimitiveValueType)
+/**
+ * This macro can only be used to determine vm flattening for a J9ArrayClass.
+ * For non-array classes use J9_IS_FIELD_FLATTENED.
+ */
 #define J9_IS_J9CLASS_FLATTENED(clazz) J9_ARE_ALL_BITS_SET((clazz)->classFlags, J9ClassIsFlattened)
 
 #define J9ROMFIELD_IS_NULL_RESTRICTED(romField)	J9_ARE_ALL_BITS_SET((romField)->modifiers, J9FieldFlagIsNullRestricted)
@@ -342,16 +353,13 @@ static const struct { \
  * Disable flattening of volatile field that is > 8 bytes for now, as the current implementation of copyObjectFields() will tear this field.
  */
 #define J9_IS_FIELD_FLATTENED(fieldClazz, romFieldShape) \
-		(J9_IS_J9CLASS_FLATTENED(fieldClazz) && \
-		(J9_ARE_NO_BITS_SET((romFieldShape)->modifiers, J9AccVolatile) || (J9CLASS_UNPADDED_INSTANCE_SIZE(fieldClazz) <= sizeof(U_64))))
-/* This will replace J9_IS_FIELD_FLATTENED when QTypes are removed. J9_IS_J9CLASS_FLATTENED will return false since the current check requires a primitive value type. */
-#define J9_IS_NULL_RESTRICTED_FIELD_FLATTENED(fieldClazz, romFieldShape) \
 		(J9ROMFIELD_IS_NULL_RESTRICTED(romFieldShape) && \
 		J9_IS_J9CLASS_FLATTENED(fieldClazz) && \
 		(J9_ARE_NO_BITS_SET((romFieldShape)->modifiers, J9AccVolatile) || (J9CLASS_UNPADDED_INSTANCE_SIZE(fieldClazz) <= sizeof(U_64))))
 #define J9_VALUETYPE_FLATTENED_SIZE(clazz) (J9CLASS_HAS_4BYTE_PREPADDING((clazz)) ? ((clazz)->totalInstanceSize - sizeof(U_32)) : (clazz)->totalInstanceSize)
 #define J9_IS_J9ARRAYCLASS_NULL_RESTRICTED(clazz) J9_ARE_ALL_BITS_SET((clazz)->classFlags, J9ClassArrayIsNullRestricted)
 #define J9CLASS_GET_NULLRESTRICTED_ARRAY(clazz) (J9_IS_J9CLASS_VALUETYPE(clazz) ? (clazz)->nullRestrictedArrayClass : NULL)
+#define J9ROMFIELD_IS_STRICT(romClassOrClassfile, fieldModifiers) (J9_IS_CLASSFILE_OR_ROMCLASS_VALUETYPE_VERSION(romClassOrClassfile) && J9_ARE_ALL_BITS_SET(fieldModifiers, J9AccStrict))
 #else /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 #define J9CLASS_UNPADDED_INSTANCE_SIZE(clazz) ((clazz)->totalInstanceSize)
 #define J9_IS_J9CLASS_ALLOW_DEFAULT_VALUE(clazz) FALSE
@@ -359,11 +367,12 @@ static const struct { \
 #define J9_IS_J9CLASS_FLATTENED(clazz) FALSE
 #define J9ROMFIELD_IS_NULL_RESTRICTED(romField) FALSE
 #define J9_IS_FIELD_FLATTENED(fieldClazz, romFieldShape) FALSE
-#define J9_IS_NULL_RESTRICTED_FIELD_FLATTENED(fieldClazz, romFieldShape) FALSE
 #define J9_VALUETYPE_FLATTENED_SIZE(clazz)((UDATA) 0) /* It is not possible for this macro to be used since we always check J9_IS_J9CLASS_FLATTENED before ever using it. */
 #define J9_IS_J9ARRAYCLASS_NULL_RESTRICTED(clazz) FALSE
+#define J9CLASS_GET_NULLRESTRICTED_ARRAY(clazz) NULL
+#define J9ROMFIELD_IS_STRICT(romClassOrClassfile, fieldModifiers) FALSE
 #endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
-#define IS_REF_OR_VAL_SIGNATURE(firstChar) ('L' == (firstChar))
+#define IS_CLASS_SIGNATURE(firstChar) ('L' == (firstChar))
 
 #if defined(J9VM_OPT_CRIU_SUPPORT)
 #define J9_IS_CRIU_OR_CRAC_CHECKPOINT_ENABLED(vm) (J9_ARE_ANY_BITS_SET(vm->checkpointState.flags, J9VM_CRAC_IS_CHECKPOINT_ENABLED | J9VM_CRIU_IS_CHECKPOINT_ENABLED))
@@ -403,6 +412,8 @@ typedef struct {
 	char data[LITERAL_STRLEN(J9_UNMODIFIABLE_CLASS_ANNOTATION)];
 } J9_UNMODIFIABLE_CLASS_ANNOTATION_DATA;
 
+#define J9_EVENT_IS_HOOKED_OR_RESERVED(interface, event) (J9_EVENT_IS_HOOKED(interface, event) || J9_EVENT_IS_RESERVED(interface, event))
+
 #if defined(J9VM_ZOS_3164_INTEROPERABILITY)
 #define J9_IS_31BIT_INTEROP_TARGET(handle) J9_ARE_ALL_BITS_SET((UDATA)(handle), OMRPORT_SL_ZOS_31BIT_TARGET_HIGHTAG)
 #endif /* defined(J9VM_ZOS_3164_INTEROPERABILITY) */
@@ -426,5 +437,23 @@ static_assert((LITERAL_STRLEN(J9_UNMODIFIABLE_CLASS_ANNOTATION) < (size_t)'/'), 
 
 #define J9VM_SHOULD_CLEAR_JNIIDS_FOR_ASGCT(vm, classLoader) (J9_ARE_NO_BITS_SET((vm)->extendedRuntimeFlags2, J9_EXTENDED_RUNTIME2_NEVER_KEEP_JNI_IDS) \
 		&& ((classLoader)->asyncGetCallTraceUsed || J9_ARE_ANY_BITS_SET((vm)->extendedRuntimeFlags2, J9_EXTENDED_RUNTIME2_ALWAYS_KEEP_JNI_IDS)))
+
+#if JAVA_SPEC_VERSION >= 24
+#define J9VM_SEND_VIRTUAL_UNBLOCKER_THREAD_SIGNAL(vm) \
+		do {															\
+			omrthread_monitor_enter((vm)->blockedVirtualThreadsMutex); 	\
+			(vm)->pendingBlockedVirtualThreadsNotify = TRUE; 			\
+			omrthread_monitor_notify((vm)->blockedVirtualThreadsMutex);	\
+			omrthread_monitor_exit((vm)->blockedVirtualThreadsMutex);	\
+		} while (0)
+#endif /* JAVA_SPEC_VERSION >= 24 */
+
+#define DIR_LIB_STR "lib"
+
+#if defined(J9VM_OPT_JFR)
+
+#define DEFAULT_JFR_FILE_NAME "defaultJ9recording.jfr"
+
+#endif /* defined(J9VM_OPT_JFR) */
 
 #endif /* J9_H */

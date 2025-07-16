@@ -100,6 +100,8 @@ extern "C" void jitClassesRedefined(J9VMThread * currentThread, UDATA classCount
 extern "C" void jitFlushCompilationQueue(J9VMThread * currentThread, J9JITFlushCompilationQueueReason reason);
 #endif
 
+extern "C" void jitAddPermanentLoader(J9VMThread *currentThread, J9ClassLoader *loader);
+
 extern "C" void jitMethodBreakpointed(J9VMThread * currentThread, J9Method *j9method);
 
 extern "C" void jitIllegalFinalFieldModification(J9VMThread *currentThread, J9Class *fieldClass);
@@ -478,6 +480,9 @@ void codert_init_helpers_and_targets(J9JITConfig * jitConfig, char isSMP)
    jitConfig->getByteCodeIndex = getByteCodeIndex;
    jitConfig->getByteCodeIndexFromStackMap = getByteCodeIndexFromStackMap;
    jitConfig->getCurrentByteCodeIndexAndIsSameReceiver = getCurrentByteCodeIndexAndIsSameReceiver;
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+   jitConfig->jitGetInvokeBasicCallSiteFromPC = jitGetInvokeBasicCallSiteFromPC;
+#endif
    jitConfig->getJitRegisterMap = getJitRegisterMap;
    jitConfig->jitReportDynamicCodeLoadEvents = jitReportDynamicCodeLoadEvents;
 #if (defined(TR_HOST_X86) || defined(TR_HOST_POWER) || defined(TR_HOST_S390) || defined(TR_HOST_ARM) || defined(TR_HOST_ARM64))
@@ -490,6 +495,7 @@ void codert_init_helpers_and_targets(J9JITConfig * jitConfig, char isSMP)
 #if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
    jitConfig->jitSetMutableCallSiteTarget = jitSetMutableCallSiteTarget;
 #endif
+   jitConfig->jitAddPermanentLoader = jitAddPermanentLoader;
 
    initializeCodertFunctionTable(javaVM);
 

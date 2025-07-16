@@ -274,11 +274,14 @@ gcCleanupHeapStructures(J9JavaVM * vm)
 		gam->flushAllocationContextsForShutdown(&env);
 	}
 
-	if (vm->memorySegments) {
-		vm->internalVMFunctions->freeMemorySegmentList(vm, vm->memorySegments);
-	}
-	if (vm->classMemorySegments) {
-		vm->internalVMFunctions->freeMemorySegmentList(vm, vm->classMemorySegments);
+	if (!IS_RESTORE_RUN(vm)) {
+		if (NULL != vm->memorySegments) {
+			vm->internalVMFunctions->freeMemorySegmentList(vm, vm->memorySegments);
+		}
+
+		if (NULL != vm->classMemorySegments) {
+			vm->internalVMFunctions->freeMemorySegmentList(vm, vm->classMemorySegments);
+		}
 	}
 
 #if defined(J9VM_GC_FINALIZATION)
@@ -358,7 +361,7 @@ j9gc_initialize_heap(J9JavaVM *vm, IDATA *memoryParameterTable, UDATA heapBytesR
 
 			char *buffer = (char *)j9mem_allocate_memory(formatLength, OMRMEM_CATEGORY_MM);
 			if (NULL != buffer) {
-				j9str_printf(PORTLIB, buffer, formatLength, format, size, qualifier);
+				j9str_printf(buffer, formatLength, format, size, qualifier);
 			}
 			vm->internalVMFunctions->setErrorJ9dll(PORTLIB, loadInfo, buffer, TRUE);
 			break;
@@ -380,7 +383,7 @@ j9gc_initialize_heap(J9JavaVM *vm, IDATA *memoryParameterTable, UDATA heapBytesR
 
 			char *buffer = (char *)j9mem_allocate_memory(formatLength, OMRMEM_CATEGORY_MM);
 			if (NULL != buffer) {
-				j9str_printf(PORTLIB, buffer, formatLength, format, size, qualifier);
+				j9str_printf(buffer, formatLength, format, size, qualifier);
 			}
 			vm->internalVMFunctions->setErrorJ9dll(PORTLIB, loadInfo, buffer, TRUE);
 			break;
@@ -406,7 +409,7 @@ j9gc_initialize_heap(J9JavaVM *vm, IDATA *memoryParameterTable, UDATA heapBytesR
 
 			char *buffer = (char *)j9mem_allocate_memory(formatLength, OMRMEM_CATEGORY_MM);
 			if (NULL != buffer) {
-				j9str_printf(PORTLIB, buffer, formatLength, format, heapSize, heapSizeQualifier, pageSize, pageSizeQualifier);
+				j9str_printf(buffer, formatLength, format, heapSize, heapSizeQualifier, pageSize, pageSizeQualifier);
 			}
 			vm->internalVMFunctions->setErrorJ9dll(PORTLIB, loadInfo, buffer, TRUE);
 			extensions->largePageFailedToSatisfy = true;
@@ -432,11 +435,11 @@ j9gc_initialize_heap(J9JavaVM *vm, IDATA *memoryParameterTable, UDATA heapBytesR
 			UDATA newSpaceSize = extensions->newSpaceSize;
 			const char* newQualifier = NULL;
 			qualifiedSize(&newSpaceSize, &newQualifier);
-			UDATA formatLength = j9str_printf(PORTLIB, NULL, 0, format, splitFailure, newSpaceSize, newQualifier, oldSpaceSize, oldQualifier);
+			UDATA formatLength = j9str_printf(NULL, 0, format, splitFailure, newSpaceSize, newQualifier, oldSpaceSize, oldQualifier);
 
 			char *buffer = (char *)j9mem_allocate_memory(formatLength, OMRMEM_CATEGORY_MM);
 			if (NULL != buffer) {
-				j9str_printf(PORTLIB, buffer, formatLength, format, splitFailure, newSpaceSize, newQualifier, oldSpaceSize, oldQualifier);
+				j9str_printf(buffer, formatLength, format, splitFailure, newSpaceSize, newQualifier, oldSpaceSize, oldQualifier);
 			}
 			vm->internalVMFunctions->setErrorJ9dll(PORTLIB, loadInfo, buffer, TRUE);
 		}
@@ -555,30 +558,37 @@ gcInitializeHeapStructures(J9JavaVM *vm)
 	MM_GCExtensions *extensions = MM_GCExtensions::getExtensions(vm);
 	J9VMDllLoadInfo *loadInfo = getGCDllLoadInfo(vm);
 
-	/* For now, number of segments to default in pool */
-	if ((vm->memorySegments = vm->internalVMFunctions->allocateMemorySegmentList(vm, 10, OMRMEM_CATEGORY_VM)) == NULL) {
-		vm->internalVMFunctions->setErrorJ9dll(
-			PORTLIB,
-			loadInfo,
-			j9nls_lookup_message(
-				J9NLS_DO_NOT_PRINT_MESSAGE_TAG | J9NLS_DO_NOT_APPEND_NEWLINE,
-				J9NLS_GC_FAILED_TO_ALLOCATE_VM_MEMORY_SEGMENTS,
-				"Failed to allocate VM memory segments."),
-			FALSE);
-		goto error;
-	}
+	/* By this point during a restore run, the memory segments are already allocated
+	 * and initialized.
+	 */
+	if (!IS_RESTORE_RUN(vm)) {
+		/* For now, set the number of segments to a default (= 10) in the pool. */
+		U_32 defaultSegments = 10;
+		vm->memorySegments = vm->internalVMFunctions->allocateMemorySegmentList(vm, defaultSegments, OMRMEM_CATEGORY_VM);
+		if (NULL == vm->memorySegments) {
+			vm->internalVMFunctions->setErrorJ9dll(
+				PORTLIB,
+				loadInfo,
+				j9nls_lookup_message(
+					J9NLS_DO_NOT_PRINT_MESSAGE_TAG | J9NLS_DO_NOT_APPEND_NEWLINE,
+					J9NLS_GC_FAILED_TO_ALLOCATE_VM_MEMORY_SEGMENTS,
+					"Failed to allocate VM memory segments."),
+				FALSE);
+			goto error;
+		}
 
-	/* For now, number of segments to default in pool */
-	if ((vm->classMemorySegments = vm->internalVMFunctions->allocateMemorySegmentListWithFlags(vm, 10, MEMORY_SEGMENT_LIST_FLAG_SORT, J9MEM_CATEGORY_CLASSES)) == NULL) {
-		vm->internalVMFunctions->setErrorJ9dll(
-			PORTLIB,
-			loadInfo,
-			j9nls_lookup_message(
-				J9NLS_DO_NOT_PRINT_MESSAGE_TAG | J9NLS_DO_NOT_APPEND_NEWLINE,
-				J9NLS_GC_FAILED_TO_ALLOCATE_VM_CLASS_MEMORY_SEGMENTS,
-				"Failed to allocate VM class memory segments."),
-			FALSE);
-		goto error;
+		vm->classMemorySegments = vm->internalVMFunctions->allocateMemorySegmentListWithFlags(vm, defaultSegments, MEMORY_SEGMENT_LIST_FLAG_SORT, J9MEM_CATEGORY_CLASSES);
+		if (NULL == vm->classMemorySegments) {
+			vm->internalVMFunctions->setErrorJ9dll(
+				PORTLIB,
+				loadInfo,
+				j9nls_lookup_message(
+					J9NLS_DO_NOT_PRINT_MESSAGE_TAG | J9NLS_DO_NOT_APPEND_NEWLINE,
+					J9NLS_GC_FAILED_TO_ALLOCATE_VM_CLASS_MEMORY_SEGMENTS,
+					"Failed to allocate VM class memory segments."),
+				FALSE);
+			goto error;
+		}
 	}
 
 	/* j9gc_initialize_heap is now called from gcInitializeDefaults */
@@ -2842,9 +2852,12 @@ configurateGCWithPolicyAndOptionsStandard(MM_EnvironmentBase *env)
 MM_Configuration *
 configurateGCWithPolicyAndOptions(OMR_VM* omrVM)
 {
+	J9JavaVM *vm = (J9JavaVM*) omrVM->_language_vm;
+	PORT_ACCESS_FROM_JAVAVM(vm);
 	MM_Configuration *result = NULL;
 	MM_GCExtensions *extensions = MM_GCExtensions::getExtensions(omrVM);
 	MM_EnvironmentBase env(omrVM);
+	bool ccMark = false;
 
 	switch(extensions->configurationOptions._gcPolicy) {
 	case gc_policy_optthruput:
@@ -2866,8 +2879,9 @@ configurateGCWithPolicyAndOptions(OMR_VM* omrVM)
 	case gc_policy_gencon:
 		extensions->gcModeString = "-Xgcpolicy:gencon";
 		omrVM->gcPolicy = J9_GC_POLICY_GENCON;
+		ccMark = (1 != j9sysinfo_get_number_CPUs_by_type(J9PORT_CPU_TARGET));
 		/* scavenge, concurrentMark, noConcurrentSweep, loa */
-		setDefaultConfigOptions(extensions, true, true, false, true);
+		setDefaultConfigOptions(extensions, true, ccMark, false, true);
 		result = configurateGCWithPolicyAndOptionsStandard(&env);
 		break;
 
@@ -2958,6 +2972,7 @@ gcInitializeDefaults(J9JavaVM* vm)
 #if defined(J9VM_ENV_DATA64)
 	vm->isIndexableDualHeaderShapeEnabled = TRUE;
 	vm->isIndexableDataAddrPresent = FALSE;
+	vm->indexableObjectLayout = J9IndexableObjectLayout_NoDataAddr_NoArraylet;
 #endif /* defined(J9VM_ENV_DATA64) */
 
 	/* enable estimateFragmentation for all GCs as default for java, but not the estimated result would not affect concurrentgc kickoff by default */
@@ -2996,6 +3011,52 @@ gcInitializeDefaults(J9JavaVM* vm)
 		memoryParameterTable[opt_Xmx] = memoryParameterTable[opt_maxRAMPercent];
 	}
 
+	if (-1 == memoryParameterTable[opt_Xmx]) {
+		/* set default max heap for Java */
+		extensions->memoryMax = extensions->computeDefaultMaxHeapForJava(extensions->enableOriginalJDK8HeapSizeCompatibilityOption);
+		/* if max heap size smaller than specified initial size adjust it */
+		if ((-1 != memoryParameterTable[opt_Xms]) && (extensions->initialMemorySize > extensions->memoryMax)) {
+			extensions->memoryMax = extensions->initialMemorySize;
+		}
+	} else {
+#if defined(J9ZOS390) && !defined(OMR_ENV_DATA64)
+		/*
+		 *  Maximum heap size for ZOS 31-bit should not exceed 2047m
+		 *  This explicit check is necessary to prevent ZOS failure at
+		 *  attempt to allocate too large piece of memory.
+		 *  Please note that size of memory can be allocated in reality
+		 *  is much smaller, something about 1750m. An allocation request
+		 *  in the higher range under 2047m is going to fail normally.
+		 *  The error message here is exactly the same as in regular failure.
+		 */
+#define MAX_HEAP_SIZE_FOR_ZOS31	((UDATA)2047 * 1024 * 1024)
+		if (MAX_HEAP_SIZE_FOR_ZOS31 < extensions->memoryMax) {
+			/* Obtain the qualified size */
+			UDATA size = extensions->memoryMax;
+			const char* qualifier = NULL;
+			qualifiedSize(&size, &qualifier);
+
+			const char *format = j9nls_lookup_message(
+				J9NLS_DO_NOT_PRINT_MESSAGE_TAG | J9NLS_DO_NOT_APPEND_NEWLINE,
+				J9NLS_GC_FAILED_TO_INSTANTIATE_HEAP_SIZE_REQUESTED,
+				"Failed to instantiate heap; %zu%s requested");
+			UDATA formatLength = strlen(format) + 32; /* 2^64 is 20 digits, so have a few extra */
+
+			char *buffer = (char *)j9mem_allocate_memory(formatLength, OMRMEM_CATEGORY_MM);
+			if (NULL != buffer) {
+				j9str_printf(buffer, formatLength, format, size, qualifier);
+			}
+			vm->internalVMFunctions->setErrorJ9dll(PORTLIB, loadInfo, buffer, TRUE);
+			goto error;
+		}
+#endif /* defined(J9ZOS390) && !defined(OMR_ENV_DATA64) */
+	}
+
+	/* Since the user is not specifying a value, ensure that -Xmdx is set to the same value
+	 * as -Xmx.  It does not matter whether -Xmx was specified or not.
+	 */
+	extensions->maxSizeDefaultMemorySpace = extensions->memoryMax;
+
 	if (gc_policy_metronome == extensions->configurationOptions._gcPolicy) {
 		/* Heap is segregated; take into account segregatedAllocationCache. */
 		vm->segregatedAllocationCacheSize = (J9VMGC_SIZECLASSES_NUM_SMALL + 1)*sizeof(J9VMGCSegregatedAllocationCacheEntry);
@@ -3021,12 +3082,12 @@ gcInitializeDefaults(J9JavaVM* vm)
 		extensions->concurrentScavenger = true;
 
 		if (LOADED == (FIND_DLL_TABLE_ENTRY(J9_JIT_DLL_NAME)->loadFlags & LOADED)) {
-
-			/* Check for supported hardware */
-			J9ProcessorDesc  processorDesc;
-			j9sysinfo_get_processor_description(&processorDesc);
-			bool hwSupported = j9sysinfo_processor_has_feature(&processorDesc, J9PORT_S390_FEATURE_GUARDED_STORAGE) &&
-					j9sysinfo_processor_has_feature(&processorDesc, J9PORT_S390_FEATURE_SIDE_EFFECT_ACCESS);
+			/* Check for supported hardware. */
+			OMRPORT_ACCESS_FROM_J9PORT(PORTLIB);
+			OMRProcessorDesc processorDesc;
+			omrsysinfo_get_processor_description(&processorDesc);
+			bool hwSupported = omrsysinfo_processor_has_feature(&processorDesc, OMR_FEATURE_S390_GUARDED_STORAGE)
+							&& omrsysinfo_processor_has_feature(&processorDesc, OMR_FEATURE_S390_SIDE_EFFECT_ACCESS);
 
 			if (hwSupported) {
 				/*
@@ -3038,7 +3099,7 @@ gcInitializeDefaults(J9JavaVM* vm)
 				extensions->concurrentScavengerHWSupport = hwSupported
 					&& !extensions->softwareRangeCheckReadBarrierForced
 #if defined(J9VM_OPT_CRIU_SUPPORT)
-					&& !vm->internalVMFunctions->isCRaCorCRIUSupportEnabled_VM(vm)
+					&& !vm->internalVMFunctions->isCRaCorCRIUSupportEnabled(vm)
 #endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
 					&& !J9_ARE_ANY_BITS_SET(vm->extendedRuntimeFlags2, J9_EXTENDED_RUNTIME2_ENABLE_PORTABLE_SHARED_CACHE);
 			}
@@ -3310,11 +3371,8 @@ initializeIndexableObjectHeaderSizes(J9JavaVM* vm)
 #else /* defined(J9VM_ENV_DATA64) */
 	setIndexableObjectHeaderSizeWithoutDataAddress(vm);
 #endif /* defined(J9VM_ENV_DATA64) */
-	if (MM_GCExtensions::getExtensions(vm)->isVirtualLargeObjectHeapEnabled) {
-		vm->unsafeIndexableHeaderSize = 0;
-	} else {
-		vm->unsafeIndexableHeaderSize = vm->contiguousIndexableHeaderSize;
-	}
+	/* set default unsafeIndexableHeaderSize */
+	vm->unsafeIndexableHeaderSize = vm->contiguousIndexableHeaderSize;
 }
 
 #if defined(J9VM_ENV_DATA64)

@@ -209,9 +209,10 @@ gcDumpQualifiedSize(J9PortLibrary* portLib, UDATA byteSize, const char* optionNa
 		NULL);
 
 	/* Format output String */
-	paramSize = j9str_printf(PORTLIB, buffer, 16, "%zu%s", size, qualifier);
+	paramSize = j9str_printf(buffer, 16, "%zu%s", size, qualifier);
 	paramSize = 15 - paramSize;
-	paramSize += strlen(optionDescription);
+	/* Handle NULL printed as "<NULL>". */
+	paramSize += (NULL == optionDescription) ? 6 : strlen(optionDescription);
 	paramSize -= strlen(optionName);
 	j9tty_printf(PORTLIB, "  %s%s %*s\n", optionName, buffer, paramSize, optionDescription);
 
@@ -294,7 +295,7 @@ gcDumpMemorySizes(J9JavaVM *javaVM)
 			NULL);
 
 		if (J9PORT_VMEM_PAGE_FLAG_NOT_USED != extensions->requestedPageFlags) {
-			j9str_printf(PORTLIB, postOption, 16, ",%s", getPageTypeString(extensions->requestedPageFlags));
+			j9str_printf(postOption, 16, ",%s", getPageTypeString(extensions->requestedPageFlags));
 		}
 
 		j9tty_printf(PORTLIB, "  %s%zu%s%s\t %s\n", optionName, size, qualifier, postOption, optionDescription);

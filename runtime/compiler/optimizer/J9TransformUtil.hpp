@@ -220,9 +220,18 @@ public:
       TR_ResolvedMethod *owningMethod,
       int32_t cpIndex);
 
+   union value{
+      int32_t i;
+      int64_t l;
+      float f;
+      double d;
+      void *p;
+      TR::KnownObjectTable::Index idx;
+   };
+
    static bool transformIndirectLoadChain(TR::Compilation *, TR::Node *node, TR::Node *baseExpression, TR::KnownObjectTable::Index baseKnownObject, TR::Node **removedNode);
    static bool transformIndirectLoadChainAt(TR::Compilation *, TR::Node *node, TR::Node *baseExpression, uintptr_t *baseReferenceLocation, TR::Node **removedNode);
-   static bool transformIndirectLoadChainImpl( TR::Compilation *, TR::Node *node, TR::Node *baseExpression, void *baseAddress, int32_t baseStableArrayRank, TR::Node **removedNode);
+   static bool transformIndirectLoadChainImpl( TR::Compilation *, TR::Node *node, TR::Node *baseExpression, TR::KnownObjectTable::Index baseKnownObject, void *baseAddress, int32_t baseStableArrayRank, TR::Node **removedNode);
 
    static bool fieldShouldBeCompressed(TR::Node *node, TR::Compilation *comp);
 
@@ -360,7 +369,7 @@ public:
       TR::Symbol::RecognizedField recField,
       TR::AnyConst *outValue);
 
-#if defined(J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION)
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
    /**
     * \brief
     *    Converts Unsafe.copyMemory call into arraycopy node replacing
@@ -388,7 +397,7 @@ public:
     *    Return true if call is converted
     */
    static void transformUnsafeCopyMemorytoArrayCopyForOffHeap(TR::Compilation *comp, TR::TreeTop *arrayCopyTT, TR::Node *arraycopyNode);
-#endif /* J9VM_GC_ENABLE_SPARSE_HEAP_ALLOCATION */
+#endif /* J9VM_GC_SPARSE_HEAP_ALLOCATION */
 
 protected:
    /**

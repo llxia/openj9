@@ -41,7 +41,7 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 		<property name="graph_commands.chroot" value=""/>
 		<property name="graph_commands.unix.remote_host" value=""/>
 		<property name="graph_datamines" value="commands.unix.datamine,site-zLinux.datamine,use.local.datamine"/>
-		<property name="graph_enable_compiler_cmd" value="source {$buildinfo.fsroot.linux390Bin$}/set_gcc11.2_env &amp;&amp;"/>
+		<property name="graph_enable_compiler_cmd" value="source {$buildinfo.fsroot.linux390Bin$}/set_gcc13.2_env &amp;&amp;"/>
 		<property name="graph_label.classlib" value="150"/>
 		<property name="graph_label.java5" value="j9vmxz6424"/>
 		<property name="graph_label.java6" value="pxz6460"/>
@@ -132,9 +132,10 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 		<flag id="env_sharedLibsUseGlobalTable" value="true"/>
 		<flag id="gc_batchClearTLH" value="true"/>
 		<flag id="gc_debugAsserts" value="true"/>
-		<flag id="gc_inlinedAllocFields" value="true"/>
 		<flag id="gc_enableDoubleMap" value="true"/>
+		<flag id="gc_inlinedAllocFields" value="true"/>
 		<flag id="gc_minimumObjectSize" value="true"/>
+		<flag id="gc_sparseHeapAllocation" value="true"/>
 		<flag id="gc_subpoolsAlias" value="true"/>
 		<flag id="graph_cmdLineTester" value="true"/>
 		<flag id="graph_compile" value="true"/>

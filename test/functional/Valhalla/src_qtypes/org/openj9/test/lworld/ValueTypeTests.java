@@ -32,6 +32,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
+import jdk.internal.value.ValueClass;
 import org.testng.Assert;
 import static org.testng.Assert.*;
 import org.testng.annotations.Test;
@@ -58,89 +59,89 @@ import static org.openj9.test.lworld.ValueTypeTestClasses.*;
 public class ValueTypeTests {
 	static Lookup lookup = MethodHandles.lookup();
 	/* point2D */
-	static Class point2DClass = null;
+	static Class<?> point2DClass = null;
 	static MethodHandle makePoint2D = null;
 	static MethodHandle getX = null;
 	static MethodHandle getY = null;
 	static MethodHandle withX = null;
 	static MethodHandle withY = null;
 	/* line2D */
-	static Class line2DClass = null;
+	static Class<?> line2DClass = null;
 	static MethodHandle makeLine2D = null;
 	/* flattenedLine2D */
-	static Class flattenedLine2DClass = null;
+	static Class<?> flattenedLine2DClass = null;
 	static MethodHandle makeFlattenedLine2D = null;
 	static MethodHandle getFlatSt = null;
 	static MethodHandle withFlatSt = null;
  	static MethodHandle getFlatEn = null;
  	static MethodHandle withFlatEn = null;
 	/* triangle2D */
-	static Class triangle2DClass = null;
+	static Class<?> triangle2DClass = null;
 	static MethodHandle makeTriangle2D = null;
 	static MethodHandle getV1 = null;
 	static MethodHandle getV2 = null;
 	static MethodHandle getV3 = null;
 	/* valueLong */
-	static Class valueLongClass = null;
+	static Class<?> valueLongClass = null;
 	static MethodHandle makeValueLong = null;
 	static MethodHandle getLong = null;
 	static MethodHandle withLong = null;
 	/* valueInt */
-	static Class valueIntClass = null;
+	static Class<?> valueIntClass = null;
 	static MethodHandle makeValueInt = null;
 	static MethodHandle getInt = null;
 	static MethodHandle withInt = null;
 	/* valueDouble */
-	static Class valueDoubleClass = null;
+	static Class<?> valueDoubleClass = null;
 	static MethodHandle makeValueDouble = null;
 	static MethodHandle getDouble = null;
 	static MethodHandle withDouble = null;
 	/* valueFloat */
-	static Class valueFloatClass = null;
+	static Class<?> valueFloatClass = null;
 	static MethodHandle makeValueFloat = null;
 	static MethodHandle getFloat = null;
 	static MethodHandle withFloat = null;
 	/* valueObject */
-	static Class valueObjectClass = null;
+	static Class<?> valueObjectClass = null;
 	static MethodHandle makeValueObject = null;
 	static MethodHandle getObject = null;
 	static MethodHandle withObject = null;
 	/* largeObject */
-	static Class largeObjectValueClass = null;
+	static Class<?> largeObjectValueClass = null;
 	static MethodHandle makeLargeObjectValue = null;
 	static MethodHandle[] getObjects = null;
 	/* megaObject */
-	static Class megaObjectValueClass = null;
+	static Class<?> megaObjectValueClass = null;
 	static MethodHandle makeMegaObjectValue = null;
 	/* assortedRefWithLongAlignment */
-	static Class assortedRefWithLongAlignmentClass = null;
+	static Class<?> assortedRefWithLongAlignmentClass = null;
 	static MethodHandle makeAssortedRefWithLongAlignment = null;
 	static MethodHandle[][] assortedRefWithLongAlignmentGetterAndSetter = null;
 	/* assortedRefWithObjectAlignment */
-	static Class assortedRefWithObjectAlignmentClass = null;
+	static Class<?> assortedRefWithObjectAlignmentClass = null;
 	static MethodHandle makeAssortedRefWithObjectAlignment = null;
 	static MethodHandle[][] assortedRefWithObjectAlignmentGetterList = null;
 	/* assortedRefWithSingleAlignment */
-	static Class assortedRefWithSingleAlignmentClass = null;
+	static Class<?> assortedRefWithSingleAlignmentClass = null;
 	static MethodHandle makeAssortedRefWithSingleAlignment = null;
 	static MethodHandle[][] assortedRefWithSingleAlignmentGetterList = null;
 	/* assortedValueWithLongAlignment */
-	static Class assortedValueWithLongAlignmentClass = null;
+	static Class<?> assortedValueWithLongAlignmentClass = null;
 	static MethodHandle makeAssortedValueWithLongAlignment = null;
 	static MethodHandle[][] assortedValueWithLongAlignmentGetterList = null;
-	static Class classWithOnlyStaticFieldsWithLongAlignment = null;
+	static Class<?> classWithOnlyStaticFieldsWithLongAlignment = null;
 	static MethodHandle[][] staticFieldsWithLongAlignmentGenericGetterAndSetter = null;
 	/* assortedValueWithObjectAlignment */
-	static Class assortedValueWithObjectAlignmentClass = null;
+	static Class<?> assortedValueWithObjectAlignmentClass = null;
 	static MethodHandle makeAssortedValueWithObjectAlignment = null;
 	static MethodHandle[][] assortedValueWithObjectAlignmentGetterList = null;
-	static Class classWithOnlyStaticFieldsWithObjectAlignment = null;
+	static Class<?> classWithOnlyStaticFieldsWithObjectAlignment = null;
 	static MethodHandle[][] staticFieldsWithObjectAlignmentGenericGetterAndSetter = null;
 	/* assortedValueWithSingleAlignment */
-	static Class assortedValueWithSingleAlignmentClass = null;
+	static Class<?> assortedValueWithSingleAlignmentClass = null;
 	static MethodHandle makeAssortedValueWithSingleAlignment = null;
 	static MethodHandle[][] assortedValueWithSingleAlignmentGetterList = null;
-	static Class classWithOnlyStaticFieldsWithSingleAlignment = null;
+	static Class<?> classWithOnlyStaticFieldsWithSingleAlignment = null;
 	static MethodHandle[][] staticFieldsWithSingleAlignmentGenericGetterAndSetter = null;
 	/* LayoutsWithPrimitives classes */
 	static Class<?> singleBackfillClass = null;
@@ -192,7 +193,7 @@ public class ValueTypeTests {
 	static MethodHandle getUnAlignedObjectflatObjectBackfill2InstanceL = null;
 
 	/* fields */
-	static String typeWithSingleAlignmentFields[] = {
+	static String[] typeWithSingleAlignmentFields = {
 		"tri:LTriangle2D;:NR", /* NR means null-restricted */
 		"point:LPoint2D;:NR",
 		"line:LFlattenedLine2D;:NR",
@@ -200,7 +201,7 @@ public class ValueTypeTests {
 		"f:LValueFloat;:NR",
 		"tri2:LTriangle2D;:NR"
 	};
-	static String typeWithObjectAlignmentFields[] = {
+	static String[] typeWithObjectAlignmentFields = {
 		"tri:LTriangle2D;:NR",
 		"point:LPoint2D;:NR",
 		"line:LFlattenedLine2D;:NR",
@@ -209,7 +210,7 @@ public class ValueTypeTests {
 		"f:LValueFloat;:NR",
 		"tri2:LTriangle2D;:NR"
 	};
-	static String typeWithLongAlignmentFields[] = {
+	static String[] typeWithLongAlignmentFields = {
 		"point:LPoint2D;:NR",
 		"line:LFlattenedLine2D;:NR",
 		"o:LValueObject;:NR",
@@ -261,7 +262,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCreatePoint2D() throws Throwable {
-		String fields[] = {"x:I", "y:I"};
+		String[] fields = {"x:I", "y:I"};
 		point2DClass = ValueTypeGenerator.generateValueClass("Point2D", fields);
 		
 		makePoint2D = lookup.findStatic(point2DClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class));
@@ -309,92 +310,92 @@ public class ValueTypeTests {
 		int x1 = 0xFFEEFFEE;
 		int y1 = 0xAABBAABB;
 		Object point2D = makePoint2D.invoke(x1, y1);
-		Object arrayObject = Array.newInstance(point2DClass, 8);
+		Object[] array = ValueClass.newNullRestrictedArray(point2DClass, 8);
 
 		for (int i = 0; i < 8; i++) {
-			Array.set(arrayObject, i, point2D);
+			array[i] = point2D;
 		}
 
 		System.gc();
 
-		Object value = Array.get(arrayObject, 0);
+		Object value = array[0];
 	}
 
 	@Test(priority=5)
 	static public void testGCFlattenedValueArrayWithSingleAlignment() throws Throwable {
-		Object array = Array.newInstance(assortedValueWithSingleAlignmentClass, 4);
+		Object[] array = ValueClass.newNullRestrictedArray(assortedValueWithSingleAlignmentClass, 4);
 		
 		for (int i = 0; i < 4; i++) {
 			Object object = createAssorted(makeAssortedValueWithSingleAlignment, typeWithSingleAlignmentFields);
-			Array.set(array, i, object);
+			array[i] = object;
 		}
 
 		System.gc();
 
 		for (int i = 0; i < 4; i++) {
-			checkFieldAccessMHOfAssortedType(assortedValueWithSingleAlignmentGetterList, Array.get(array, i), typeWithSingleAlignmentFields, true);
+			checkFieldAccessMHOfAssortedType(assortedValueWithSingleAlignmentGetterList, array[i], typeWithSingleAlignmentFields, true);
 		}
 	}
 
 	@Test(priority=5)
 	static public void testGCFlattenedValueArrayWithObjectAlignment() throws Throwable {
-		Object array = Array.newInstance(assortedValueWithObjectAlignmentClass, 4);
+		Object[] array = ValueClass.newNullRestrictedArray(assortedValueWithObjectAlignmentClass, 4);
 		
 		for (int i = 0; i < 4; i++) {
 			Object object = createAssorted(makeAssortedValueWithObjectAlignment, typeWithObjectAlignmentFields);
-			Array.set(array, i, object);
+			array[i] = object;
 		}
 
 		System.gc();
 
 		for (int i = 0; i < 4; i++) {
-			checkFieldAccessMHOfAssortedType(assortedValueWithObjectAlignmentGetterList, Array.get(array, i), typeWithObjectAlignmentFields, true);
+			checkFieldAccessMHOfAssortedType(assortedValueWithObjectAlignmentGetterList, array[i], typeWithObjectAlignmentFields, true);
 		}
 	}
 
 	@Test(priority=5)
 	static public void testGCFlattenedValueArrayWithLongAlignment() throws Throwable {
-		Object array = Array.newInstance(assortedValueWithLongAlignmentClass, genericArraySize);
+		Object[] array = ValueClass.newNullRestrictedArray(assortedValueWithLongAlignmentClass, genericArraySize);
 		
 		for (int i = 0; i < genericArraySize; i++) {
 			Object object = createAssorted(makeAssortedValueWithLongAlignment, typeWithLongAlignmentFields);
-			Array.set(array, i, object);
+			array[i] = object;
 		}
 
 		System.gc();
 
 		for (int i = 0; i < genericArraySize; i++) {
-			checkFieldAccessMHOfAssortedType(assortedValueWithLongAlignmentGetterList, Array.get(array, i), typeWithLongAlignmentFields, true);
+			checkFieldAccessMHOfAssortedType(assortedValueWithLongAlignmentGetterList, array[i], typeWithLongAlignmentFields, true);
 		}
 	}
 
 	@Test(priority=5)
 	static public void testGCFlattenedLargeObjectArray() throws Throwable {
-		Object arrayObject = Array.newInstance(largeObjectValueClass, 4);
+		Object[] array = ValueClass.newNullRestrictedArray(largeObjectValueClass, 4);
 		Object largeObjectRef = createLargeObject(new Object());
 
 		for (int i = 0; i < 4; i++) {
-			Array.set(arrayObject, i, largeObjectRef);
+			array[i] = largeObjectRef;
 		}
 
 		System.gc();
 
-		Object value = Array.get(arrayObject, 0);
+		Object value = array[0];
 	}
 
 	@Test(priority=5)
 	static public void testGCFlattenedMegaObjectArray() throws Throwable {
-		Object arrayObject = Array.newInstance(megaObjectValueClass, 4);
+		Object[] array = ValueClass.newNullRestrictedArray(megaObjectValueClass, 4);
 		Object megaObjectRef = createMegaObject(new Object());
 
 		System.gc();
 
 		for (int i = 0; i < 4; i++) {
-			Array.set(arrayObject, i, megaObjectRef);
+			array[i] = megaObjectRef;
 		}
 		System.gc();
 
-		Object value = Array.get(arrayObject, 0);
+		Object value = array[0];
 	}
 
 
@@ -408,8 +409,8 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCreatePoint2DComplex() throws Throwable {
-		String fields[] = {"d:D", "j:J"};
-		Class point2DComplexClass = ValueTypeGenerator.generateValueClass("Point2DComplex", fields);
+		String[] fields = {"d:D", "j:J"};
+		Class<?> point2DComplexClass = ValueTypeGenerator.generateValueClass("Point2DComplex", fields);
 		
 		MethodHandle makePoint2DComplex = lookup.findStatic(point2DComplexClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class));
 
@@ -436,7 +437,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=2)
 	static public void testCreateLine2D() throws Throwable {
-		String fields[] = {"st:LPoint2D;:NR", "en:LPoint2D;:NR"};
+		String[] fields = {"st:LPoint2D;:NR", "en:LPoint2D;:NR"};
 		line2DClass = ValueTypeGenerator.generateValueClass("Line2D", fields);
 		
 		makeLine2D = lookup.findStatic(line2DClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class));
@@ -477,7 +478,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=2)
 	static public void testCreateFlattenedLine2D() throws Throwable {
-		String fields[] = {"st:LPoint2D;:NR", "en:LPoint2D;:NR"};
+		String[] fields = {"st:LPoint2D;:NR", "en:LPoint2D;:NR"};
 		flattenedLine2DClass = ValueTypeGenerator.generateValueClass("FlattenedLine2D", fields);
 				
 		makeFlattenedLine2D = lookup.findStatic(flattenedLine2DClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class));
@@ -535,12 +536,11 @@ public class ValueTypeTests {
 		Object en2 = makePoint2D.invoke(x4, y4);
 		Object line2D_2 = makeFlattenedLine2D.invoke(st2, en2);
 
-		Object arrayObject = Array.newInstance(flattenedLine2DClass, 3);
-		Array.set(arrayObject, 1, line2D_1);
-		Array.set(arrayObject, 2, line2D_2);
-
-		Object line2D_1_check = Array.get(arrayObject, 1);
-		Object line2D_2_check = Array.get(arrayObject, 2);
+		Object[] arrayObject = ValueClass.newNullRestrictedArray(flattenedLine2DClass, 2);
+		arrayObject[0] = line2D_1;
+		arrayObject[1] = line2D_2;
+		Object line2D_1_check = arrayObject[0];
+		Object line2D_2_check = arrayObject[1];
 
 		assertEquals(getX.invoke(getFlatSt.invoke(line2D_1_check)), getX.invoke(getFlatSt.invoke(line2D_1)));
 		assertEquals(getX.invoke(getFlatSt.invoke(line2D_2_check)), getX.invoke(getFlatSt.invoke(line2D_2)));
@@ -550,26 +550,6 @@ public class ValueTypeTests {
 		assertEquals(getX.invoke(getFlatEn.invoke(line2D_2_check)), getX.invoke(getFlatEn.invoke(line2D_2)));
 		assertEquals(getY.invoke(getFlatEn.invoke(line2D_1_check)), getY.invoke(getFlatEn.invoke(line2D_1)));
 		assertEquals(getY.invoke(getFlatEn.invoke(line2D_2_check)), getY.invoke(getFlatEn.invoke(line2D_2)));
-	}	
-	
-	/*
-	 * Test defaultValue with ref type
-	 *
-	 * class DefaultValueWithNoneValueType {
-	 * 	Object f1;
-	 * 	Object f1;
-	 * }
-	 *
-	 */
-	@Test(enabled=false, priority=3)
-	static public void testDefaultValueWithNonValueType() throws Throwable {
-		String fields[] = {"f1:Ljava/lang/Object;:NR", "f2:Ljava/lang/Object;:NR"};
-		Class<?> defaultValueWithNonValueType = ValueTypeGenerator.generateRefClass("DefaultValueWithNonValueType", fields);
-		MethodHandle makeDefaultValueWithNonValueType = lookup.findStatic(defaultValueWithNonValueType, "makeDefaultValue", MethodType.methodType(Object.class));
-		try {
-			makeDefaultValueWithNonValueType.invoke();
-			Assert.fail("should throw error. Default value must be used with ValueType");
-		} catch (IncompatibleClassChangeError e) {}
 	}
 	
 	@Test(priority=2, invocationCount=2)
@@ -690,7 +670,7 @@ public class ValueTypeTests {
 	
 	@Test(priority=3)
 	static public void testACMPTestOnRecursiveValueTypes() throws Throwable {
-		String fields[] = {"l:J", "next:Ljava/lang/Object;", "i:I"};
+		String[] fields = {"l:J", "next:Ljava/lang/Object;", "i:I"};
 		Class<?> nodeClass = ValueTypeGenerator.generateValueClass("Node", fields);
 		MethodHandle makeNode = lookup.findStatic(nodeClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class, Object.class));
 		
@@ -962,7 +942,7 @@ public class ValueTypeTests {
 		Object valueType = makePoint2D.invoke(x, y);
 		Object valueTypeArray = Array.newInstance(flattenedLine2DClass, genericArraySize);
 
-		String fields[] = {"longField:J"};
+		String[] fields = {"longField:J"};
 		Class<?> testMonitorExitOnValueType = ValueTypeGenerator.generateRefClass("TestMonitorExitOnValueType", fields);
 		MethodHandle monitorEnterAndExitOnValueType = lookup.findStatic(testMonitorExitOnValueType, "testMonitorEnterAndExitWithRefType", MethodType.methodType(void.class, Object.class));
 		try {
@@ -978,19 +958,16 @@ public class ValueTypeTests {
 	}
 
 
-	@Test(enabled=false, priority=2)
-	static public void testSynchMethodsOnValueTypes() throws Throwable {
+	/* The non-static synchronized method case is covered by
+	 * ValueTypeTests.testValueTypeHasSynchMethods.
+	 */
+	@Test(priority=2)
+	static public void testStaticSynchMethodsOnValueTypes() throws Throwable {
 		int x = 1;
 		int y = 1;
 		Object valueType = makePoint2D.invoke(x, y);
-		MethodHandle syncMethod = lookup.findVirtual(point2DClass, "synchronizedMethodReturnInt", MethodType.methodType(int.class));
 		MethodHandle staticSyncMethod = lookup.findStatic(point2DClass, "staticSynchronizedMethodReturnInt", MethodType.methodType(int.class));
-		
-		try {
-			syncMethod.invoke(valueType);
-			Assert.fail("should throw exception. Synchronized methods cannot be used with ValueType");
-		} catch (IllegalMonitorStateException e) {}
-		
+
 		try {
 			staticSyncMethod.invoke();
 		} catch (IllegalMonitorStateException e) {
@@ -1000,7 +977,7 @@ public class ValueTypeTests {
 	
 	@Test(priority=2)
 	static public void testSynchMethodsOnRefTypes() throws Throwable {
-		String fields[] = {"longField:J"};
+		String[] fields = {"longField:J"};
 		Class<?> refTypeClass = ValueTypeGenerator.generateRefClass("RefType", fields);
 		MethodHandle makeObject = lookup.findStatic(refTypeClass, "makeObject", MethodType.methodType(refTypeClass, long.class));
 		Object refType = makeObject.invoke(1L);
@@ -1030,10 +1007,9 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testMonitorExitWithRefType() throws Throwable {
-		int x = 1;
-		Object refType = (Object) x;
+		Object refType = new Object();
 		
-		String fields[] = {"longField:J"};
+		String[] fields = {"longField:J"};
 		Class<?> testMonitorExitWithRefType = ValueTypeGenerator.generateRefClass("TestMonitorExitWithRefType", fields);
 		MethodHandle monitorExitWithRefType = lookup.findStatic(testMonitorExitWithRefType, "testMonitorExitOnObject", MethodType.methodType(void.class, Object.class));
 		try {
@@ -1051,16 +1027,42 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testMonitorEnterAndExitWithRefType() throws Throwable {
-		int x = 2;
-		Object refType = (Object) x;
+		Object refType = new Object();
 		
-		String fields[] = {"longField:J"};
+		String[] fields = {"longField:J"};
 		Class<?> testMonitorEnterAndExitWithRefType = ValueTypeGenerator.generateRefClass("TestMonitorEnterAndExitWithRefType", fields);
 		MethodHandle monitorEnterAndExitWithRefType = lookup.findStatic(testMonitorEnterAndExitWithRefType, "testMonitorEnterAndExitWithRefType", MethodType.methodType(void.class, Object.class));
 		try {
 			monitorEnterAndExitWithRefType.invoke(refType);
 		} catch (IllegalMonitorStateException e) {
 			Assert.fail("shouldn't throw exception. MonitorEnter and MonitorExit should be used with refType");
+		}
+	}
+
+	@Test(priority=1)
+	static public void testMigratedValueClasses() {
+		Integer a = new Integer(1);
+		Integer b = new Integer(1);
+
+		Assert.assertTrue(a.getClass().isValue(),
+			"java/lang/Integer should be migrated to a value class.");
+		Assert.assertTrue(a.hashCode() == b.hashCode(),
+			"Two objects of value type classes with the same values should have the same hash code.");
+		Assert.assertTrue(a == b,
+			"Two objects of value type classes with the same values should be equal.");
+	}
+
+	@Test(priority=1)
+	static public void testMigratedValueClassesMonitorEnterAndExit() throws Throwable {
+		Integer i = new Integer(1);
+		Object refType = (Object)i;
+
+		Class<?> testMigratedValueClassesMonitorEnterAndExit = ValueTypeGenerator.generateRefClass("TestMigratedValueClassesMonitorEnterAndExit");
+		MethodHandle monitorEnterAndExitWithRefType = lookup.findStatic(testMigratedValueClassesMonitorEnterAndExit, "testMonitorEnterAndExitWithRefType", MethodType.methodType(void.class, Object.class));
+		try {
+			monitorEnterAndExitWithRefType.invoke(refType);
+			fail("Synchronization attempts on migrated value classes should fail.");
+		} catch (IdentityException e) {
 		}
 	}
 
@@ -1075,7 +1077,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=3)
 	static public void testCreateTriangle2D() throws Throwable {
-		String fields[] = {"v1:LFlattenedLine2D;:NR", "v2:LFlattenedLine2D;:NR", "v3:LFlattenedLine2D;:NR"};
+		String[] fields = {"v1:LFlattenedLine2D;:NR", "v2:LFlattenedLine2D;:NR", "v3:LFlattenedLine2D;:NR"};
 		triangle2DClass = ValueTypeGenerator.generateValueClass("Triangle2D", fields);
 
 		makeTriangle2D = lookup.findStatic(triangle2DClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class, Object.class));
@@ -1129,7 +1131,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCreateValueLong() throws Throwable {
-		String fields[] = {"j:J"};
+		String[] fields = {"j:J"};
 		valueLongClass = ValueTypeGenerator.generateValueClass("ValueLong", fields);
 		makeValueLong = lookup.findStatic(valueLongClass, "makeObjectGeneric",
 				MethodType.methodType(Object.class, Object.class));
@@ -1152,7 +1154,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCreateValueInt() throws Throwable {
-		String fields[] = {"i:I"};
+		String[] fields = {"i:I"};
 		valueIntClass = ValueTypeGenerator.generateValueClass("ValueInt", fields);
 
 		makeValueInt = lookup.findStatic(valueIntClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class));
@@ -1175,7 +1177,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCreateValueDouble() throws Throwable {
-		String fields[] = {"d:D"};
+		String[] fields = {"d:D"};
 		valueDoubleClass = ValueTypeGenerator.generateValueClass("ValueDouble", fields);
 
 		makeValueDouble = lookup.findStatic(valueDoubleClass, "makeObjectGeneric",
@@ -1199,7 +1201,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCreateValueFloat() throws Throwable {
-		String fields[] = {"f:F"};
+		String[] fields = {"f:F"};
 		valueFloatClass = ValueTypeGenerator.generateValueClass("ValueFloat", fields);
 
 		makeValueFloat = lookup.findStatic(valueFloatClass, "makeObjectGeneric",
@@ -1223,7 +1225,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCreateValueObject() throws Throwable {
-		String fields[] = {"val:Ljava/lang/Object;"};
+		String[] fields = {"val:Ljava/lang/Object;"};
 
 		valueObjectClass = ValueTypeGenerator.generateValueClass("ValueObject", fields);
 
@@ -1254,9 +1256,9 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=3)
 	static public Object createValueTypeWithVolatileFields() throws Throwable {
-		String fields[] = {"i:LValueInt;:NR", "i2:LValueInt;:NR", "point:LPoint2D;:NR", "vpoint:LPoint2D;:NR:volatile",
+		String[] fields = {"i:LValueInt;:NR", "i2:LValueInt;:NR", "point:LPoint2D;:NR", "vpoint:LPoint2D;:NR:volatile",
 				"line:LFlattenedLine2D;:NR", "vline:LFlattenedLine2D;:NR:volatile"};
-		Class ValueTypeWithVolatileFieldsClass = ValueTypeGenerator.generateValueClass("ValueTypeWithVolatileFields", fields);
+		Class<?> ValueTypeWithVolatileFieldsClass = ValueTypeGenerator.generateValueClass("ValueTypeWithVolatileFields", fields);
 		MethodHandle valueWithVolatile = lookup.findStatic(ValueTypeWithVolatileFieldsClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class, Object.class,
 				Object.class, Object.class, Object.class));
 		MethodHandle[][] getterList = generateGenericGetterList(ValueTypeWithVolatileFieldsClass, fields);
@@ -1333,7 +1335,7 @@ public class ValueTypeTests {
 
 	@Test(priority=2)
 	static public void testCreateLayoutsWithPrimitives() throws Throwable {
-		String singleBackfill[] = {"l:J", "o:Ljava/lang/Object;", "i:I"};
+		String[] singleBackfill = {"l:J", "o:Ljava/lang/Object;", "i:I"};
 		singleBackfillClass = ValueTypeGenerator.generateValueClass("SingleBackfill", singleBackfill);
 		makeSingleBackfillClass = lookup.findStatic(singleBackfillClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class, Object.class));
 		/* Replace typed getters/setters to generic due to current lack of support for ValueTypes and OJDK method handles */
@@ -1341,7 +1343,7 @@ public class ValueTypeTests {
 		getSingleO = generateGenericGetter(singleBackfillClass, "o");
 		getSingleL = generateGenericGetter(singleBackfillClass, "l");
 		
-		String objectBackfill[] = {"l:J", "o:Ljava/lang/Object;"};
+		String[] objectBackfill = {"l:J", "o:Ljava/lang/Object;"};
 		objectBackfillClass = ValueTypeGenerator.generateValueClass("ObjectBackfill", objectBackfill);
 		makeObjectBackfillClass = lookup.findStatic(objectBackfillClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class));
 		/* Replace typed getters/setters to generic due to current lack of support for ValueTypes and OJDK method handles */
@@ -1363,53 +1365,53 @@ public class ValueTypeTests {
 	
 	@Test(priority=4)
 	static public void testCreateFlatLayoutsWithValueTypes() throws Throwable {
-		String flatSingleBackfill[] = {"l:LValueLong;:NR", "o:LValueObject;:NR", "i:LValueInt;:NR"};
+		String[] flatSingleBackfill = {"l:LValueLong;:NR", "o:LValueObject;:NR", "i:LValueInt;:NR"};
 		flatSingleBackfillClass = ValueTypeGenerator.generateValueClass("FlatSingleBackfill", flatSingleBackfill);
 		makeFlatSingleBackfillClass = lookup.findStatic(flatSingleBackfillClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class, Object.class));
 		getVTSingleI = generateGenericGetter(flatSingleBackfillClass, "i");
 		getVTSingleO = generateGenericGetter(flatSingleBackfillClass, "o");
 		getVTSingleL = generateGenericGetter(flatSingleBackfillClass, "l");
 		
-		String flatObjectBackfill[] = {"l:LValueLong;:NR", "o:LValueObject;:NR"};
+		String[] flatObjectBackfill = {"l:LValueLong;:NR", "o:LValueObject;:NR"};
 		flatObjectBackfillClass = ValueTypeGenerator.generateValueClass("FlatObjectBackfill", flatObjectBackfill);
 		makeFlatObjectBackfillClass = lookup.findStatic(flatObjectBackfillClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class));
 		getVTObjectO = generateGenericGetter(flatObjectBackfillClass, "o");
 		getVTObjectL = generateGenericGetter(flatObjectBackfillClass, "l");
 		
-		String flatUnAlignedSingle[] = {"i:LValueInt;:NR", "i2:LValueInt;:NR"};
+		String[] flatUnAlignedSingle = {"i:LValueInt;:NR", "i2:LValueInt;:NR"};
 		flatUnAlignedSingleClass = ValueTypeGenerator.generateValueClass("FlatUnAlignedSingle", flatUnAlignedSingle);
 		makeFlatUnAlignedSingleClass = lookup.findStatic(flatUnAlignedSingleClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class));
 		getUnAlignedSingleI = generateGenericGetter(flatUnAlignedSingleClass, "i");
 		getUnAlignedSingleI2 = generateGenericGetter(flatUnAlignedSingleClass, "i2");
 		
-		String flatUnAlignedSingleBackfill[] = {"l:LValueLong;:NR","singles:LFlatUnAlignedSingle;:NR", "o:LValueObject;:NR"};
+		String[] flatUnAlignedSingleBackfill = {"l:LValueLong;:NR","singles:LFlatUnAlignedSingle;:NR", "o:LValueObject;:NR"};
 		flatUnAlignedSingleBackfillClass = ValueTypeGenerator.generateValueClass("FlatUnAlignedSingleBackfill", flatUnAlignedSingleBackfill);
 		makeFlatUnAlignedSingleBackfillClass = lookup.findStatic(flatUnAlignedSingleBackfillClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class, Object.class));
 		getUnAlignedSingleflatSingleBackfillInstanceO = generateGenericGetter(flatUnAlignedSingleBackfillClass, "o");
 		getUnAlignedSingleflatSingleBackfillInstanceSingles = generateGenericGetter(flatUnAlignedSingleBackfillClass, "singles");
 		getUnAlignedSingleflatSingleBackfillInstanceL = generateGenericGetter(flatUnAlignedSingleBackfillClass, "l");
 		
-		String flatUnAlignedSingleBackfill2[] = {"l:LValueLong;:NR","singles:LFlatUnAlignedSingle;:NR", "singles2:LFlatUnAlignedSingle;:NR"};
+		String[] flatUnAlignedSingleBackfill2 = {"l:LValueLong;:NR","singles:LFlatUnAlignedSingle;:NR", "singles2:LFlatUnAlignedSingle;:NR"};
 		flatUnAlignedSingleBackfillClass2 = ValueTypeGenerator.generateValueClass("FlatUnAlignedSingleBackfill2", flatUnAlignedSingleBackfill2);
 		makeFlatUnAlignedSingleBackfillClass2 = lookup.findStatic(flatUnAlignedSingleBackfillClass2, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class, Object.class));
 		getUnAlignedSingleflatSingleBackfill2InstanceSingles = generateGenericGetter(flatUnAlignedSingleBackfillClass2, "singles");
 		getUnAlignedSingleflatSingleBackfill2InstanceSingles2 = generateGenericGetter(flatUnAlignedSingleBackfillClass2, "singles2");
 		getUnAlignedSingleflatSingleBackfill2InstanceL = generateGenericGetter(flatUnAlignedSingleBackfillClass2, "l");
 		
-		String flatUnAlignedObject[] = {"o:LValueObject;:NR", "o2:LValueObject;:NR"};
+		String[] flatUnAlignedObject = {"o:LValueObject;:NR", "o2:LValueObject;:NR"};
 		flatUnAlignedObjectClass = ValueTypeGenerator.generateValueClass("FlatUnAlignedObject", flatUnAlignedObject);
 		makeFlatUnAlignedObjectClass = lookup.findStatic(flatUnAlignedObjectClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class));
 		getUnAlignedObjectO = generateGenericGetter(flatUnAlignedObjectClass, "o");
 		getUnAlignedObjectO2 = generateGenericGetter(flatUnAlignedObjectClass, "o2");
 		
-		String flatUnAlignedObjectBackfill[] = {"objects:LFlatUnAlignedObject;:NR", "objects2:LFlatUnAlignedObject;:NR", "l:LValueLong;:NR"};
+		String[] flatUnAlignedObjectBackfill = {"objects:LFlatUnAlignedObject;:NR", "objects2:LFlatUnAlignedObject;:NR", "l:LValueLong;:NR"};
 		flatUnAlignedObjectBackfillClass = ValueTypeGenerator.generateValueClass("FlatUnAlignedObjectBackfill", flatUnAlignedObjectBackfill);
 		makeFlatUnAlignedObjectBackfillClass = lookup.findStatic(flatUnAlignedObjectBackfillClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class, Object.class));
 		getUnAlignedObjectflatObjectBackfillInstanceObjects = generateGenericGetter(flatUnAlignedObjectBackfillClass, "objects");
 		getUnAlignedObjectflatObjectBackfillInstanceObjects2 = generateGenericGetter(flatUnAlignedObjectBackfillClass, "objects2");
 		getUnAlignedObjectflatObjectBackfillInstanceL = generateGenericGetter(flatUnAlignedObjectBackfillClass, "l");
 		
-		String flatUnAlignedObjectBackfill2[] = {"o:LValueObject;:NR", "objects:LFlatUnAlignedObject;:NR", "l:LValueLong;:NR"};
+		String[] flatUnAlignedObjectBackfill2 = {"o:LValueObject;:NR", "objects:LFlatUnAlignedObject;:NR", "l:LValueLong;:NR"};
 		flatUnAlignedObjectBackfillClass2 = ValueTypeGenerator.generateValueClass("FlatUnAlignedObjectBackfill2", flatUnAlignedObjectBackfill2);
 		makeFlatUnAlignedObjectBackfillClass2 = lookup.findStatic(flatUnAlignedObjectBackfillClass2, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class, Object.class));
 		getUnAlignedObjectflatObjectBackfill2InstanceO = generateGenericGetter(flatUnAlignedObjectBackfillClass2, "o");
@@ -1629,7 +1631,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=2)
 	static public void testCreateLargeObjectAndMegaValue() throws Throwable {
-		String largeFields[] = {
+		String[] largeFields = {
 				"val1:LValueObject;:NR",
 				"val2:LValueObject;:NR",
 				"val3:LValueObject;:NR",
@@ -1668,7 +1670,7 @@ public class ValueTypeTests {
 		/*
 		 * create MegaObject
 		 */
-		String megaFields[] = {
+		String[] megaFields = {
 				"val1:LLargeObject;:NR",
 				"val2:LLargeObject;:NR",
 				"val3:LLargeObject;:NR",
@@ -1719,7 +1721,7 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=3)
 	static public void testCreateLargeObjectAndMegaRef() throws Throwable {
-		String largeFields[] = {
+		String[] largeFields = {
 				"val1:LValueObject;:NR",
 				"val2:LValueObject;:NR",
 				"val3:LValueObject;:NR",
@@ -1737,7 +1739,7 @@ public class ValueTypeTests {
 				"val15:LValueObject;:NR",
 				"val16:LValueObject;:NR"};
 
-		Class largeRefClass = ValueTypeGenerator.generateRefClass("LargeRef", largeFields);
+		Class<?> largeRefClass = ValueTypeGenerator.generateRefClass("LargeRef", largeFields);
 		MethodHandle makeLargeObjectRef = lookup.findStatic(largeRefClass, "makeObjectGeneric",
 				MethodType.methodType(Object.class, Object.class, Object.class, Object.class, Object.class,
 						Object.class, Object.class, Object.class, Object.class, Object.class, Object.class,
@@ -1759,7 +1761,7 @@ public class ValueTypeTests {
 		/*
 		 * create MegaObject
 		 */
-		String megaFields[] = {
+		String[] megaFields = {
 				"val1:LLargeObject;:NR",
 				"val2:LLargeObject;:NR",
 				"val3:LLargeObject;:NR",
@@ -1776,7 +1778,7 @@ public class ValueTypeTests {
 				"val14:LLargeObject;:NR",
 				"val15:LLargeObject;:NR",
 				"val16:LLargeObject;:NR"};
-		Class megaObjectClass = ValueTypeGenerator.generateRefClass("MegaRef", megaFields);
+		Class<?> megaObjectClass = ValueTypeGenerator.generateRefClass("MegaRef", megaFields);
 		MethodHandle makeMegaObjectRef = lookup.findStatic(megaObjectClass, "makeObjectGeneric",
 				MethodType.methodType(Object.class, Object.class, Object.class, Object.class, Object.class,
 						Object.class, Object.class, Object.class, Object.class, Object.class, Object.class,
@@ -1859,11 +1861,11 @@ public class ValueTypeTests {
 	
 	@Test(priority=1)
 	static public void testCyclicalStaticFieldDefaultValues1() throws Throwable {
-		String cycleA1[] = { "val1:LCycleB1;:static" };
-		String cycleB1[] = { "val1:LCycleA1;:static" };
+		String[] cycleA1 = { "val1:LCycleB1;:static" };
+		String[] cycleB1 = { "val1:LCycleA1;:static" };
 		
-		Class cycleA1Class = ValueTypeGenerator.generateValueClass("CycleA1", cycleA1);
-		Class cycleB1Class = ValueTypeGenerator.generateValueClass("CycleB1", cycleB1);
+		Class<?> cycleA1Class = ValueTypeGenerator.generateValueClass("CycleA1", cycleA1);
+		Class<?> cycleB1Class = ValueTypeGenerator.generateValueClass("CycleB1", cycleB1);
 		
 		MethodHandle makeCycleA1 = lookup.findStatic(cycleA1Class, "makeObjectGeneric", MethodType.methodType(Object.class));
 		MethodHandle makeCycleB1 = lookup.findStatic(cycleB1Class, "makeObjectGeneric", MethodType.methodType(Object.class));
@@ -1874,13 +1876,13 @@ public class ValueTypeTests {
 	
 	@Test(priority=1)
 	static public void testCyclicalStaticFieldDefaultValues2() throws Throwable {
-		String cycleA2[] = { "val1:LCycleB2;:static" };
-		String cycleB2[] = { "val1:LCycleC2;:static" };
-		String cycleC2[] = { "val1:LCycleA2;:static" };
+		String[] cycleA2 = { "val1:LCycleB2;:static" };
+		String[] cycleB2 = { "val1:LCycleC2;:static" };
+		String[] cycleC2 = { "val1:LCycleA2;:static" };
 		
-		Class cycleA2Class = ValueTypeGenerator.generateValueClass("CycleA2", cycleA2);
-		Class cycleB2Class = ValueTypeGenerator.generateValueClass("CycleB2", cycleB2);
-		Class cycleC2Class = ValueTypeGenerator.generateValueClass("CycleC2", cycleC2);
+		Class<?> cycleA2Class = ValueTypeGenerator.generateValueClass("CycleA2", cycleA2);
+		Class<?> cycleB2Class = ValueTypeGenerator.generateValueClass("CycleB2", cycleB2);
+		Class<?> cycleC2Class = ValueTypeGenerator.generateValueClass("CycleC2", cycleC2);
 		
 		MethodHandle makeCycleA2 = lookup.findStatic(cycleA2Class, "makeObjectGeneric", MethodType.methodType(Object.class));
 		MethodHandle makeCycleB2 = lookup.findStatic(cycleB2Class, "makeObjectGeneric", MethodType.methodType(Object.class));
@@ -1893,9 +1895,9 @@ public class ValueTypeTests {
 	
 	@Test(priority=1)
 	static public void testCyclicalStaticFieldDefaultValues3() throws Throwable {
-		String cycleA3[] = { "val1:LCycleA3;:static" };
+		String[] cycleA3 = { "val1:LCycleA3;:static" };
 		
-		Class cycleA3Class = ValueTypeGenerator.generateValueClass("CycleA3", cycleA3);
+		Class<?> cycleA3Class = ValueTypeGenerator.generateValueClass("CycleA3", cycleA3);
 		
 		MethodHandle makeCycleA3 = lookup.findStatic(cycleA3Class, "makeObjectGeneric", MethodType.methodType(Object.class));
 		
@@ -1904,7 +1906,7 @@ public class ValueTypeTests {
 
 	@Test(priority=4)
 	static public void testStaticFieldsWithSingleAlignment() throws Throwable {
-		String fields[] = {
+		String[] fields = {
 			"tri:LTriangle2D;:static",
 			"point:LPoint2D;:static",
 			"line:LFlattenedLine2D;:static",
@@ -1920,7 +1922,7 @@ public class ValueTypeTests {
 
 	@Test(priority=4)
 	static public void testStaticFieldsWithLongAlignment() throws Throwable {
-		String fields[] = {
+		String[] fields = {
 			"point:LPoint2D;:static",
 			"line:LFlattenedLine2D;:static",
 			"o:LValueObject;:static",
@@ -1937,7 +1939,7 @@ public class ValueTypeTests {
 
 	@Test(priority=4)
 	static public void testStaticFieldsWithObjectAlignment() throws Throwable {
-		String fields[] = {
+		String[] fields = {
 			"tri:LTriangle2D;:static",
 			"point:LPoint2D;:static",
 			"line:LFlattenedLine2D;:static",
@@ -1962,10 +1964,10 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCreateLargeNumberOfPoint2D() throws Throwable {
-		String fields[] = {"x:I", "y:I"};
+		String[] fields = {"x:I", "y:I"};
 		for (int valueIndex = 0; valueIndex < objectGCScanningIterationCount; valueIndex++) {
 			String className = "Point2D" + valueIndex;		
-			Class point2DXClass = ValueTypeGenerator.generateValueClass(className, fields);
+			Class<?> point2DXClass = ValueTypeGenerator.generateValueClass(className, fields);
 			/* findStatic will trigger class resolution */
 			MethodHandle makePoint2DX = lookup.findStatic(point2DXClass, "makeObjectGeneric", MethodType.methodType(Object.class, Object.class, Object.class));
 			if (0 == (valueIndex % 100)) {
@@ -2227,8 +2229,8 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=5, invocationCount=2)
 	static public void testMultiDimentionalArrays() throws Throwable {
-		Class assortedValueWithLongAlignment2DClass = Array.newInstance(assortedValueWithLongAlignmentClass, 1).getClass();
-		Class assortedValueWithSingleAlignment2DClass = Array.newInstance(assortedValueWithSingleAlignmentClass, 1).getClass();
+		Class<?> assortedValueWithLongAlignment2DClass = Array.newInstance(assortedValueWithLongAlignmentClass, 1).getClass();
+		Class<?> assortedValueWithSingleAlignment2DClass = Array.newInstance(assortedValueWithSingleAlignmentClass, 1).getClass();
 		
 		Object assortedRefWithLongAlignment2DArray = Array.newInstance(assortedValueWithLongAlignment2DClass, genericArraySize);
 		Object assortedRefWithSingleAlignment2DArray = Array.newInstance(assortedValueWithSingleAlignment2DClass, genericArraySize);
@@ -2256,6 +2258,9 @@ public class ValueTypeTests {
 	}
 
 	/*
+	 * Re-enable when CheckedType support is available.
+	 * https://github.com/eclipse-openj9/openj9/issues/19764
+	 *
 	 * Ensure that casting null to a value type class will throw a null pointer exception
 	 * This test is disabled since the latest spec from
 	 * https://cr.openjdk.org/~dlsmith/jep401/jep401-20230519/specs/types-cleanup-jvms.html
@@ -2263,8 +2268,8 @@ public class ValueTypeTests {
 	 */
 	@Test(enabled=false, priority=1, expectedExceptions=NullPointerException.class)
 	static public void testCheckCastNullRestrictedTypeOnNull() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class valueClass = ValueTypeGenerator.generateValueClass("TestCheckCastNullRestrictedTypeOnNull", fields);
+		String[] fields = {"longField:J"};
+		Class<?> valueClass = ValueTypeGenerator.generateValueClass("TestCheckCastNullRestrictedTypeOnNull", fields);
 		MethodHandle checkCastValueTypeOnNull = lookup.findStatic(valueClass, "testCheckCastNullRestrictedTypeOnNull", MethodType.methodType(Object.class));
 		checkCastValueTypeOnNull.invoke();
 	}
@@ -2274,8 +2279,8 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCheckCastNullRestrictedTypeOnNonNullType() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class valueClass = ValueTypeGenerator.generateValueClass("TestCheckCastNullRestrictedTypeOnNonNullType", fields);
+		String[] fields = {"longField:J"};
+		Class<?> valueClass = ValueTypeGenerator.generateValueClass("TestCheckCastNullRestrictedTypeOnNonNullType", fields);
 		MethodHandle checkCastValueTypeOnNonNullType = lookup.findStatic(valueClass, "testCheckCastNullRestrictedTypeOnNonNullType", MethodType.methodType(Object.class));
 		checkCastValueTypeOnNonNullType.invoke();
 	}
@@ -2285,10 +2290,21 @@ public class ValueTypeTests {
 	 */
 	@Test(priority=1)
 	static public void testCheckCastNullableTypeOnNull() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class refClass = ValueTypeGenerator.generateRefClass("TestCheckCastNullableTypeOnNull", fields);
+		String[] fields = {"longField:J"};
+		Class<?> refClass = ValueTypeGenerator.generateRefClass("TestCheckCastNullableTypeOnNull", fields);
 		MethodHandle checkCastRefClassOnNull = lookup.findStatic(refClass, "testCheckCastNullableTypeOnNull", MethodType.methodType(Object.class));
 		checkCastRefClassOnNull.invoke();
+	}
+
+	@Test(priority=1)
+	static public void testClassIsInstanceNullableArrays() throws Throwable {
+		ValueTypePoint2D[] nonNullableArray = (ValueTypePoint2D[]) ValueClass.newNullRestrictedArray(ValueTypePoint2D.class, 1);
+		ValueTypePoint2D[] nullableArray = new ValueTypePoint2D[1];
+
+		assertTrue(nonNullableArray.getClass().isInstance(nonNullableArray));
+		assertTrue(nullableArray.getClass().isInstance(nullableArray));
+		assertFalse(nonNullableArray.getClass().isInstance(nullableArray));
+		assertTrue(nullableArray.getClass().isInstance(nonNullableArray));
 	}
 
 	/*
@@ -2299,7 +2315,7 @@ public class ValueTypeTests {
 	static public void testValueWithLongAlignmentGCScanning() throws Throwable {
 		ArrayList<Object> longAlignmentArrayList = new ArrayList<Object>(objectGCScanningIterationCount);
 		for (int i = 0; i < objectGCScanningIterationCount; i++) {
-			Object newLongAlignmentArray = Array.newInstance(assortedValueWithLongAlignmentClass, genericArraySize);
+			Object newLongAlignmentArray = ValueClass.newNullRestrictedArray(assortedValueWithLongAlignmentClass, genericArraySize);
 			for (int j = 0; j < genericArraySize; j++) {
 				Object assortedValueWithLongAlignment = createAssorted(makeAssortedValueWithLongAlignment, typeWithLongAlignmentFields);
 				Array.set(newLongAlignmentArray, j, assortedValueWithLongAlignment);
@@ -2324,7 +2340,7 @@ public class ValueTypeTests {
 	static public void testValueWithObjectAlignmentGCScanning() throws Throwable {
 		ArrayList<Object> objectAlignmentArrayList = new ArrayList<Object>(objectGCScanningIterationCount);
 		for (int i = 0; i < objectGCScanningIterationCount; i++) {
-			Object newObjectAlignmentArray = Array.newInstance(assortedValueWithObjectAlignmentClass, genericArraySize);
+			Object newObjectAlignmentArray = ValueClass.newNullRestrictedArray(assortedValueWithObjectAlignmentClass, genericArraySize);
 			for (int j = 0; j < genericArraySize; j++) {
 				Object assortedValueWithObjectAlignment = createAssorted(makeAssortedValueWithObjectAlignment, typeWithObjectAlignmentFields);
 				Array.set(newObjectAlignmentArray, j, assortedValueWithObjectAlignment);
@@ -2349,7 +2365,7 @@ public class ValueTypeTests {
 	static public void testValueWithSingleAlignmentGCScanning() throws Throwable {
 		ArrayList<Object> singleAlignmentArrayList = new ArrayList<Object>(objectGCScanningIterationCount);
 		for (int i = 0; i < objectGCScanningIterationCount; i++) {
-			Object newSingleAlignmentArray = Array.newInstance(assortedValueWithSingleAlignmentClass, genericArraySize);
+			Object newSingleAlignmentArray = ValueClass.newNullRestrictedArray(assortedValueWithSingleAlignmentClass, genericArraySize);
 			for (int j = 0; j < genericArraySize; j++) {
 				Object assortedValueWithSingleAlignment = createAssorted(makeAssortedValueWithSingleAlignment, typeWithSingleAlignmentFields);
 				Array.set(newSingleAlignmentArray, j, assortedValueWithSingleAlignment);
@@ -2368,14 +2384,14 @@ public class ValueTypeTests {
 
 	@Test(priority=1)
 	static public void testFlattenedFieldInitSequence() throws Throwable {
-		String fields[] = {"x:I", "y:I"};
-		Class nestAClass = ValueTypeGenerator.generateValueClass("NestedA", fields);
+		String[] fields = {"x:I", "y:I"};
+		Class<?> nestAClass = ValueTypeGenerator.generateValueClass("NestedA", fields);
 		
-		String fields2[] = {"a:LNestedA;:NR", "b:LNestedA;:NR"};
-		Class nestBClass = ValueTypeGenerator.generateValueClass("NestedB", fields2);
+		String[] fields2 = {"a:LNestedA;:NR", "b:LNestedA;:NR"};
+		Class<?> nestBClass = ValueTypeGenerator.generateValueClass("NestedB", fields2);
 		
-		String fields3[] = {"c:LNestedB;:NR", "d:LNestedB;:NR"};
-		Class containerCClass = ValueTypeGenerator.generateValueClass("ContainerC", fields3);
+		String[] fields3 = {"c:LNestedB;:NR", "d:LNestedB;:NR"};
+		Class<?> containerCClass = ValueTypeGenerator.generateValueClass("ContainerC", fields3);
 		
 		MethodHandle defaultValueContainerC = lookup.findStatic(containerCClass, "makeDefaultValue", MethodType.methodType(containerCClass));
 		
@@ -2420,10 +2436,10 @@ public class ValueTypeTests {
 		 *     }
 		 * }
 		 */
-		String fields[] = {"x:I", "y:I"};
-		Class valueClass = ValueTypeGenerator.generateValueClass("UnresolvedA", fields);
-		String fields2[] = {};
-		Class usingClass = ValueTypeGenerator.generateRefClass("UsingUnresolvedA", fields2, "UnresolvedA");
+		String[] fields = {"x:I", "y:I"};
+		Class<?> valueClass = ValueTypeGenerator.generateValueClass("UnresolvedA", fields);
+		String[] fields2 = {};
+		Class<?> usingClass = ValueTypeGenerator.generateRefClass("UsingUnresolvedA", fields2, "UnresolvedA");
 
 		MethodHandle defaultValueUnresolved = lookup.findStatic(usingClass, "testUnresolvedValueTypeDefaultValue", MethodType.methodType(Object.class, int.class));
 
@@ -2512,8 +2528,8 @@ public class ValueTypeTests {
 								new UnresolvedClassDesc("UnresolvedB2", new String[] {"c:I", "d:I"}),
 								new UnresolvedClassDesc("UnresolvedB3", new String[] {"e:I", "f:I"})};
 
-		Class[] valueClassArr = new Class[uclassDescArr.length];
-		String containerFields[] = new String[uclassDescArr.length];
+		Class<?>[] valueClassArr = new Class<?>[uclassDescArr.length];
+		String[] containerFields = new String[uclassDescArr.length];
 		MethodHandle[][] valueFieldGetters = new MethodHandle[uclassDescArr.length][];
 
 		for (int i = 0; i < uclassDescArr.length; i++) {
@@ -2528,13 +2544,13 @@ public class ValueTypeTests {
 			}
 		}
 
-		Class containerClass = ValueTypeGenerator.generateRefClass("ContainerForUnresolvedB", containerFields);
+		Class<?> containerClass = ValueTypeGenerator.generateRefClass("ContainerForUnresolvedB", containerFields);
 
-		String fieldsUsing[] = {};
-		Class usingClass = ValueTypeGenerator.generateRefClass("UsingUnresolvedB", fieldsUsing, "ContainerForUnresolvedB", containerFields);
+		String[] fieldsUsing = {};
+		Class<?> usingClass = ValueTypeGenerator.generateRefClass("UsingUnresolvedB", fieldsUsing, "ContainerForUnresolvedB", containerFields);
 
 		MethodHandle getFieldUnresolved = lookup.findStatic(usingClass, "testUnresolvedValueTypeGetField",
-															MethodType.methodType(Object.class, new Class[] {int.class, containerClass}));
+															MethodType.methodType(Object.class, new Class<?>[] {int.class, containerClass}));
 
 		for (int i = 0; i < 10; i++) {
 			/*
@@ -2614,8 +2630,8 @@ public class ValueTypeTests {
 								new UnresolvedClassDesc("UnresolvedC2", new String[] {"c:I", "d:I"}),
 								new UnresolvedClassDesc("UnresolvedC3", new String[] {"e:I", "f:I"})};
 
-		Class[] valueClassArr = new Class[uclassDescArr.length];
-		String containerFields[] = new String[uclassDescArr.length];
+		Class<?>[] valueClassArr = new Class<?>[uclassDescArr.length];
+		String[] containerFields = new String[uclassDescArr.length];
 		MethodHandle[][] valueFieldGetters = new MethodHandle[uclassDescArr.length][];
 		MethodHandle[] containerFieldGetters = new MethodHandle[uclassDescArr.length];
 
@@ -2631,18 +2647,18 @@ public class ValueTypeTests {
 			}
 		}
 
-		Class containerClass = ValueTypeGenerator.generateRefClass("ContainerForUnresolvedC", containerFields);
+		Class<?> containerClass = ValueTypeGenerator.generateRefClass("ContainerForUnresolvedC", containerFields);
 
 		for (int i = 0; i < uclassDescArr.length; i++) {
 			String[] nameAndSig = containerFields[i].split(":");
 			containerFieldGetters[i] = generateGenericGetter(containerClass, nameAndSig[0]);
 		}
 
-		String fieldsUsing[] = {};
-		Class usingClass = ValueTypeGenerator.generateRefClass("UsingUnresolvedC", fieldsUsing, "ContainerForUnresolvedC", containerFields);
+		String[] fieldsUsing = {};
+		Class<?> usingClass = ValueTypeGenerator.generateRefClass("UsingUnresolvedC", fieldsUsing, "ContainerForUnresolvedC", containerFields);
 
 		MethodHandle putFieldUnresolved = lookup.findStatic(usingClass, "testUnresolvedValueTypePutField",
-												MethodType.methodType(void.class, new Class[] {int.class, containerClass, Object.class}));
+												MethodType.methodType(void.class, new Class<?>[] {int.class, containerClass, Object.class}));
 
 		for (int i = 0; i < 10; i++) {
 			/*
@@ -2674,8 +2690,8 @@ public class ValueTypeTests {
 
 	@Test(priority = 1)
 	static public void testIdentityObjectOnValueType() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class valueClass = ValueTypeGenerator.generateValueClass("testIdentityObjectOnValueType", fields);
+		String[] fields = {"longField:J"};
+		Class<?> valueClass = ValueTypeGenerator.generateValueClass("testIdentityObjectOnValueType", fields);
 		assertTrue(valueClass.isValue());
 		assertFalse(valueClass.isIdentity());
 	}
@@ -2725,11 +2741,11 @@ public class ValueTypeTests {
 	}
 	
 	static private void valueTypeIdentityObjectTestHelper(String testName, String superClassName, int extraClassFlags) throws Throwable {
-		String fields[] = {"longField:J"};
+		String[] fields = {"longField:J"};
 		if (null == superClassName) {
 			superClassName = "java/lang/Object";
 		}
-		Class valueClass = ValueTypeGenerator.generateValueClass(testName, superClassName, fields, extraClassFlags);
+		Class<?> valueClass = ValueTypeGenerator.generateValueClass(testName, superClassName, fields, extraClassFlags);
 		assertTrue(valueClass.isValue());
 	}
 
@@ -2782,9 +2798,9 @@ public class ValueTypeTests {
 	}
 
 	@Test(priority=1, expectedExceptions=ClassFormatError.class)
-	static public void testValueTypeHasSychMethods() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class valueClass = ValueTypeGenerator.generateIllegalValueClassWithSychMethods("testValueTypeHasSychMethods", fields);
+	static public void testValueTypeHasSynchMethods() throws Throwable {
+		String[] fields = {"longField:J"};
+		Class<?> valueClass = ValueTypeGenerator.generateIllegalValueClassWithSynchMethods("testValueTypeHasSynchMethods", fields);
 	}
 
 	@Test(priority = 1)
@@ -2795,8 +2811,8 @@ public class ValueTypeTests {
 
 	@Test(priority = 1)
 	static public void testIdentityObjectOnRef() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class refClass = ValueTypeGenerator.generateRefClass("testIdentityObjectOnRef", fields);
+		String[] fields = {"longField:J"};
+		Class<?> refClass = ValueTypeGenerator.generateRefClass("testIdentityObjectOnRef", fields);
 		assertFalse(refClass.isValue());
 		assertTrue(refClass.isIdentity());
 	}
@@ -2818,32 +2834,32 @@ public class ValueTypeTests {
 
 	@Test(priority=1)
 	static public void testIsValueOnValueArrayClass() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class valueClass = ValueTypeGenerator.generateValueClass("testIsPrimitiveOnValueArrayClass", fields);
+		String[] fields = {"longField:J"};
+		Class<?> valueClass = ValueTypeGenerator.generateValueClass("testIsPrimitiveOnValueArrayClass", fields);
 		assertFalse(valueClass.arrayType().isValue());
 		assertTrue(valueClass.arrayType().isIdentity());
 	}
 
 	@Test(priority=1)
 	static public void testIsValueOnRefArrayClass() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class refClass = ValueTypeGenerator.generateRefClass("testIsPrimitiveOnRefArrayClass", fields);
+		String[] fields = {"longField:J"};
+		Class<?> refClass = ValueTypeGenerator.generateRefClass("testIsPrimitiveOnRefArrayClass", fields);
 		assertFalse(refClass.arrayType().isValue());
 		assertTrue(refClass.arrayType().isIdentity());
 	}
 
 	@Test(priority=1)
 	static public void testMethodTypeDescriptorRef() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class refClass = ValueTypeGenerator.generateRefClass("testMethodTypeDescriptorRef", fields);
+		String[] fields = {"longField:J"};
+		Class<?> refClass = ValueTypeGenerator.generateRefClass("testMethodTypeDescriptorRef", fields);
 		assertEquals(MethodType.methodType(refClass).toMethodDescriptorString(), "()LtestMethodTypeDescriptorRef;");
 		assertEquals(refClass.descriptorString(), "LtestMethodTypeDescriptorRef;");
 	}
 
 	@Test(priority=1)
 	static public void testMethodTypeDescriptorValue() throws Throwable {
-		String fields[] = {"longField:J"};
-		Class valueClass = ValueTypeGenerator.generateValueClass("testMethodTypeDescriptorValue", fields);
+		String[] fields = {"longField:J"};
+		Class<?> valueClass = ValueTypeGenerator.generateValueClass("testMethodTypeDescriptorValue", fields);
 		assertEquals(MethodType.methodType(valueClass).toMethodDescriptorString(), "()LtestMethodTypeDescriptorValue;");
 		assertEquals(valueClass.descriptorString(), "LtestMethodTypeDescriptorValue;");
 	}
@@ -2866,6 +2882,7 @@ public class ValueTypeTests {
 		assertNotEquals(h1, h3);
 		assertNotEquals(h1, h4);
 		assertNotEquals(h1, h5);
+		assertEquals(h1, System.identityHashCode(p1));
 	}
 
 	@Test(priority = 1, expectedExceptions = ClassFormatError.class,
@@ -2893,7 +2910,7 @@ public class ValueTypeTests {
 	}
 
 	/* Each field of a value class must have exactly one of its ACC_STATIC or ACC_STRICT flags set */
-	@Test(expectedExceptions = java.lang.ClassFormatError.class, expectedExceptionsMessageRegExp = ".*Fields of value classes must have either ACC_STATIC or ACC_FINAL flags set.*")
+	@Test(expectedExceptions = java.lang.ClassFormatError.class, expectedExceptionsMessageRegExp = ".*Value class fields must have either ACC_STATIC or ACC_STRICT set.*")
 	static public void testValueClassFieldMustHaveAccStaticOrAccStrict() {
 		ValueTypeGenerator.generateTestValueClassFieldMustHaveAccStaticOrAccStrict();
 	}
@@ -2901,15 +2918,15 @@ public class ValueTypeTests {
 	/* putfield is not allowed outside <init> for ACC_STRICT fields */
 	@Test(expectedExceptions = VerifyError.class)
 	static public void testValueClassWithIllegalSetters() throws Throwable {
-		String fields[] = {"x:I"};
-		Class valueClass = ValueTypeGenerator.generateValueClassWithIllegalSetters("TestValueClassWithIllegalSetters", fields);
+		String[] fields = {"x:I"};
+		Class<?> valueClass = ValueTypeGenerator.generateValueClassWithIllegalSetters("TestValueClassWithIllegalSetters", fields);
 		valueClass.newInstance();
 	}
 
 	/* putfield not allowed in <init> after class initialization for ACC_STRICT fields */
 	@Test(expectedExceptions = VerifyError.class)
 	static public void testValueClassPutStrictFieldAfterInitialization() throws Throwable {
-		Class valueClass = ValueTypeGenerator.generateTestValueClassPutStrictFieldAfterInitialization();
+		Class<?> valueClass = ValueTypeGenerator.generateTestValueClassPutStrictFieldAfterInitialization();
 		valueClass.newInstance();
 	}
 
@@ -2940,7 +2957,7 @@ public class ValueTypeTests {
 		return null;
 	}
 
-	static MethodHandle generateSetter(Class clazz, String fieldName, Class fieldType) {
+	static MethodHandle generateSetter(Class<?> clazz, String fieldName, Class<?> fieldType) {
 		try {
 			return lookup.findVirtual(clazz, "set"+fieldName, MethodType.methodType(void.class, fieldType));
 		} catch (IllegalAccessException | SecurityException | NullPointerException | NoSuchMethodException e) {
@@ -2949,7 +2966,7 @@ public class ValueTypeTests {
 		return null;
 	}
 	
-	static MethodHandle generateGenericSetter(Class clazz, String fieldName) {
+	static MethodHandle generateGenericSetter(Class<?> clazz, String fieldName) {
 		try {
 			return lookup.findVirtual(clazz, "setGeneric"+fieldName, MethodType.methodType(void.class, Object.class));
 		} catch (IllegalAccessException | SecurityException | NullPointerException | NoSuchMethodException e) {
@@ -2958,7 +2975,7 @@ public class ValueTypeTests {
 		return null;
 	}
 
-	static MethodHandle generateStaticGenericSetter(Class clazz, String fieldName) {
+	static MethodHandle generateStaticGenericSetter(Class<?> clazz, String fieldName) {
 		try {
 			return lookup.findStatic(clazz, "setStaticGeneric"+fieldName, MethodType.methodType(void.class, Object.class));
 		} catch (IllegalAccessException | SecurityException | NullPointerException | NoSuchMethodException e) {
@@ -2967,7 +2984,7 @@ public class ValueTypeTests {
 		return null;
 	}
 
-	static MethodHandle[][] generateGenericGetterList(Class clazz, String[] fields) {
+	static MethodHandle[][] generateGenericGetterList(Class<?> clazz, String[] fields) {
 		MethodHandle[][] getterList = new MethodHandle[fields.length][2];
 		for (int i = 0; i < fields.length; i++) {
 			String field = (fields[i].split(":"))[0];
@@ -2976,7 +2993,7 @@ public class ValueTypeTests {
 		return getterList;
 	}
 
-	static MethodHandle[][] generateGenericGetterAndSetter(Class clazz, String[] fields) {
+	static MethodHandle[][] generateGenericGetterAndSetter(Class<?> clazz, String[] fields) {
 		MethodHandle[][] getterAndSetter = new MethodHandle[fields.length][2];
 		for (int i = 0; i < fields.length; i++) {
 			String field = (fields[i].split(":"))[0];
@@ -2986,7 +3003,7 @@ public class ValueTypeTests {
 		return getterAndSetter;
 	}
 
-	static MethodHandle[][] generateStaticGenericGetterAndSetter(Class clazz, String[] fields) {
+	static MethodHandle[][] generateStaticGenericGetterAndSetter(Class<?> clazz, String[] fields) {
 		MethodHandle[][] getterAndSetter = new MethodHandle[fields.length][2];
 		for (int i = 0; i < fields.length; i++) {
 			String field = (fields[i].split(":"))[0];
@@ -3040,7 +3057,7 @@ public class ValueTypeTests {
 		Object[] args = new Object[fields.length];
 		boolean useInitFields = initFields != null;
 		for (int i = 0; i < fields.length; i++) {
-			String nameAndSigValue[] = fields[i].split(":");
+			String[] nameAndSigValue = fields[i].split(":");
 			String signature = nameAndSigValue[1];
 			switch (signature) {
 			case "LPoint2D;":
@@ -3078,7 +3095,7 @@ public class ValueTypeTests {
 		return makeMethod.invokeWithArguments(args);
 	}
 
-	static void initializeStaticFields(Class clazz, MethodHandle[][] getterAndSetter, String[] fields) throws Throwable {
+	static void initializeStaticFields(Class<?> clazz, MethodHandle[][] getterAndSetter, String[] fields) throws Throwable {
 		Object defaultValue = null;
 		for (int i = 0; i < fields.length; i++) {
 			String signature = (fields[i].split(":"))[1];
@@ -3128,7 +3145,7 @@ public class ValueTypeTests {
 			boolean isValue)
 			throws Throwable {
 		for (int i = 0; i < fields.length; i++) {
-			String nameAndSigValue[] = fields[i].split(":");
+			String[] nameAndSigValue = fields[i].split(":");
 			String signature = nameAndSigValue[1];
 			switch (signature) {
 			case "LPoint2D;":
@@ -3213,7 +3230,7 @@ public class ValueTypeTests {
 	static void checkFieldAccessMHOfStaticType(MethodHandle[][] fieldAccessMHs, String[] fields)
 			throws Throwable {
 		for (int i = 0; i < fields.length; i++) {
-			String nameAndSigValue[] = fields[i].split(":");
+			String[] nameAndSigValue = fields[i].split(":");
 			String signature = nameAndSigValue[1];
 			switch (signature) {
 			case "LPoint2D;":

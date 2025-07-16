@@ -22,16 +22,19 @@
  */
 package java.security;
 
+import com.ibm.oti.util.Msg;
 import java.io.IOException;
 import java.io.StreamTokenizer;
 import java.io.StringReader;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
+/*[IF JAVA_SPEC_VERSION < 24]*/
 /*[IF JAVA_SPEC_VERSION >= 9]*/
 import sun.security.util.FilePermCompat;
 /*[ENDIF] JAVA_SPEC_VERSION >= 9 */
 import sun.security.util.SecurityConstants;
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 /**
  * An AccessControlContext encapsulates the information which is needed
@@ -315,37 +318,49 @@ public AccessControlContext(ProtectionDomain[] fromContext) {
 }
 
 AccessControlContext(ProtectionDomain[] context, int authorizeState) {
-	super();
-	switch (authorizeState) {
-	default:
-		// authorizeState can't be STATE_UNKNOWN, callerPD always is NULL
-		throw new IllegalArgumentException();
-	case STATE_AUTHORIZED:
-	case STATE_NOT_AUTHORIZED:
-		break;
-	}
-	this.context = context;
-	this.authorizeState = authorizeState;
-	this.containPrivilegedContext = true;
+	this(context, null, null, authorizeState);
 }
 
 AccessControlContext(AccessControlContext acc, ProtectionDomain[] context, int authorizeState) {
+	this(context, null, acc, authorizeState);
+}
+
+AccessControlContext(ProtectionDomain[] context, AccessControlContext parentAcc, AccessControlContext acc, int authorizeState) {
 	super();
 	switch (authorizeState) {
 	default:
-		// authorizeState can't be STATE_UNKNOWN, callerPD always is NULL
+		// authorizeState can't be STATE_UNKNOWN, callerPD is always NULL
 		throw new IllegalArgumentException();
 	case STATE_AUTHORIZED:
-		if (null != acc) {
-			// inherit the domain combiner when authorized
-			this.domainCombiner = acc.domainCombiner;
+		if (acc != null) {
+			if (parentAcc == null) {
+				// inherit the domain combiner when authorized
+				this.domainCombiner = acc.domainCombiner;
+				this.context = context;
+			} else {
+				// when parent combiner is not null, use parent combiner to combine the current context
+				DomainCombiner parentCombiner = parentAcc.getCombiner();
+				if (parentCombiner != null) {
+					this.context = parentCombiner.combine(context, acc.context);
+					this.domainCombiner = parentCombiner;
+				} else {
+					this.context = combinePDObjs(context, acc.context);
+					this.domainCombiner = acc.domainCombiner;
+				}
+			}
+		} else {
+			if (parentAcc != null) {
+				this.domainCombiner = parentAcc.domainCombiner;
+				this.nextStackAcc = parentAcc;
+			}
+			this.context = context;
 		}
 		break;
 	case STATE_NOT_AUTHORIZED:
+		this.context = context;
 		break;
 	}
 	this.doPrivilegedAcc = acc;
-	this.context = context;
 	this.authorizeState = authorizeState;
 	this.containPrivilegedContext = true;
 }
@@ -378,6 +393,7 @@ public AccessControlContext(AccessControlContext acc, DomainCombiner combiner) {
  * @exception NullPointerException if the provided context is null.
  */
 AccessControlContext(AccessControlContext acc, DomainCombiner combiner, boolean preauthorized) {
+	/*[IF JAVA_SPEC_VERSION < 24]*/
 	if (!preauthorized) {
 		@SuppressWarnings("removal")
 		SecurityManager security = System.getSecurityManager();
@@ -386,6 +402,7 @@ AccessControlContext(AccessControlContext acc, DomainCombiner combiner, boolean 
 			/*[PR JAZZ 78139] java.security.AccessController.checkPermission invokes untrusted DomainCombiner.combine method */
 		}
 	}
+	/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 	// only AccessControlContext with STATE_AUTHORIZED authorizeState could have non-null domainCombiner
 	this.authorizeState = STATE_AUTHORIZED;
 	this.context = acc.context;
@@ -496,6 +513,7 @@ static Permission[] combinePermObjs(Permission[] checked, Permission[] toBeCombi
 	return (Permission[]) combineObjs(false, checked, toBeCombined, start, len, justCombine);
 }
 
+/*[IF JAVA_SPEC_VERSION < 24]*/
 /**
  * Perform ProtectionDomain.implies(permission) with known ProtectionDomain objects already implied
  *
@@ -661,7 +679,7 @@ static boolean checkPermissionWithCache(
 				}
 			}
 			/*[MSG "K002c", "Access denied {0}"]*/
-			throw new AccessControlException(com.ibm.oti.util.Msg.getString("K002c", perm), perm); //$NON-NLS-1$
+			throw new AccessControlException(Msg.getString("K002c", perm), perm); //$NON-NLS-1$
 		}
 	}
 	if (null != accCurrent
@@ -697,6 +715,7 @@ static boolean checkPermissionWithCache(
 	}
 	return true;
 }
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 /**
  * Helper to print debug information for checkPermission().
@@ -719,6 +738,13 @@ private boolean debugHelper(Permission perm) {
 }
 
 /**
+/*[IF JAVA_SPEC_VERSION >= 24]
+ * Throws java.security.AccessControlException
+ *
+ * @param       perm is ignored
+ * @exception	java.security.AccessControlException
+ * 					is always thrown
+/*[ELSE] JAVA_SPEC_VERSION >= 24
  * Checks if the permission <code>perm</code> is allowed in this context.
  * All ProtectionDomains must grant the permission for it to be granted.
  *
@@ -728,8 +754,13 @@ private boolean debugHelper(Permission perm) {
  *                  thrown when perm is not granted.
  * @exception   NullPointerException
  *                  if perm is null
+/*[ENDIF] JAVA_SPEC_VERSION >= 24
  */
 public void checkPermission(Permission perm) throws AccessControlException {
+/*[IF JAVA_SPEC_VERSION >= 24]*/
+	/*[MSG "K002e", "checking permissions is not supported"]*/
+	throw new AccessControlException(Msg.getString("K002e")); //$NON-NLS-1$
+/*[ELSE] JAVA_SPEC_VERSION >= 24 */
 	if (perm == null) throw new NullPointerException();
 	if (null != context && (STATE_AUTHORIZED != authorizeState) && containPrivilegedContext && null != System.getSecurityManager()) {
 		// only check SecurityPermission "createAccessControlContext" when context is not null, not authorized and containPrivilegedContext.
@@ -743,7 +774,7 @@ public void checkPermission(Permission perm) throws AccessControlException {
 		}
 		if (STATE_NOT_AUTHORIZED == authorizeState) {
 			/*[MSG "K002d", "Access denied {0} due to untrusted AccessControlContext since {1} is denied"]*/
-			throw new AccessControlException(com.ibm.oti.util.Msg.getString("K002d", perm, SecurityConstants.CREATE_ACC_PERMISSION), perm); //$NON-NLS-1$
+			throw new AccessControlException(Msg.getString("K002d", perm, SecurityConstants.CREATE_ACC_PERMISSION), perm); //$NON-NLS-1$
 		}
 	}
 
@@ -752,6 +783,7 @@ public void checkPermission(Permission perm) throws AccessControlException {
 		debug = debugHelper(perm);
 	}
 	checkPermissionWithCache(perm, null, this.context, debug ? DEBUG_ENABLED | DEBUG_ACCESS_DENIED : DEBUG_DISABLED, this.doPrivilegedAcc,this.isLimitedContext, this.limitedPerms, this.nextStackAcc, new AccessCache());
+/*[ENDIF] JAVA_SPEC_VERSION >= 24 */
 }
 
 /**
@@ -898,10 +930,12 @@ public int hashCode() {
  *      when the caller doesn't have the  "getDomainCombiner" SecurityPermission
  */
 public DomainCombiner getDomainCombiner() {
+	/*[IF JAVA_SPEC_VERSION < 24]*/
 	@SuppressWarnings("removal")
 	SecurityManager security = System.getSecurityManager();
 	if (security != null)
 		security.checkPermission(SecurityConstants.GET_COMBINER_PERMISSION);
+	/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 	return domainCombiner;
 }
 
@@ -932,6 +966,7 @@ ProtectionDomain[] getContext() {
 	return context;
 }
 
+/*[IF JAVA_SPEC_VERSION < 24]*/
 /*
  * Added to resolve: S6907662, CVE-2010-4465: System clipboard should ensure access restrictions
  * Called internally from java.security.ProtectionDomain
@@ -945,6 +980,7 @@ AccessControlContext(ProtectionDomain[] domains, AccessControlContext acc) {
 		this.domainCombiner = acc.domainCombiner;
 	}
 }
+/*[ENDIF] JAVA_SPEC_VERSION < 24 */
 
 /*
  * Added to resolve: S6907662, CVE-2010-4465: System clipboard should ensure access restrictions

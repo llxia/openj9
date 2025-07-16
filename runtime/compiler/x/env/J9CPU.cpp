@@ -25,17 +25,12 @@
 #include "env/CPU.hpp"
 #include "env/VMJ9.h"
 #include "x/runtime/X86Runtime.hpp"
-#include "env/JitConfig.hpp"
 #include "codegen/CodeGenerator.hpp"
 #if defined(J9VM_OPT_JITSERVER)
 #include "control/CompilationRuntime.hpp"
 #include "control/CompilationThread.hpp"
 #include "runtime/JITClientSession.hpp"
 #endif /* defined(J9VM_OPT_JITSERVER) */
-
-// This is a workaround to avoid J9_PROJECT_SPECIFIC macros in x/env/OMRCPU.cpp
-// Without this definition, we get an undefined symbol of JITConfig::instance() at runtime
-TR::JitConfig * TR::JitConfig::instance() { return NULL; }
 
 TR::CPU
 J9::X86::CPU::detectRelocatable(OMRPortLibrary * const omrPortLib)
@@ -72,6 +67,16 @@ J9::X86::CPU::detectRelocatable(OMRPortLibrary * const omrPortLib)
    return TR::CPU::customize(portableProcessorDescription);
    }
 
+TR::CPU
+J9::X86::CPU::detect(OMRPortLibrary * const omrPortLib)
+   {
+   if (omrPortLib == NULL)
+      return TR::CPU();
+
+   TR::CPU::enableFeatureMasks();
+   return OMR::X86::CPU::detect(omrPortLib);
+   }
+
 void
 J9::X86::CPU::enableFeatureMasks()
    {
@@ -83,7 +88,7 @@ J9::X86::CPU::enableFeatureMasks()
                                         OMR_FEATURE_X86_FMA, OMR_FEATURE_X86_HLE, OMR_FEATURE_X86_RTM,
                                         OMR_FEATURE_X86_SSE3, OMR_FEATURE_X86_AVX2, OMR_FEATURE_X86_AVX512F,
                                         OMR_FEATURE_X86_AVX512VL, OMR_FEATURE_X86_AVX512BW, OMR_FEATURE_X86_AVX512DQ,
-                                        OMR_FEATURE_X86_AVX512CD, OMR_FEATURE_X86_SSE4_2};
+                                        OMR_FEATURE_X86_AVX512CD, OMR_FEATURE_X86_SSE4_2, OMR_FEATURE_X86_BMI2};
 
    memset(_supportedFeatureMasks.features, 0, OMRPORT_SYSINFO_FEATURES_SIZE*sizeof(uint32_t));
    OMRPORT_ACCESS_FROM_OMRPORT(TR::Compiler->omrPortLib);
@@ -116,15 +121,6 @@ J9::X86::CPU::getProcessorSignature()
    }
 
 bool
-J9::X86::CPU::hasPopulationCountInstruction()
-   {
-   if ((self()->getX86ProcessorFeatureFlags2() & TR_POPCNT) != 0x00000000)
-      return true;
-   else
-      return false;
-   }
-
-bool
 J9::X86::CPU::isCompatible(const OMRProcessorDesc& processorDescription)
    {
    for (int i = 0; i < OMRPORT_SYSINFO_FEATURES_SIZE; i++)
@@ -152,6 +148,9 @@ bool
 J9::X86::CPU::supportsFeature(uint32_t feature)
    {
    OMRPORT_ACCESS_FROM_OMRPORT(TR::Compiler->omrPortLib);
+
+   if (isFeatureDisabledByOption(feature))
+      return false;
 
    static bool disableCPUDetectionTest = feGetEnv("TR_DisableCPUDetectionTest");
    if (!disableCPUDetectionTest)
@@ -351,6 +350,8 @@ J9::X86::CPU::supports_feature_test(uint32_t feature)
          return TR::CodeGenerator::getX86ProcessorInfo().supportsHLE() == ans;
       case OMR_FEATURE_X86_TM:
          return TR::CodeGenerator::getX86ProcessorInfo().hasThermalMonitor() == ans;
+      case OMR_FEATURE_X86_BMI2:
+         return TR::CodeGenerator::getX86ProcessorInfo().supportsBMI2() == ans;
       case OMR_FEATURE_X86_AVX:
       case OMR_FEATURE_X86_AVX2:
       case OMR_FEATURE_X86_AVX512F:

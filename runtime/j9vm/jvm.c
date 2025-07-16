@@ -1563,7 +1563,7 @@ typedef struct J9SpecialArguments {
  * and return the total size required for the strings
  */
 static UDATA
-initialArgumentScan(JavaVMInitArgs *args, J9SpecialArguments *specialArgs)
+initialArgumentScan(JavaVMInitArgs *args, J9SpecialArguments *specialArgs, J9CreateJavaVMParams *createParams)
 {
 	BOOLEAN xCheckFound = FALSE;
 	const char *xCheckString = "-Xcheck";
@@ -1584,6 +1584,7 @@ initialArgumentScan(JavaVMInitArgs *args, J9SpecialArguments *specialArgs)
 			*(specialArgs->xoss) = argCursor;
 		} else if (strncmp(args->options[argCursor].optionString, OPT_VERBOSE_INIT, strlen(OPT_VERBOSE_INIT))==0) {
 			specialArgs->localVerboseLevel = VERBOSE_INIT;
+			createParams->flags |= J9_CREATEJAVAVM_VERBOSE_INIT;
 		} else if (0 == strncmp(args->options[argCursor].optionString, javaCommand, strlen(javaCommand))) {
 			javaCommandValue = args->options[argCursor].optionString + strlen(javaCommand);
 		} else if (0 == strncmp(args->options[argCursor].optionString, classPath, strlen(classPath))) {
@@ -1602,6 +1603,11 @@ initialArgumentScan(JavaVMInitArgs *args, J9SpecialArguments *specialArgs)
 			specialArgs->captureCommandLine = TRUE;
 		} else if (0 == strcmp(args->options[argCursor].optionString, VMOPT_XXNOOPENJ9COMMANDLINEENV)) {
 			specialArgs->captureCommandLine = FALSE;
+#if defined(J9VM_OPT_SNAPSHOTS)
+		} else if (0 == strncmp(args->options[argCursor].optionString, VMOPT_XSNAPSHOT, strlen(VMOPT_XSNAPSHOT))) {
+			createParams->vmSnapshotFilePath = args->options[argCursor].optionString + strlen(VMOPT_XSNAPSHOT);
+			createParams->flags |= J9_CREATEJAVAVM_SNAPSHOT;
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
 		}
 	}
 
@@ -2229,12 +2235,8 @@ JNI_CreateJavaVM_impl(JavaVM **pvm, void **penv, void *vm_args, BOOLEAN isJITSer
 #endif /* defined(J9UNIX) || defined(J9ZOS390) */
 
 	args = (JavaVMInitArgs *)vm_args;
-	launcherArgumentsSize = initialArgumentScan(args, &specialArgs);
+	launcherArgumentsSize = initialArgumentScan(args, &specialArgs, &createParams);
 	localVerboseLevel = specialArgs.localVerboseLevel;
-
-	if (VERBOSE_INIT == localVerboseLevel) {
-		createParams.flags |= J9_CREATEJAVAVM_VERBOSE_INIT;
-	}
 
 	/* [RTC 147146] Allow a Java option to disable capturing command line
 	 * in the OPENJ9_JAVA_COMMAND_LINE environment variable.
@@ -2326,7 +2328,6 @@ JNI_CreateJavaVM_impl(JavaVM **pvm, void **penv, void *vm_args, BOOLEAN isJITSer
 		if (
 			/* Add the default options file */
 			(0 != addOptionsDefaultFile(&j9portLibrary, &vmArgumentsList, optionsDefaultFileLocation, localVerboseLevel))
-			|| (0 != addXjcl(&j9portLibrary, &vmArgumentsList, J2SE_CURRENT_VERSION))
 			|| (0 != addBootLibraryPath(&j9portLibrary, &vmArgumentsList, "-Dcom.ibm.oti.vm.bootstrap.library.path=",
 					jvmBufferData(j9binBuffer), jvmBufferData(jrebinBuffer)))
 			|| (0 != addBootLibraryPath(&j9portLibrary, &vmArgumentsList, "-Dsun.boot.library.path=",
@@ -2571,6 +2572,9 @@ jint JNICALL JNI_GetDefaultJavaVMInitArgs(void *vm_args)
 #if JAVA_SPEC_VERSION >= 21
 	case JNI_VERSION_21:
 #endif /* JAVA_SPEC_VERSION >= 21 */
+#if JAVA_SPEC_VERSION >= 24
+	case JNI_VERSION_24:
+#endif /* JAVA_SPEC_VERSION >= 24 */
 		return JNI_OK;
 	}
 
@@ -4051,7 +4055,7 @@ JVM_LoadLibrary(const char *libName, jboolean throwOnFailure)
 							doOpenLibrary = FALSE;
 							Trc_SC_allocate_memory_failed(libPathLength);
 						} else {
-							j9str_printf(PORTLIB,
+							j9str_printf(
 									libNameNotDecorated,
 									libPathLength,
 									"%.*s%.*s",
@@ -4539,11 +4543,11 @@ JVM_Lseek(jint descriptor, jlong bytesToSeek, jint origin)
 	}
 
 #if defined(WIN32)
-#ifdef __IBMC__
+#if defined(__IBMC__)
 	result = lseek(descriptor, (long) bytesToSeek, origin);
-#else
+#else /* defined(__IBMC__) */
 	result = _lseeki64(descriptor, bytesToSeek, origin);
-#endif
+#endif /* defined(__IBMC__) */
 #elif defined(J9UNIX) || defined(J9ZOS390) /* defined(WIN32) */
 #if defined(LINUX) && !defined(J9VM_ENV_DATA64)
 
@@ -4639,7 +4643,7 @@ JVM_Open(const char* filename, jint flags, jint mode)
 #define JVM_EEXIST -100
 
 #ifdef WIN32
-#ifdef __IBMC__
+#if defined(__IBMC__)
 #define EXTRA_OPEN_FLAGS O_NOINHERIT | O_BINARY
 #else
 #define EXTRA_OPEN_FLAGS _O_NOINHERIT | _O_BINARY

@@ -135,10 +135,10 @@ public abstract class MethodHandle
 	static final byte KIND_FILTERARGUMENTS_WITHCOMBINER = 33;
 	/*[ENDIF] JAVA_SPEC_VERSION >= 12 */
 
-/*[IF Sidecar18-SE-OpenJ9]
+	/*[IF !VENDOR_UMA]*/
 	MethodHandle asTypeCache = null;
 	LambdaForm form = null;
-/*[ENDIF]*/
+	/*[ENDIF] !VENDOR_UMA */
 
 	static final int PUBLIC_FINAL_NATIVE = Modifier.PUBLIC | Modifier.FINAL | Modifier.NATIVE | 0x1000 /* Synthetic */;
 
@@ -214,7 +214,7 @@ public abstract class MethodHandle
 	final static int VTABLE_ENTRY_SIZE = VM.ADDRESS_SIZE;
 	final static int VTABLE_ENTRY_SHIFT = 31 - Integer.numberOfLeadingZeros(VTABLE_ENTRY_SIZE);
 	final static int J9CLASS_OFFSET = vmRefFieldOffset(Class.class);
-  	final static long INTRP_VTABLE_OFFSET = VM.J9CLASS_SIZE;
+	final static long INTRP_VTABLE_OFFSET = VM.J9CLASS_SIZE;
 	final static int HEADER_SIZE = VM.OBJECT_HEADER_SIZE;
 
 	static {
@@ -419,7 +419,6 @@ public abstract class MethodHandle
 		return new SpreadHandle(adapted, collectType, arrayClass, spreadCount, spreadPosition);
 	}
 
-
 	/**
 	 * Returns a MethodHandle that collects the requested incoming arguments, which must match the
 	 * types in MethodType incomingArgs, into an array of <i>arrayClass</i>, called T.
@@ -527,7 +526,6 @@ public abstract class MethodHandle
 
 	/* Unused class parameter is necessary to work around a javac bug */
 	private static final native int vmRefFieldOffset(Class<?> unused);
-
 
 	/**
 	 * Invoke the MethodHandle using an Object[] of arguments.  The array must contain at exactly type().parameterCount() arguments.
@@ -853,7 +851,6 @@ public abstract class MethodHandle
 		return MethodHandles.insertArguments(this, 0, value);
 	}
 
-
 	/**
 	 * Check if a permutation is unnecessary
 	 * <p>
@@ -1109,7 +1106,7 @@ public abstract class MethodHandle
 	abstract boolean addRelatedMHs(List<MethodHandle> relatedMHs);
 /*[ENDIF] JAVA_SPEC_VERSION >= 15 */
 
-/*[IF Sidecar18-SE-OpenJ9]*/
+	/*[IF !VENDOR_UMA]*/
 	MethodHandle(MethodType mt, LambdaForm lf) {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
@@ -1149,12 +1146,10 @@ public abstract class MethodHandle
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 
-/*[IF Sidecar18-SE-OpenJ9]*/
 	void customize() {
 		// this is an empty implementation to satisfy RI specific method calls
 		// https://github.com/eclipse-openj9/openj9/issues/7080
 	}
-/*[ENDIF]*/
 
 /*[IF JAVA_SPEC_VERSION < 16]*/
 	void updateForm(LambdaForm lf) {
@@ -1197,7 +1192,7 @@ public abstract class MethodHandle
 	Object internalProperties() {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
-/*[ENDIF]*/
+	/*[ENDIF] !VENDOR_UMA */
 }
 
 // {{{ JIT support
@@ -1237,7 +1232,6 @@ final class ComputedCalls {
 	public static native float    dispatchJ9Method_F(long j9method, Object objectArg, int argPlaceholder);
 	public static native double   dispatchJ9Method_D(long j9method, Object objectArg, int argPlaceholder);
 	public static native Object   dispatchJ9Method_L(long j9method, Object objectArg, int argPlaceholder);
-
 
 	public static void load(){}
 }
@@ -1474,10 +1468,10 @@ final class ThunkTuple {
 		return new ThunkTuple(thunkableType.toMethodDescriptorString(), invokeExactThunk);
 	}
 
- 	static ThunkTuple copyOf(ThunkTuple tt){
- 		ThunkTuple t = new ThunkTuple(tt.thunkableSignature, tt.invokeExactThunk);
- 		t.i2jInvokeExactThunk = tt.i2jInvokeExactThunk;
- 		return t;
+	static ThunkTuple copyOf(ThunkTuple tt){
+		ThunkTuple t = new ThunkTuple(tt.thunkableSignature, tt.invokeExactThunk);
+		t.i2jInvokeExactThunk = tt.i2jInvokeExactThunk;
+		return t;
 	}
 
 	private ThunkTuple(String thunkableSignature, long invokeExactThunk){
@@ -1620,7 +1614,6 @@ final class ILGenMacros {
 }
 
 // }}} JIT support
-
 
 // {{{ Comparator support
 

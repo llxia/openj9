@@ -46,7 +46,7 @@ What is Eclipse OpenJ9?
 
 Eclipse OpenJ9 is an independent implementation of a Java Virtual Machine. "Independent implementation"
 means it was built using the Java Virtual Machine specification without using any code from any other Java
-Virtual Machine. 
+Virtual Machine.
 
 The OpenJ9 JVM combines with the Java Class libraries from OpenJDK to create a complete JDK tuned for
 footprint, performance, and reliability that is well suited for cloud deployments.
@@ -54,7 +54,7 @@ footprint, performance, and reliability that is well suited for cloud deployment
 The original source contribution to OpenJ9 came from the IBM "J9" JVM which has been used in production
 by thousands of Java applications for the last two decades.  In September 2017, IBM completed open sourcing
 the J9 JVM as "Eclipse OpenJ9" at the Eclipse Foundation. Significant parts of J9 are also open source
-at the [Eclipse OMR project](https://github.com/eclipse/omr). OpenJ9 has a permissive license (Apache
+at the [Eclipse OMR project](https://github.com/eclipse-omr/omr). OpenJ9 has a permissive license (Apache
 License 2.0 or Eclipse Public License 2.0 with a secondary compatibility license for the OpenJDK project's
 GPLv2 license) that is designed to allow OpenJDK to be built with the OpenJ9 JVM.  Please see our
 [LICENSE file](https://github.com/eclipse-openj9/openj9/blob/master/LICENSE) for more details.
@@ -107,6 +107,15 @@ Where can I learn more?
 Videos and Presentations
 ------------------------
 
+- [JCON 2024: Could your Java workloads be missing out on something?](https://www.youtube.com/watch?v=_UL-bdAkGH0)
+- [Java Virtual Threads: a Case Study](https://www.infoq.com/articles/java-virtual-threads-a-case-study/)
+- [Devnexus 2024: Cache Me If You Can ](https://www.youtube.com/watch?v=SWjpoz_soVc)
+- [Rapid Startup of Your Cloud-Native Java Applications without Compromise](https://www.infoq.com/articles/rapid-startup-of-your-cloud-native-java/)
+- [Devnexus 2023: Journey to Cloud: Leave No Java Workload behind](https://www.youtube.com/watch?v=P4AuOw5KNd0)
+- [Devnexus 2023: Enhancing Java Applications for the Cloud](https://www.youtube.com/watch?v=X9Lma7PB23I)
+- [JCONF 2022: Fast JVM Startup With Checkpoint and Restore](https://www.youtube.com/watch?v=SH7aUaTFNlc)
+- [JVMLS 2019: JIT and AOT in the JVM with Mark Stoodley](https://www.youtube.com/watch?v=gx8DVVFPkcQ)
+- [JVMLS 2018: LWorld: the next steps on the journey to Valhalla with David Simms & Tobi Ajila](https://www.youtube.com/watch?v=_26KZAegYRM)
 - [JavaOne 2017: John Duimovich and Mike Milinkovich having fun chatting about Eclipse OpenJ9 (and EE4J)](https://www.youtube.com/watch?v=4g9SdVCPlnk)
 - [JavaOne 2017: Holly Cummins interviewing Dan Heidinga and Mark Stoodley on Eclipse OpenJ9 and OMR](https://www.youtube.com/watch?v=c1LVXqD3cII)
 - [JavaOne 2017: Open sourcing the IBM J9 Java Virtual Machine](https://www.slideshare.net/MarkStoodley/javaone-2017-mark-stoodley-open-sourcing-ibm-j9-jvm)

@@ -104,7 +104,7 @@ J9::OptionsPostRestore::iterateOverExternalOptions()
    int32_t end = static_cast<int32_t>(J9::ExternalOptions::TR_NumExternalOptions);
    for (int32_t option = start; option < end; option++)
       {
-      const char *optString = J9::Options::_externalOptionStrings[option];
+      const char *optString = J9::Options::getExternalOptionString(static_cast<J9::ExternalOptions>(option));
       switch (option)
          {
          case J9::ExternalOptions::Xjit:
@@ -135,7 +135,9 @@ J9::OptionsPostRestore::iterateOverExternalOptions()
          case J9::ExternalOptions::XXplusJITServerLocalSyncCompilesOption:
          case J9::ExternalOptions::XXminusJITServerLocalSyncCompilesOption:
             {
-            // These will be processed in processJitServerOptions
+            // These will be processed in processJitServerOptions; however,
+            // consume them here
+            FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, optString, 0);
             }
             break;
 
@@ -180,6 +182,10 @@ J9::OptionsPostRestore::iterateOverExternalOptions()
          case J9::ExternalOptions::XXplusHealthProbes:
          case J9::ExternalOptions::XXminusHealthProbes:
          case J9::ExternalOptions::XXJITServerHealthProbePortOption:
+         case J9::ExternalOptions::XXplusTrackAOTDependencies:
+         case J9::ExternalOptions::XXminusTrackAOTDependencies:
+         case J9::ExternalOptions::XXplusJITServerUseProfileCache:
+         case J9::ExternalOptions::XXminusJITServerUseProfileCache:
             {
             // do nothing, consume them to prevent errors
             FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, optString, 0);
@@ -295,7 +301,7 @@ J9::OptionsPostRestore::iterateOverExternalOptions()
             break;
 
          default:
-            TR_ASSERT_FATAL(false, "Option %s not addressed post restore\n", TR::Options::_externalOptionStrings[option]);
+            TR_ASSERT_FATAL(false, "Option %s not addressed post restore\n", optString);
          }
       }
    }
@@ -316,7 +322,7 @@ J9::OptionsPostRestore::processJitServerOptions()
       J9JavaVM *vm = _jitConfig->javaVM;
 
       // Parse common options
-      if (!TR::Options::JITServerParseCommonOptions(vm->checkpointState.restoreArgsList, vm, _compInfo))
+      if (!TR::Options::JITServerParseCommonOptions(vm->checkpointState.restoreArgsList, vm, _compInfo, true))
          {
          // TODO: Error condition
          }
@@ -325,7 +331,8 @@ J9::OptionsPostRestore::processJitServerOptions()
       TR::Options::JITServerParseLocalSyncCompiles(vm->checkpointState.restoreArgsList,
                                                    vm,
                                                    _compInfo,
-                                                   TR::Options::getCmdLineOptions()->getOption(TR_FullSpeedDebug));
+                                                   TR::Options::getCmdLineOptions()->getOption(TR_FullSpeedDebug),
+                                                   true);
 
       if (_argIndexJITServerAddress >= 0)
          {
@@ -395,9 +402,9 @@ J9::OptionsPostRestore::processInternalCompilerOptions(bool isAOT)
 
    int32_t argIndex;
    if (isAOT)
-      argIndex = FIND_ARG_IN_RESTORE_ARGS( STARTSWITH_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xaotcolon], 0);
+      argIndex = FIND_ARG_IN_RESTORE_ARGS( STARTSWITH_MATCH, J9::Options::getExternalOptionString(J9::ExternalOptions::Xaotcolon), 0);
    else
-      argIndex = FIND_ARG_IN_RESTORE_ARGS( STARTSWITH_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xjitcolon], 0);
+      argIndex = FIND_ARG_IN_RESTORE_ARGS( STARTSWITH_MATCH, J9::Options::getExternalOptionString(J9::ExternalOptions::Xjitcolon), 0);
 
    if (argIndex >= 0)
       {
@@ -435,9 +442,8 @@ J9::OptionsPostRestore::invalidateCompiledMethod(J9Method *method, TR_J9VMBase *
          }
 
       TR_PersistentMethodInfo *pmi = bodyInfo->getMethodInfo();
-      pmi->setIsExcludedPostRestore();
-
-      TR::Recompilation::invalidateMethodBody(startPC, fej9);
+      TR::Recompilation::invalidateMethodBody(
+         startPC, fej9, TR_JitBodyInvalidations::PostRestoreExclude);
 
       // TODO: add method to a list to check the stack of java threads to print out message
       }
@@ -476,7 +482,7 @@ J9::OptionsPostRestore::shouldInvalidateCompiledMethod(J9Method *method, TR_J9VM
 
       if (methodSignature)
          {
-         sprintf(methodSignature, "%.*s.%.*s%.*s",
+         snprintf(methodSignature, len, "%.*s.%.*s%.*s",
                J9UTF8_LENGTH(className), utf8Data(className),
                J9UTF8_LENGTH(name), utf8Data(name),
                J9UTF8_LENGTH(signature), utf8Data(signature));
@@ -540,7 +546,7 @@ J9::OptionsPostRestore::invalidateCompiledMethodsIfNeeded(bool invalidateAll)
    }
 
 void
-J9::OptionsPostRestore::disableAOTCompilation()
+J9::OptionsPostRestore::disableAOTCompilation(bool disabledPreCheckpoint)
    {
    static bool aotDisabled = false;
    if (aotDisabled)
@@ -567,7 +573,14 @@ J9::OptionsPostRestore::disableAOTCompilation()
    aotDisabled = true;
    _disableAOTPostRestore = true;
 
-   j9nls_printf(PORTLIB, (UDATA) J9NLS_WARNING, J9NLS_JIT_CHECKPOINT_RESTORE_AOT_DISABLED);
+   if (disabledPreCheckpoint)
+      {
+      j9nls_printf(PORTLIB, (UDATA) J9NLS_WARNING, J9NLS_JIT_CHECKPOINT_RESTORE_AOT_DISABLED_PRE_CHECKPOINT);
+      }
+   else
+      {
+      j9nls_printf(PORTLIB, (UDATA) J9NLS_WARNING, J9NLS_JIT_CHECKPOINT_RESTORE_AOT_DISABLED);
+      }
    }
 
 void
@@ -671,8 +684,8 @@ J9::OptionsPostRestore::preProcessInternalCompilerOptions()
    TR::Compiler->relocatableTarget.setNumberOfProcessors(numProc);
 
    // Find and consume -XX:[+|-]MergeCompilerOptions
-   _argIndexMergeOptionsEnabled = FIND_AND_CONSUME_RESTORE_ARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXplusMergeCompilerOptions], 0);
-   _argIndexMergeOptionsDisabled = FIND_AND_CONSUME_RESTORE_ARG(EXACT_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::XXminusMergeCompilerOptions], 0);
+   _argIndexMergeOptionsEnabled = FIND_AND_CONSUME_RESTORE_ARG(EXACT_MATCH, J9::Options::getExternalOptionString(J9::ExternalOptions::XXplusMergeCompilerOptions), 0);
+   _argIndexMergeOptionsDisabled = FIND_AND_CONSUME_RESTORE_ARG(EXACT_MATCH, J9::Options::getExternalOptionString(J9::ExternalOptions::XXminusMergeCompilerOptions), 0);
    }
 
 void
@@ -737,8 +750,10 @@ J9::OptionsPostRestore::postProcessInternalCompilerOptions()
    TR::Options::FSDInitStatus fsdStatus = TR::Options::resetFSD(vm, _vmThread, doAOT);
    disableAOT = !doAOT;
 
-   if (fsdStatus != TR::Options::FSDInitStatus::FSDInit_NotInitialized)
+   if (!_compInfo->getCRRuntime()->isFSDEnabled()
+       && fsdStatus == TR::Options::FSDInitStatus::FSDInit_Initialized)
       {
+      _compInfo->getCRRuntime()->setFSDEnabled(true);
       invalidateAll = true;
       disableAOT = true;
       }
@@ -821,7 +836,8 @@ J9::OptionsPostRestore::postProcessInternalCompilerOptions()
 
    if (!TR::Options::getCmdLineOptions()->getOption(TR_DisableDataCacheDisclaiming) ||
        !TR::Options::getCmdLineOptions()->getOption(TR_DisableIProfilerDataDisclaiming) ||
-       TR::Options::getCmdLineOptions()->getOption(TR_EnableCodeCacheDisclaiming))
+       TR::Options::getCmdLineOptions()->getOption(TR_EnableCodeCacheDisclaiming) ||
+       TR::Options::getCmdLineOptions()->getOption(TR_EnableSharedCacheDisclaiming))
       {
       TR::Options::disableMemoryDisclaimIfNeeded(_jitConfig);
       }
@@ -834,13 +850,15 @@ J9::OptionsPostRestore::processCompilerOptions()
    J9JavaVM *vm = _jitConfig->javaVM;
    PORT_ACCESS_FROM_JAVAVM(vm);
 
-   bool jitEnabled = TR::Options::canJITCompile();
-   bool aotEnabled = TR_J9SharedCache::aotHeaderValidationDelayed() ? true : TR::Options::sharedClassCache();
+   bool aotEnabledPreCheckpoint = TR_J9SharedCache::aotHeaderValidationDelayed() ? true : TR::Options::sharedClassCache();
 
-   _argIndexXjit = FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xjit], 0);
-   _argIndexXnojit = FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xnojit], 0);
-   _argIndexXaot = FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xaot], 0);
-   _argIndexXnoaot = FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, J9::Options::_externalOptionStrings[J9::ExternalOptions::Xnoaot], 0);
+   bool jitEnabled = TR::Options::canJITCompile();
+   bool aotEnabled = aotEnabledPreCheckpoint;
+
+   _argIndexXjit = FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, J9::Options::getExternalOptionString(J9::ExternalOptions::Xjit), 0);
+   _argIndexXnojit = FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, J9::Options::getExternalOptionString(J9::ExternalOptions::Xnojit), 0);
+   _argIndexXaot = FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, J9::Options::getExternalOptionString(J9::ExternalOptions::Xaot), 0);
+   _argIndexXnoaot = FIND_AND_CONSUME_RESTORE_ARG(OPTIONAL_LIST_MATCH, J9::Options::getExternalOptionString(J9::ExternalOptions::Xnoaot), 0);
 
    if (_argIndexXjit != _argIndexXnojit)
       jitEnabled = (_argIndexXjit > _argIndexXnojit);
@@ -848,7 +866,7 @@ J9::OptionsPostRestore::processCompilerOptions()
    // If -Xnoaot was specified pre-checkpoint, there is a lot of infrastructure
    // that needs to be set up. For now, ignore -Xaot post-restore if -Xnoaot
    // was specified pre-checkpoint.
-   if (aotEnabled)
+   if (aotEnabledPreCheckpoint)
       aotEnabled = (_argIndexXaot >= _argIndexXnoaot);
 
    if (!aotEnabled)
@@ -859,7 +877,7 @@ J9::OptionsPostRestore::processCompilerOptions()
    if (_disableAOTPostRestore)
       {
       aotEnabled = false;
-      disableAOTCompilation();
+      disableAOTCompilation(!aotEnabledPreCheckpoint);
       }
 
    if (!jitEnabled)

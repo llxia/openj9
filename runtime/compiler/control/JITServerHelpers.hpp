@@ -57,6 +57,7 @@ public:
       CLASSINFO_CLASS_CHAIN_OFFSET_IDENTIFYING_LOADER,
       CLASSINFO_ARRAY_ELEMENT_SIZE,
       CLASSINFO_DEFAULT_VALUE_SLOT_ADDRESS,
+      CLASSINFO_NULLRESTRICTED_ARRAY_CLASS,
       };
 
    // NOTE: when adding new elements to this tuple, add them to the end,
@@ -88,7 +89,8 @@ public:
       std::string,                       // 22: _classNameIdentifyingLoader
       int32_t,                           // 23: _arrayElementSize
       j9object_t *,                      // 24: _defaultValueSlotAddress
-      std::string                        // 25: optional hash of packedROMClass
+      std::string,                       // 25: optional hash of packedROMClass
+      TR_OpaqueClassBlock *              // 26: _nullRestrictedArrayClass
       >;
 
    // Packs a ROMClass to be transferred to the server.
@@ -114,6 +116,7 @@ public:
    static bool getAndCacheRAMClassInfo(J9Class *clazz, ClientSessionData *clientSessionData,
                                        JITServer::ServerStream *stream, ClassInfoDataType dataType1, void *data1,
                                        ClassInfoDataType dataType2, void *data2);
+   static ClientSessionData::ClassInfo &getJ9ClassInfo(TR::CompilationInfoPerThread *threadCompInfo, J9Class *clazz);
    static J9ROMMethod *romMethodOfRamMethod(J9Method* method);
 
    static void insertIntoOOSequenceEntryList(ClientSessionData *clientData, TR_MethodToBeCompiled *entry);

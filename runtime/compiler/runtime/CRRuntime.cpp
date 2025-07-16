@@ -40,6 +40,7 @@
 #include "infra/Assert.hpp"
 #include "infra/CriticalSection.hpp"
 #include "infra/Monitor.hpp"
+#include "runtime/CodeRuntime.hpp"
 #include "runtime/CRRuntime.hpp"
 #include "runtime/IProfiler.hpp"
 #include "runtime/J9VMAccess.hpp"
@@ -92,7 +93,20 @@ TR::CRRuntime::CRRuntime(J9JITConfig *jitConfig, TR::CompilationInfo *compInfo) 
    _impMethodForCR(),
    _jniMethodAddr(),
    _proactiveCompEnv(),
+   _vmMethodTraceEnabled(false),
+   _vmExceptionEventsHooked(false),
+   _fsdEnabled(false),
    _restoreTime(0)
+   {
+#if defined(J9VM_OPT_JITSERVER)
+   _canPerformRemoteCompilationInCRIUMode = false;
+   _remoteCompilationRequestedAtBootstrap = false;
+   _remoteCompilationExplicitlyDisabledAtBootstrap = false;
+#endif
+   }
+
+void
+TR::CRRuntime::cacheEventsStatus()
    {
    // TR::CompilationInfo is initialized in the JIT_INITIALIZED bootstrap
    // stage, whereas J9_EXTENDED_RUNTIME_METHOD_TRACE_ENABLED is set in the
@@ -110,11 +124,7 @@ TR::CRRuntime::CRRuntime(J9JITConfig *jitConfig, TR::CompilationInfo *compInfo) 
         || J9_EVENT_IS_RESERVED(jitConfig->javaVM->hookInterface, J9HOOK_VM_EXCEPTION_THROW);
    _vmExceptionEventsHooked = exceptionCatchEventHooked || exceptionThrowEventHooked;
 
-#if defined(J9VM_OPT_JITSERVER)
-   _canPerformRemoteCompilationInCRIUMode = false;
-   _remoteCompilationRequestedAtBootstrap = false;
-   _remoteCompilationExplicitlyDisabledAtBootstrap = false;
-#endif
+   _fsdEnabled = J9::Options::_fsdInitStatus == J9::Options::FSDInit_Initialized;
    }
 
 void
@@ -362,7 +372,7 @@ void
 TR::CRRuntime::setupEnvForProactiveCompilation(J9JavaVM *javaVM, J9VMThread *vmThread, TR_J9VMBase *fej9)
    {
    /* Proactive compilation should not be FSD compiles */
-   if (javaVM->internalVMFunctions->isDebugOnRestoreEnabled(vmThread))
+   if (javaVM->internalVMFunctions->isDebugOnRestoreEnabled(javaVM))
       {
       TR::Options::getCmdLineOptions()->setFSDOptionsForAll(false);
       TR::Options::getAOTCmdLineOptions()->setFSDOptionsForAll(false);
@@ -386,7 +396,7 @@ void
 TR::CRRuntime::teardownEnvForProactiveCompilation(J9JavaVM *javaVM, J9VMThread *vmThread, TR_J9VMBase *fej9)
    {
    /* Proactive compilation should not be FSD compiles */
-   if (javaVM->internalVMFunctions->isDebugOnRestoreEnabled(vmThread))
+   if (javaVM->internalVMFunctions->isDebugOnRestoreEnabled(javaVM))
       {
       TR::Options::getCmdLineOptions()->setFSDOptionsForAll(true);
       TR::Options::getAOTCmdLineOptions()->setFSDOptionsForAll(true);
@@ -610,8 +620,8 @@ void
 TR::CRRuntime::resumeJITThreadsForRestore(J9VMThread *vmThread)
    {
    // Allow heuristics to turn on the IProfiler
-   if (_jitConfig->javaVM->internalVMFunctions->isDebugOnRestoreEnabled(vmThread)
-       && !_jitConfig->javaVM->internalVMFunctions->isCheckpointAllowed(vmThread))
+   if (_jitConfig->javaVM->internalVMFunctions->isDebugOnRestoreEnabled(_jitConfig->javaVM)
+       && !_jitConfig->javaVM->internalVMFunctions->isCheckpointAllowed(_jitConfig->javaVM))
       {
       turnOffInterpreterProfiling(_jitConfig);
       TR::Options::getCmdLineOptions()->setOption(TR_NoIProfilerDuringStartupPhase);
@@ -666,6 +676,62 @@ TR::CRRuntime::resetStartTime()
                                        (uint32_t)persistentInfo->getStartTime(), (uint32_t)persistentInfo->getElapsedTime());
 
    _restoreTime = persistentInfo->getElapsedTime();
+   }
+
+void
+TR::CRRuntime::closeLogFiles()
+   {
+   TR_JitPrivateConfig *privateConfig = (TR_JitPrivateConfig*)getJITConfig()->privateConfig;
+
+   if (privateConfig->vLogFileName)
+      {
+      TR_VerboseLog::vlogAcquire();
+      j9jit_fclose(privateConfig->vLogFile);
+      privateConfig->vLogFile = NULL;
+      TR_VerboseLog::vlogRelease();
+      }
+
+   if (privateConfig->rtLogFileName)
+      {
+      JITRT_LOCK_LOG(getJITConfig());
+      j9jit_fclose(privateConfig->rtLogFile);
+      privateConfig->rtLogFile = NULL;
+      JITRT_UNLOCK_LOG(getJITConfig());
+
+      TR::CompilationInfoPerThread * const * arrayOfCompInfoPT = getCompInfo()->getArrayOfCompilationInfoPerThread();
+      for (int32_t i = 0; i < getCompInfo()->getNumTotalAllocatedCompilationThreads(); i++)
+         {
+         TR::CompilationInfoPerThread *compThreadInfoPT = arrayOfCompInfoPT[i];
+         compThreadInfoPT->closeRTLogFile();
+         }
+      }
+   }
+
+void
+TR::CRRuntime::reopenLogFiles()
+   {
+   TR_JitPrivateConfig *privateConfig = (TR_JitPrivateConfig*)getJITConfig()->privateConfig;
+
+   if (privateConfig->vLogFileName)
+      {
+      TR_VerboseLog::vlogAcquire();
+      privateConfig->vLogFile = fileOpen(TR::Options::getCmdLineOptions(), getJITConfig(), privateConfig->vLogFileName, "ab", false);
+      TR_VerboseLog::vlogRelease();
+      }
+
+   if (privateConfig->rtLogFileName)
+      {
+      JITRT_LOCK_LOG(getJITConfig());
+      privateConfig->rtLogFile = fileOpen(TR::Options::getCmdLineOptions(), getJITConfig(), privateConfig->rtLogFileName, "ab", false);
+      JITRT_UNLOCK_LOG(getJITConfig());
+
+      TR::CompilationInfoPerThread * const * arrayOfCompInfoPT = getCompInfo()->getArrayOfCompilationInfoPerThread();
+      for (int32_t i = 0; i < getCompInfo()->getNumTotalAllocatedCompilationThreads(); i++)
+         {
+         TR::CompilationInfoPerThread *compThreadInfoPT = arrayOfCompInfoPT[i];
+         compThreadInfoPT->openRTLogFile();
+         }
+      }
    }
 
 void
@@ -742,6 +808,8 @@ TR::CRRuntime::prepareForCheckpoint()
 
    if (TR::Options::getCmdLineOptions()->getVerboseOption(TR_VerboseCheckpointRestore))
       TR_VerboseLog::writeLineLocked(TR_Vlog_CHECKPOINT_RESTORE, "Ready for checkpoint");
+
+   closeLogFiles();
    }
 
 void
@@ -752,6 +820,8 @@ TR::CRRuntime::prepareForRestore()
 
    PORT_ACCESS_FROM_JAVAVM(vm);
    OMRPORT_ACCESS_FROM_J9PORT(PORTLIB);
+
+   reopenLogFiles();
 
    if (TR::Options::getCmdLineOptions()->getVerboseOption(TR_VerboseCheckpointRestore))
       TR_VerboseLog::writeLineLocked(TR_Vlog_CHECKPOINT_RESTORE, "Preparing for restore");

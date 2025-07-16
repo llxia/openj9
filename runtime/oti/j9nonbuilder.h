@@ -97,6 +97,8 @@
 #define J9ClassAllowsNonAtomicCreation 0x800000
 #define J9ClassNeedToPruneMemberNames 0x1000000
 #define J9ClassArrayIsNullRestricted 0x2000000
+#define J9ClassIsLoadedFromSnapshot 0x4000000
+#define J9ClassIsFrozen 0x8000000
 
 /* @ddr_namespace: map_to_type=J9FieldFlags */
 
@@ -139,6 +141,13 @@
 #define J9ArrayShape32Bit 0x2
 #define J9ArrayShape64Bit 0x3
 
+/* J9IndexableObjectLayout_xxx are used in indexableObjectLayout field in J9VMThread and J9JavaVM */
+#define J9IndexableObjectLayout_NoDataAddr_NoArraylet 0x0 /* StandardGC case */
+#define J9IndexableObjectLayout_NoDataAddr_Arraylet 0x1 /* Metronome GC case */
+#define J9IndexableObjectLayout_DataAddr_NoArraylet 0x2 /* Balanced GC Offheap enabled case */
+#define J9IndexableObjectLayout_DataAddr_Arraylet 0x3 /* Balanced GC Offheap disabled case */
+#define J9IndexableObjectLayout_DataAddrMask 0x2
+#define J9IndexableObjectLayout_ArrayletMask 0x1
 /* @ddr_namespace: map_to_type=J9ClassInitFlags */
 
 /* Constants from J9ClassInitFlags */
@@ -258,7 +267,7 @@
 #define J9_ROMCLASS_OPTINFO_CLASS_ANNOTATION_INFO 0x8000
 #define J9_ROMCLASS_OPTINFO_VARIABLE_TABLE_HAS_GENERIC 0x10000
 #if defined(J9VM_OPT_VALHALLA_VALUE_TYPES)
-#define J9_ROMCLASS_OPTINFO_PRELOAD_ATTRIBUTE 0x20000
+#define J9_ROMCLASS_OPTINFO_LOADABLEDESCRIPTORS_ATTRIBUTE 0x20000
 #endif /* defined(J9VM_OPT_VALHALLA_VALUE_TYPES) */
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
 #define J9_ROMCLASS_OPTINFO_IMPLICITCREATION_ATTRIBUTE 0x40000
@@ -289,6 +298,21 @@
 #define J9JVMTI_MAX_TLS_KEYS 124
 typedef void(*j9_tls_finalizer_t)(void *);
 #endif /* JAVA_SPEC_VERSION >= 19 */
+
+#if JAVA_SPEC_VERSION >= 24
+/* Constants from java.lang.VirtualThread.state that are used by the VM.
+ * The full mapping is under jvmtiInternal.h <JVMTI_VTHREAD_STATE_*>.
+ */
+#define JAVA_LANG_VIRTUALTHREAD_RUNNING  2
+#define JAVA_LANG_VIRTUALTHREAD_BLOCKING 12
+#define JAVA_LANG_VIRTUALTHREAD_BLOCKED  13
+#define JAVA_LANG_VIRTUALTHREAD_UNBLOCKED 14
+#define JAVA_LANG_VIRTUALTHREAD_WAITING  15
+#define JAVA_LANG_VIRTUALTHREAD_WAIT     16
+#define JAVA_LANG_VIRTUALTHREAD_TIMED_WAITING 17
+#define JAVA_LANG_VIRTUALTHREAD_TIMED_WAIT 18
+#define JAVA_LANG_VIRTUALTHREAD_SUSPENDED (1 << 8)
+#endif /* JAVA_SPEC_VERSION >= 24 */
 
 typedef enum {
 	J9FlushCompQueueDataBreakpoint
@@ -345,6 +369,11 @@ struct J9VMContinuation;
 
 #if defined(J9VM_OPT_JFR)
 
+typedef struct J9ThreadJFRState {
+	omrthread_thread_time_t prevThreadCPUTimes;
+	int64_t prevTimestamp;
+} J9ThreadJFRState;
+
 typedef struct J9JFRBufferWalkState {
 	U_8 *current;
 	U_8 *end;
@@ -360,7 +389,7 @@ typedef struct J9JFRBuffer {
 /* JFR event structures */
 
 #define J9JFR_EVENT_COMMON_FIELDS \
-	I_64 startTime; \
+	I_64 startTicks; \
 	UDATA eventType; \
 	struct J9VMThread *vmThread;
 
@@ -391,7 +420,7 @@ typedef struct J9JFRThreadStart {
 	struct J9VMThread *parentThread;
 } J9JFRThreadStart;
 
-#define J9JFRTHREADSTART_STACKTRACE(jfrEvent) ((UDATA*)(((J9JFRThreadStart*)(jfrEvent)) + 1))
+#define J9JFRTHREADSTART_STACKTRACE(jfrEvent) ((UDATA *)(((J9JFRThreadStart *)(jfrEvent)) + 1))
 
 /* Variable-size structure - stackTraceSize worth of UDATA follow the fixed portion */
 typedef struct J9JFRThreadSlept {
@@ -401,6 +430,94 @@ typedef struct J9JFRThreadSlept {
 } J9JFRThreadSlept;
 
 #define J9JFRTHREADSLEPT_STACKTRACE(jfrEvent) ((UDATA*)(((J9JFRThreadSlept*)(jfrEvent)) + 1))
+
+/* Variable-size structure - stackTraceSize worth of UDATA follow the fixed portion */
+typedef struct J9JFRMonitorWaited {
+	J9JFR_EVENT_WITH_STACKTRACE_FIELDS
+	I_64 time;
+	I_64 duration;
+	struct J9Class *monitorClass;
+	struct J9VMThread *notifierThread;
+	BOOLEAN timedOut;
+	UDATA monitorAddress;
+} J9JFRMonitorWaited;
+
+#define J9JFRMonitorWaitedED_STACKTRACE(jfrEvent) ((UDATA*)(((J9JFRMonitorWaited*)(jfrEvent)) + 1))
+
+typedef struct J9JFRThreadParked {
+	J9JFR_EVENT_WITH_STACKTRACE_FIELDS
+	I_64 duration;
+	struct J9VMThread *thread;
+	struct J9Class *parkedClass;
+	I_64 timeOut;
+	I_64 untilTime;
+	UDATA parkedAddress;
+} J9JFRThreadParked;
+
+#define J9JFRTHREADPARKED_STACKTRACE(jfrEvent) ((UDATA*)(((J9JFRThreadParked*)(jfrEvent)) + 1))
+
+typedef struct J9JFRMonitorEntered {
+	J9JFR_EVENT_WITH_STACKTRACE_FIELDS
+	I_64 duration;
+	struct J9VMThread *thread;
+	struct J9Class *monitorClass;
+	struct J9VMThread *previousOwner;
+	UDATA monitorAddress;
+} J9JFRMonitorEntered;
+
+#define J9JFRMONITORENTERED_STACKTRACE(jfrEvent) ((UDATA *)(((J9JFRMonitorEntered *)(jfrEvent)) + 1))
+
+typedef struct J9JFRCPULoad {
+	J9JFR_EVENT_COMMON_FIELDS
+	float jvmUser;
+	float jvmSystem;
+	float machineTotal;
+} J9JFRCPULoad;
+
+typedef struct J9JFRThreadCPULoad {
+	J9JFR_EVENT_COMMON_FIELDS
+	float userCPULoad;
+	float systemCPULoad;
+} J9JFRThreadCPULoad;
+
+typedef struct J9JFRClassLoadingStatistics {
+	J9JFR_EVENT_COMMON_FIELDS
+	I_64 loadedClassCount;
+	I_64 unloadedClassCount;
+} J9JFRClassLoadingStatistics;
+
+typedef struct J9JFRThreadStatistics {
+	J9JFR_EVENT_COMMON_FIELDS
+	U_64 activeThreadCount;
+	U_64 daemonThreadCount;
+	U_64 accumulatedThreadCount;
+	U_64 peakThreadCount;
+} J9JFRThreadStatistics;
+
+typedef struct J9JFRThreadContextSwitchRate {
+	J9JFR_EVENT_COMMON_FIELDS
+	float switchRate;
+} J9JFRThreadContextSwitchRate;
+
+typedef struct J9JFRSystemGC {
+	J9JFR_EVENT_WITH_STACKTRACE_FIELDS
+	I_64 duration;
+} J9JFRSystemGC;
+
+typedef struct J9JFRModuleRequire {
+	J9JFR_EVENT_COMMON_FIELDS
+	struct J9Module *source;
+	struct J9Module *requiredModule;
+} J9JFRModuleRequire;
+
+typedef struct J9JFRModuleExport {
+	J9JFR_EVENT_COMMON_FIELDS
+	struct J9Module *fromModule;
+	struct J9Package *exportedPackage;
+	struct J9Module *targetModule;
+} J9JFRModuleExport;
+
+#define J9JFRSYSTEMGC_STACKTRACE(jfrEvent) ((UDATA *)(((J9JFRSystemGC *)(jfrEvent)) + 1))
 
 #endif /* defined(J9VM_OPT_JFR) */
 
@@ -606,6 +723,34 @@ typedef struct J9VTuneInterface {
 
 #define J9VTUNE_TRACE_LINE_NUMBERS  1
 
+/* A description of a call instruction within a JIT body that may land directly
+ * in the interpreter's invokeBasic() INL. From the JIT's perspective, the call
+ * is either a direct call to invokeBasic() (for which the actual call instruction
+ * goes via j2iTransition), or it's a call to JITHelpers.dispatchVirtual().
+ */
+typedef struct J9JITInvokeBasicCallSite {
+	U_32 jitReturnAddressOffset; /* from startPC */
+	U_8 numArgSlots;
+	void *j2iThunk; /* for JITHelpers.dispatchVirtual() */
+} J9JITInvokeBasicCallSite;
+
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4200)
+#endif /* defined(_MSC_VER) */
+
+/* Metadata describing the calls within a JIT body that may land directly in
+ * the interpreter's invokeBasic() INL.
+ */
+typedef struct J9JITInvokeBasicCallInfo {
+	U_32 numSites;
+	struct J9JITInvokeBasicCallSite sites[];
+} J9JITInvokeBasicCallInfo;
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif /* defined(_MSC_VER) */
+
 /* @ddr_namespace: map_to_type=J9JITExceptionTable */
 
 /* This structure is exposed by the compile_info field of CompiledMethodLoad() / JVMTI_EVENT_COMPILED_METHOD_LOAD.
@@ -644,6 +789,11 @@ typedef struct J9JITExceptionTable {
 	UDATA codeCacheAlloc;
 	void* gpuCode;
 	void* riData;
+	/* This is only needed for J9VM_OPT_OPENJDK_METHODHANDLE, but include this
+	 * field unconditionally so that the size and layout of J9JITExceptionTable
+	 * won't depend on configure options.
+	 */
+	struct J9JITInvokeBasicCallInfo* invokeBasicCallInfo;
 } J9JITExceptionTable;
 
 #define JIT_METADATA_FLAGS_USED_FOR_SIZE 0x1
@@ -925,9 +1075,9 @@ typedef struct J9VMCustomSpinOptions {
 	J9ObjectMonitorCustomSpinOptions j9monitorOptions;
 #if defined(OMR_THR_CUSTOM_SPIN_OPTIONS)
 	J9ThreadCustomSpinOptions j9threadOptions;
-#endif /* OMR_THR_CUSTOM_SPIN_OPTIONS */
+#endif /* defined(OMR_THR_CUSTOM_SPIN_OPTIONS) */
 } J9VMCustomSpinOptions;
-#endif /* J9VM_INTERP_CUSTOM_SPIN_OPTIONS */
+#endif /* defined(J9VM_INTERP_CUSTOM_SPIN_OPTIONS) */
 
 #define J9SYSPROP_FLAG_NAME_ALLOCATED  1
 #define J9SYSPROP_FLAG_VALUE_ALLOCATED  2
@@ -937,7 +1087,6 @@ typedef struct J9VMCustomSpinOptions {
 #define J9SYSPROP_ERROR_NOT_FOUND  1
 #define J9SYSPROP_ERROR_READ_ONLY  2
 #define J9SYSPROP_ERROR_OUT_OF_MEMORY  3
-#define J9SYSPROP_ERROR_INVALID_JCL  4
 #define J9SYSPROP_ERROR_UNSUPPORTED_PROP 5
 #define J9SYSPROP_ERROR_ARG_MISSING 6
 #define J9SYSPROP_ERROR_INVALID_VALUE  7
@@ -998,6 +1147,13 @@ typedef struct J9CudaGlobals {
 	jmethodID exception_init;
 	jmethodID runnable_run;
 } J9CudaGlobals;
+
+#define J9_MAP_CACHE_SLOTS 2
+
+typedef struct J9MapCacheEntry {
+	void *key;
+	U_32 bits[J9_MAP_CACHE_SLOTS];
+} J9MapCacheEntry;
 
 #if defined(J9VM_OPT_SHARED_CLASSES)
 
@@ -1220,6 +1376,8 @@ typedef struct J9SharedClassJavacoreDataDescriptor {
 	UDATA numStartupHints;
 	UDATA startupHintBytes;
 	UDATA nattach;
+	UDATA currentOSPageSize; /* memory page size of the current running OS */
+	U_32 extraStartupHints;
 } J9SharedClassJavacoreDataDescriptor;
 
 typedef struct J9SharedStringFarm {
@@ -1270,7 +1428,7 @@ typedef struct J9SharedCacheHeader {
 	J9WSRP corruptFlagPtr;
 	J9SRP sharedStringHead;
 	J9SRP sharedStringTail;
-	J9SRP unused1;
+	U_32 extraStartupHints; /* Number of addtional startup hints allowed to be stored into the shared cache */
 	U_32 totalSharedStringNodes;
 	U_32 totalSharedStringWeight;
 	U_32 readWriteFlags;
@@ -1318,6 +1476,7 @@ typedef struct J9SharedClassCacheDescriptor {
 	void* metadataStartAddress;
 	struct J9MemorySegment* metadataMemorySegment;
 	UDATA cacheSizeBytes;
+	UDATA osPageSizeInHeader;
 	void* deployedROMClassStartAddress;
 	struct J9SharedClassCacheDescriptor* next;
 	struct J9SharedClassCacheDescriptor* previous;
@@ -1352,6 +1511,7 @@ typedef struct J9SharedCacheAPI {
 #if defined(J9VM_OPT_JITSERVER)
 	U_8 usingJITServerAOTCacheLayer;
 #endif /* defined(J9VM_OPT_JITSERVER) */
+	I_32 newStartupHints;
 } J9SharedCacheAPI;
 
 typedef struct J9SharedClassConfig {
@@ -1415,6 +1575,11 @@ typedef struct J9SharedClassConfig {
 	const char* cacheName;
 	I_8 layer;
 	U_64 readOnlyCacheRuntimeFlags;
+	/* This table is a cache for exceptiondescribe.c:findJ9ClassForROMClass
+	 * and does not contain mappings for every romClass to ramClass.
+	 */
+	struct J9HashTable *romToRamHashTable;
+	omrthread_rwmutex_t romToRamHashTableMutex;
 } J9SharedClassConfig;
 
 typedef struct J9SharedClassPreinitConfig {
@@ -1443,7 +1608,7 @@ typedef struct J9ShrCompositeCacheCommonInfo {
 	UDATA oldWriterCount;
 } J9ShrCompositeCacheCommonInfo;
 
-#endif /* J9VM_OPT_SHARED_CLASSES */
+#endif /* defined(J9VM_OPT_SHARED_CLASSES) */
 
 typedef struct J9RASSystemInfo {
 	struct J9RASSystemInfo* linkPrevious;
@@ -1511,7 +1676,7 @@ typedef struct J9VMLSTable {
 	UDATA keys[256];
 } J9VMLSTable;
 
-#endif /* J9VM_OPT_VM_LOCAL_STORAGE */
+#endif /* defined(J9VM_OPT_VM_LOCAL_STORAGE) */
 
 /* @ddr_namespace: map_to_type=J9Statistic */
 
@@ -1572,7 +1737,7 @@ typedef struct J9ExceptionHandler {
 	U_32 exceptionClassIndex;
 } J9ExceptionHandler;
 
-#if defined(__xlC__) || defined(J9ZOS390)  /* Covers: Z/OS, AIX, Linux PPC*/
+#if defined(__xlC__) || defined(J9ZOS390) || defined(__open_xl__)  /* Covers: AIX, Linux PPC and z/OS. */
 #pragma pack(1)
 #elif defined(__ibmxl__) || defined(__GNUC__) || defined(_MSC_VER) /* Covers: Linux PPC LE, Windows, Linux x86 */
 #pragma pack(push, 1)
@@ -1594,7 +1759,7 @@ typedef struct J9MethodParametersData {
 	J9MethodParameter parameters;
 } J9MethodParametersData;
 
-#if defined(__xlC__) || defined(__ibmxl__) || defined(__GNUC__) || defined(_MSC_VER) || defined(J9ZOS390) || defined(LINUX) || defined(AIXPPC) || defined(WIN32)
+#if defined(__xlC__) || defined(__ibmxl__) || defined(__open_xl__) || defined(__GNUC__) || defined(_MSC_VER) || defined(J9ZOS390) || defined(LINUX) || defined(AIXPPC) || defined(WIN32)
 #pragma pack(pop)
 #else
 #error "Unrecognized compiler. Cannot pack struct J9MethodParameter and J9MethodParametersData."
@@ -1623,9 +1788,16 @@ typedef struct J9ObjectMonitor {
 #if defined(J9VM_THR_SMART_DEFLATION)
 	UDATA proDeflationCount;
 	UDATA antiDeflationCount;
-#endif /* J9VM_THR_SMART_DEFLATION */
+#endif /* defined(J9VM_THR_SMART_DEFLATION) */
 	j9objectmonitor_t alternateLockword;
 	U_32 hash;
+#if JAVA_SPEC_VERSION >= 24
+	volatile U_32 virtualThreadWaitCount;
+	volatile U_32 platformThreadWaitCount;
+	struct J9VMContinuation* ownerContinuation;
+	struct J9VMContinuation* waitingContinuations;
+	struct J9ObjectMonitor* next;
+#endif /* JAVA_SPEC_VERSION >= 24 */
 } J9ObjectMonitor;
 
 typedef struct J9ClassWalkState {
@@ -1673,7 +1845,7 @@ typedef struct J9ROMFieldOffsetWalkResult {
 	IDATA backfillOffset;
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
 	struct J9Class* flattenedClass;
-#endif /* J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES */
+#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 } J9ROMFieldOffsetWalkResult;
 
 typedef struct J9HiddenInstanceField {
@@ -1719,7 +1891,7 @@ typedef struct J9ROMFieldOffsetWalkState {
 	UDATA currentFlatDoubleOffset;
 	BOOLEAN classRequiresPrePadding;
 	UDATA flatBackFillSize;
-#endif /* J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES */
+#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 } J9ROMFieldOffsetWalkState;
 
 #define J9VM_FIELD_OFFSET_WALK_MAXIMUM_HIDDEN_FIELDS_PER_CLASS  J9VM_MAX_HIDDEN_FIELDS_PER_CLASS
@@ -1733,7 +1905,6 @@ typedef struct J9ROMFieldOffsetWalkState {
 #define J9VM_FIELD_OFFSET_WALK_PREINDEX_INTERFACE_FIELDS  0x80
 #define J9VM_FIELD_OFFSET_WALK_BACKFILL_FLAT_OBJECT_FIELD  0x100
 #define J9VM_FIELD_OFFSET_WALK_BACKFILL_FLAT_SINGLE_FIELD  0x200
-
 
 typedef struct J9ROMFullTraversalFieldOffsetWalkState {
 	struct J9JavaVM* javaVM;
@@ -1803,13 +1974,13 @@ typedef struct J9AnnotationState {
 } J9AnnotationState;
 
 typedef struct J9Module {
-	j9object_t moduleName;
+	struct J9UTF8 *moduleName;
 	j9object_t moduleObject;
 	j9object_t version;
-	struct J9ClassLoader* classLoader;
-	struct J9HashTable* readAccessHashTable;
-	struct J9HashTable* removeAccessHashTable;
-	struct J9HashTable* removeExportsHashTable;
+	struct J9ClassLoader *classLoader;
+	struct J9HashTable *readAccessHashTable;
+	struct J9HashTable *removeAccessHashTable;
+	struct J9HashTable *removeExportsHashTable;
 	BOOLEAN isLoose;
 	BOOLEAN isOpen;
 } J9Module;
@@ -1967,7 +2138,7 @@ typedef struct J9TranslationBufferSet {
 
 typedef struct J9BytecodeVerificationData {
 	IDATA  ( *verifyBytecodesFunction)(struct J9PortLibrary *portLib, struct J9Class *ramClass, struct J9ROMClass *romClass, struct J9BytecodeVerificationData *verifyData) ;
-	UDATA  ( *checkClassLoadingConstraintForNameFunction)(struct J9VMThread* vmThread, struct J9ClassLoader* loader1, struct J9ClassLoader* loader2, U_8* name1, U_8* name2, UDATA length, UDATA copyUTFs) ;
+	UDATA  ( *checkClassLoadingConstraintForNameFunction)(struct J9VMThread *vmThread, struct J9ClassLoader *loader1, struct J9ClassLoader *loader2, U_8 *name1, U_8 *name2, UDATA length, BOOLEAN copyName1, BOOLEAN copyName2) ;
 	struct J9UTF8** classNameList;
 	struct J9UTF8** classNameListEnd;
 	U_8* classNameSegment;
@@ -2052,7 +2223,7 @@ typedef struct J9NativeLibrary {
 	char* name;
 #if defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT)
 	UDATA doSwitching;
-#endif /* J9VM_OPT_JAVA_OFFLOAD_SUPPORT */
+#endif /* defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT) */
 	struct J9NativeLibrary* next;
 	UDATA linkMode;
 	UDATA userData;
@@ -2352,27 +2523,25 @@ typedef struct J9ROMMethodHandleRef {
 #define MH_REF_INVOKEVIRTUAL  5
 #define MH_REF_PUTFIELD  3
 
-/* Constants mapped from java.lang.invoke.MethodHandleNatives$Constants
+/* Constants mapped from java.lang.invoke.MethodHandleNatives$Constants.
  * These constants are validated by the MethodHandleNatives$Constants.verifyConstants()
- * method when Java assertions are enabled
+ * method when Java assertions are enabled.
  */
-#define MN_IS_METHOD		0x00010000
-#define MN_IS_CONSTRUCTOR	0x00020000
-#define MN_IS_FIELD			0x00040000
-#define MN_IS_TYPE			0x00080000
-#define MN_CALLER_SENSITIVE	0x00100000
-#define MN_TRUSTED_FINAL	0x00200000
-#define MN_HIDDEN_MEMBER	0x00400000
+#define MN_IS_METHOD            0x00010000
+#define MN_IS_CONSTRUCTOR       0x00020000
+#define MN_IS_FIELD             0x00040000
+#define MN_IS_TYPE              0x00080000
+#define MN_CALLER_SENSITIVE     0x00100000
+#define MN_TRUSTED_FINAL        0x00200000
+#define MN_HIDDEN_MEMBER        0x00400000
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-#define MN_FLAT_FIELD		0x00800000
-#define MN_NULL_RESTRICTED	0x01000000
-#define MN_REFERENCE_KIND_SHIFT		26
-/* (flag >> MN_REFERENCE_KIND_SHIFT) & MN_REFERENCE_KIND_MASK */
-#define MN_REFERENCE_KIND_MASK		(0x3C000000 >> MN_REFERENCE_KIND_SHIFT)
-#else /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
-#define MN_REFERENCE_KIND_SHIFT	24
-#define MN_REFERENCE_KIND_MASK	0xF		/* (flag >> MN_REFERENCE_KIND_SHIFT) & MN_REFERENCE_KIND_MASK */
+#define MN_NULL_RESTRICTED      0x00800000
 #endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
+#define MN_REFERENCE_KIND_SHIFT 24
+#define MN_REFERENCE_KIND_MASK  (0x0F000000 >> MN_REFERENCE_KIND_SHIFT)
+
+#define MN_GET_REFERENCE_KIND(flags) \
+	(((flags) >> MN_REFERENCE_KIND_SHIFT) & MN_REFERENCE_KIND_MASK)
 
 typedef struct J9ROMMethodRef {
 	U_32 classRefCPIndex;
@@ -2412,7 +2581,7 @@ typedef struct J9WalkStackFramesAndSlotsStorage {
 	UDATA* jit_r13;
 	UDATA* jit_r14;
 	UDATA* jit_r15;
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 	UDATA* jit_eax;
 	UDATA* jit_ebx;
 	UDATA* jit_ecx;
@@ -2421,8 +2590,8 @@ typedef struct J9WalkStackFramesAndSlotsStorage {
 	UDATA* jit_esi;
 	UDATA* jit_ebp;
 	UDATA* padding;
-#endif /* J9VM_ENV_DATA64 */
-#elif defined(J9VM_ARCH_POWER) /* J9VM_ARCH_X86 */
+#endif /* defined(J9VM_ENV_DATA64) */
+#elif defined(J9VM_ARCH_POWER) /* defined(J9VM_ARCH_X86) */
 	UDATA* jit_r0;
 	UDATA* jit_r1;
 	UDATA* jit_r2;
@@ -2455,7 +2624,7 @@ typedef struct J9WalkStackFramesAndSlotsStorage {
 	UDATA* jit_r29;
 	UDATA* jit_r30;
 	UDATA* jit_r31;
-#elif defined(J9VM_ARCH_RISCV) /* J9VM_ARCH_POWER */
+#elif defined(J9VM_ARCH_RISCV) /* defined(J9VM_ARCH_POWER) */
 	UDATA* jit_r0;
 	UDATA* jit_r1;
 	UDATA* jit_r2;
@@ -2488,7 +2657,7 @@ typedef struct J9WalkStackFramesAndSlotsStorage {
 	UDATA* jit_r29;
 	UDATA* jit_r30;
 	UDATA* jit_r31;
-#elif defined(J9VM_ARCH_S390) /* J9VM_ARCH_RISCV */
+#elif defined(J9VM_ARCH_S390) /* defined(J9VM_ARCH_RISCV) */
 	UDATA* jit_r0;
 	UDATA* jit_r1;
 	UDATA* jit_r2;
@@ -2522,8 +2691,8 @@ typedef struct J9WalkStackFramesAndSlotsStorage {
 	UDATA* jit_r29;
 	UDATA* jit_r30;
 	UDATA* jit_r31;
-#endif /* !J9VM_ENV_DATA64 */
-#elif defined(J9VM_ARCH_ARM) /* J9VM_ARCH_S390 */
+#endif /* !defined(J9VM_ENV_DATA64) */
+#elif defined(J9VM_ARCH_ARM) /* defined(J9VM_ARCH_S390) */
 	UDATA* jit_r0;
 	UDATA* jit_r1;
 	UDATA* jit_r2;
@@ -2536,7 +2705,7 @@ typedef struct J9WalkStackFramesAndSlotsStorage {
 	UDATA* jit_r9;
 	UDATA* jit_r10;
 	UDATA* jit_r11;
-#elif defined(J9VM_ARCH_AARCH64) /* J9VM_ARCH_ARM */
+#elif defined(J9VM_ARCH_AARCH64) /* defined(J9VM_ARCH_ARM) */
 	UDATA* jit_r0;
 	UDATA* jit_r1;
 	UDATA* jit_r2;
@@ -2569,9 +2738,9 @@ typedef struct J9WalkStackFramesAndSlotsStorage {
 	UDATA* jit_r29;
 	UDATA* jit_r30;
 	UDATA* jit_r31;
-#else /* J9VM_ARCH_AARCH64 */
+#else /* defined(J9VM_ARCH_AARCH64) */
 #error Unknown processor architecture
-#endif /* J9VM_ARCH_AARCH64 */
+#endif /* defined(J9VM_ARCH_AARCH64) */
 } J9WalkStackFramesAndSlotsStorage;
 
 typedef struct J9I2JState {
@@ -2739,12 +2908,12 @@ typedef struct J9SFJ2IFrame {
 	UDATA jit_r11;
 	UDATA jit_r10;
 	UDATA jit_r9;
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 	UDATA jit_esi;
 	UDATA jit_ecx;
 	UDATA jit_ebx;
-#endif /* J9VM_ENV_DATA64 */
-#elif defined(J9VM_ARCH_POWER) /* J9VM_ARCH_X86 */
+#endif /* defined(J9VM_ENV_DATA64) */
+#elif defined(J9VM_ARCH_POWER) /* defined(J9VM_ARCH_X86) */
 	UDATA jit_r31;
 	UDATA jit_r30;
 	UDATA jit_r29;
@@ -2763,8 +2932,8 @@ typedef struct J9SFJ2IFrame {
 	UDATA jit_r16;
 #if !defined(J9VM_ENV_DATA64)
 	UDATA jit_r15;
-#endif /* !J9VM_ENV_DATA64 */
-#elif defined(J9VM_ARCH_RISCV) /* J9VM_ARCH_POWER */
+#endif /* !defined(J9VM_ENV_DATA64) */
+#elif defined(J9VM_ARCH_RISCV) /* defined(J9VM_ARCH_POWER) */
 	UDATA jit_r0;
 	UDATA jit_r1;
 	UDATA jit_r2;
@@ -2797,7 +2966,7 @@ typedef struct J9SFJ2IFrame {
 	UDATA jit_r29;
 	UDATA jit_r30;
 	UDATA jit_r31;
-#elif defined(J9VM_ARCH_S390) /* J9VM_ARCH_RISCV */
+#elif defined(J9VM_ARCH_S390) /* defined(J9VM_ARCH_RISCV) */
 #if !defined(J9VM_ENV_DATA64)
 	UDATA jit_r28;
 	UDATA jit_r27;
@@ -2806,7 +2975,7 @@ typedef struct J9SFJ2IFrame {
 	UDATA jit_r24;
 	UDATA jit_r23;
 	UDATA jit_r22;
-#endif /* !J9VM_ENV_DATA64 */
+#endif /* !defined(J9VM_ENV_DATA64) */
 	UDATA jit_r12;
 	UDATA jit_r11;
 	UDATA jit_r10;
@@ -2814,11 +2983,11 @@ typedef struct J9SFJ2IFrame {
 	UDATA jit_r8;
 	UDATA jit_r7;
 	UDATA jit_r6;
-#elif defined(J9VM_ARCH_ARM) /* J9VM_ARCH_S390 */
+#elif defined(J9VM_ARCH_ARM) /* defined(J9VM_ARCH_S390) */
 	UDATA jit_r10;
 	UDATA jit_r9;
 	UDATA jit_r6;
-#elif defined(J9VM_ARCH_AARCH64) /* J9VM_ARCH_ARM */
+#elif defined(J9VM_ARCH_AARCH64) /* defined(J9VM_ARCH_ARM) */
 	UDATA jit_r21;
 	UDATA jit_r22;
 	UDATA jit_r23;
@@ -2827,9 +2996,9 @@ typedef struct J9SFJ2IFrame {
 	UDATA jit_r26;
 	UDATA jit_r27;
 	UDATA jit_r28;
-#else /* J9VM_ARCH_AARCH64 */
+#else /* defined(J9VM_ARCH_AARCH64) */
 #error Unknown processor architecture
-#endif /* J9VM_ARCH_AARCH64 */
+#endif /* defined(J9VM_ARCH_AARCH64) */
 	UDATA specialFrameFlags;
 	void* exitPoint;
 	U_8* returnAddress;
@@ -2947,7 +3116,7 @@ typedef struct J9DLTInformationBlock {
 	I_32 cursor;
 #if defined(J9VM_ENV_DATA64)
 	U_32 padding;
-#endif /* J9VM_ENV_DATA64 */
+#endif /* defined(J9VM_ENV_DATA64) */
 } J9DLTInformationBlock;
 
 #define J9DLT_HISTORY_SIZE  J9VM_DLT_HISTORY_SIZE
@@ -2970,7 +3139,7 @@ typedef struct J9VMGCSegregatedAllocationCacheEntry {
 	UDATA* top;
 } J9VMGCSegregatedAllocationCacheEntry;
 
-#endif /* J9VM_GC_REALTIME */
+#endif /* defined(J9VM_GC_REALTIME) */
 
 #if defined(J9VM_GC_THREAD_LOCAL_HEAP)
 
@@ -2983,7 +3152,7 @@ typedef struct J9ModronThreadLocalHeap {
 	void* memoryPool;
 } J9ModronThreadLocalHeap;
 
-#endif /* J9VM_GC_THREAD_LOCAL_HEAP */
+#endif /* defined(J9VM_GC_THREAD_LOCAL_HEAP) */
 
 typedef struct J9JavaStack {
 	UDATA* end;
@@ -3138,7 +3307,7 @@ typedef struct J9IndexableObjectContiguous {
 	U_32 size;
 #if defined(J9VM_ENV_DATA64) && defined(OMR_GC_FULL_POINTERS)
 	U_32 padding;
-#endif /* J9VM_ENV_DATA64 && !OMR_GC_COMPRESSED_POINTERS */
+#endif /* defined(J9VM_ENV_DATA64) && defined(OMR_GC_FULL_POINTERS) */
 } J9IndexableObjectContiguous;
 
 typedef struct J9IndexableObjectContiguousCompressed {
@@ -3151,7 +3320,7 @@ typedef struct J9IndexableObjectContiguousFull {
 	U_32 size;
 #if defined(J9VM_ENV_DATA64)
 	U_32 padding;
-#endif /* J9VM_ENV_DATA64 */
+#endif /* defined(J9VM_ENV_DATA64) */
 } J9IndexableObjectContiguousFull;
 
 typedef struct J9IndexableObjectDiscontiguous {
@@ -3160,7 +3329,7 @@ typedef struct J9IndexableObjectDiscontiguous {
 	U_32 size;
 #if defined(OMR_GC_COMPRESSED_POINTERS) || !defined(J9VM_ENV_DATA64)
 	U_32 padding;
-#endif /* OMR_GC_COMPRESSED_POINTERS || !J9VM_ENV_DATA64 */
+#endif /* defined(OMR_GC_COMPRESSED_POINTERS) || !defined(J9VM_ENV_DATA64) */
 } J9IndexableObjectDiscontiguous;
 
 typedef struct J9IndexableObjectDiscontiguousCompressed {
@@ -3176,12 +3345,11 @@ typedef struct J9IndexableObjectDiscontiguousFull {
 	U_32 size;
 #if !defined(J9VM_ENV_DATA64)
 	U_32 padding;
-#endif /* !J9VM_ENV_DATA64 */
+#endif /* !defined(J9VM_ENV_DATA64) */
 } J9IndexableObjectDiscontiguousFull;
 
-
 /* Representation of the J9IndexableObjectContiguous structure that includes a pointer to the data address field of the indexable object.
- * This structure will be used in-lieu of J9IndexableObjectContiguous if J9JavaVM flag "isIndexableDataAddrPresent" is TRUE.  */
+ * This structure will be used in-lieu of J9IndexableObjectContiguous if J9JavaVM flag "isVirtualLargeObjectHeapEnabled" is TRUE.  */
 typedef struct J9IndexableObjectWithDataAddressContiguous {
 	j9objectclass_t clazz;
 	U_32 size;
@@ -3194,7 +3362,7 @@ typedef struct J9IndexableObjectWithDataAddressContiguous {
 } J9IndexableObjectWithDataAddressContiguous;
 
 /* Representation of the J9IndexableObjectContiguousCompressed structure that includes a pointer to the data address field of the indexable object.
- * This structure will be used in-lieu of J9IndexableObjectContiguousCompressed if J9JavaVM flag "isIndexableDataAddrPresent" is TRUE.  */
+ * This structure will be used in-lieu of J9IndexableObjectContiguousCompressed if J9JavaVM flag "isVirtualLargeObjectHeapEnabled" is TRUE.  */
 typedef struct J9IndexableObjectWithDataAddressContiguousCompressed {
 	U_32 clazz;
 	U_32 size;
@@ -3204,7 +3372,7 @@ typedef struct J9IndexableObjectWithDataAddressContiguousCompressed {
 } J9IndexableObjectWithDataAddressContiguousCompressed;
 
 /* Representation of the J9IndexableObjectContiguousFull structure that includes a pointer to the data address field of the indexable object.
- * This structure will be used in-lieu of J9IndexableObjectContiguousFull if J9JavaVM flag "isIndexableDataAddrPresent" is TRUE.  */
+ * This structure will be used in-lieu of J9IndexableObjectContiguousFull if J9JavaVM flag "isVirtualLargeObjectHeapEnabled" is TRUE.  */
 typedef struct J9IndexableObjectWithDataAddressContiguousFull {
 	UDATA clazz;
 	U_32 size;
@@ -3215,7 +3383,7 @@ typedef struct J9IndexableObjectWithDataAddressContiguousFull {
 } J9IndexableObjectWithDataAddressContiguousFull;
 
 /* Representation of the J9IndexableObjectDiscontiguous structure that includes a pointer to the data address field of the indexable object.
- * This structure will be used in-lieu of J9IndexableObjectDiscontiguous if J9JavaVM flag "isIndexableDataAddrPresent" is TRUE.  */
+ * This structure will be used in-lieu of J9IndexableObjectDiscontiguous if J9JavaVM flag "isVirtualLargeObjectHeapEnabled" is TRUE.  */
 typedef struct J9IndexableObjectWithDataAddressDiscontiguous {
 	j9objectclass_t clazz;
 	U_32 mustBeZero;
@@ -3229,7 +3397,7 @@ typedef struct J9IndexableObjectWithDataAddressDiscontiguous {
 } J9IndexableObjectWithDataAddressDiscontiguous;
 
 /* Representation of the J9IndexableObjectDiscontiguousCompressed structure that includes a pointer to the data address field of the indexable object.
- * This structure will be used in-lieu of J9IndexableObjectDiscontiguousCompressed if J9JavaVM flag "isIndexableDataAddrPresent" is TRUE.  */
+ * This structure will be used in-lieu of J9IndexableObjectDiscontiguousCompressed if J9JavaVM flag "isVirtualLargeObjectHeapEnabled" is TRUE.  */
 typedef struct J9IndexableObjectWithDataAddressDiscontiguousCompressed {
 	U_32 clazz;
 	U_32 mustBeZero;
@@ -3241,7 +3409,7 @@ typedef struct J9IndexableObjectWithDataAddressDiscontiguousCompressed {
 } J9IndexableObjectWithDataAddressDiscontiguousCompressed;
 
 /* Representation of the J9IndexableObjectDiscontiguousFull structure that includes a pointer to the data address field of the indexable object.
- * This structure will be used in-lieu of J9IndexableObjectDiscontiguousFull if J9JavaVM flag "isIndexableDataAddrPresent" is TRUE.  */
+ * This structure will be used in-lieu of J9IndexableObjectDiscontiguousFull if J9JavaVM flag "isVirtualLargeObjectHeapEnabled" is TRUE.  */
 typedef struct J9IndexableObjectWithDataAddressDiscontiguousFull {
 	UDATA clazz;
 	U_32 mustBeZero;
@@ -3344,7 +3512,7 @@ typedef struct J9Class {
 	UDATA* instanceDescription;
 #if defined(J9VM_GC_LEAF_BITS)
 	UDATA* instanceLeafDescription;
-#endif /* J9VM_GC_LEAF_BITS */
+#endif /* defined(J9VM_GC_LEAF_BITS) */
 	UDATA instanceHotFieldDescription;
 	UDATA selfReferencingField1;
 	UDATA selfReferencingField2;
@@ -3374,11 +3542,11 @@ typedef struct J9Class {
 	j9object_t* invokeCache;
 #else /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 	j9object_t* methodTypes;
-#endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 	j9object_t* varHandleMethodTypes;
+#endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 #if defined(J9VM_INTERP_CUSTOM_SPIN_OPTIONS)
 	struct J9VMCustomSpinOptions *customSpinOption;
-#endif /* J9VM_INTERP_CUSTOM_SPIN_OPTIONS */
+#endif /* defined(J9VM_INTERP_CUSTOM_SPIN_OPTIONS) */
 	struct J9Method** staticSplitMethodTable;
 	struct J9Method** specialSplitMethodTable;
 	struct J9JITExceptionTable* jitMetaDataList;
@@ -3415,7 +3583,7 @@ typedef struct J9Class {
 #define J9CLASS_HAS_REFERENCES(clazz) (J9_ARE_ALL_BITS_SET((clazz)->classFlags, J9ClassHasReferences))
 #define J9CLASS_HAS_4BYTE_PREPADDING(clazz) (J9_ARE_ALL_BITS_SET((clazz)->classFlags, J9ClassRequiresPrePadding))
 #define J9CLASS_PREPADDING_SIZE(clazz) (J9CLASS_HAS_4BYTE_PREPADDING((clazz)) ? sizeof(U_32) : 0)
-#else
+#else /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 #define J9CLASS_HAS_REFERENCES(clazz) TRUE
 #define J9CLASS_HAS_4BYTE_PREPADDING(clazz) FALSE
 #define J9CLASS_PREPADDING_SIZE(clazz) 0
@@ -3442,7 +3610,7 @@ typedef struct J9ArrayClass {
 	UDATA* instanceDescription;
 #if defined(J9VM_GC_LEAF_BITS)
 	UDATA* instanceLeafDescription;
-#endif /* J9VM_GC_LEAF_BITS */
+#endif /* defined(J9VM_GC_LEAF_BITS) */
 	UDATA instanceHotFieldDescription;
 	UDATA selfReferencingField1;
 	UDATA selfReferencingField2;
@@ -3472,11 +3640,11 @@ typedef struct J9ArrayClass {
 	j9object_t* invokeCache;
 #else /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 	j9object_t* methodTypes;
-#endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 	j9object_t* varHandleMethodTypes;
+#endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 #if defined(J9VM_INTERP_CUSTOM_SPIN_OPTIONS)
 	struct J9VMCustomSpinOptions *customSpinOption;
-#endif /* J9VM_INTERP_CUSTOM_SPIN_OPTIONS */
+#endif /* defined(J9VM_INTERP_CUSTOM_SPIN_OPTIONS) */
 	struct J9Method** staticSplitMethodTable;
 	struct J9Method** specialSplitMethodTable;
 	struct J9JITExceptionTable* jitMetaDataList;
@@ -3501,7 +3669,6 @@ typedef struct J9ArrayClass {
 #endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 } J9ArrayClass;
 
-
 #if defined(LINUX) && defined(J9VM_ARCH_X86) && !defined(OSX)
 /* Only enable the assert on linux x86 as not all the versions
  * of the compilers we use (xlc) support static_asserts in on
@@ -3511,9 +3678,9 @@ typedef struct J9ArrayClass {
 /* Hide the asserts from DDR */
 #if !defined(TYPESTUBS_H)
 static_assert(sizeof(J9Class) == sizeof(J9ArrayClass), "J9Class and J9ArrayClass must be the same size");
-#endif /* !TYPESTUBS_H */
-#endif /* __cplusplus */
-#endif /* LINUX && J9VM_ARCH_X86 */
+#endif /* !defined(TYPESTUBS_H) */
+#endif /* defined(__cplusplus) */
+#endif /* defined(LINUX) && defined(J9VM_ARCH_X86) && !defined(OSX) */
 
 typedef struct J9HookedNative {
 	struct J9NativeLibrary* nativeLibrary;
@@ -3541,7 +3708,7 @@ typedef struct J9ClassLoader {
 	UDATA flags;
 #if defined(J9VM_NEEDS_JNI_REDIRECTION)
 	struct J9JNIRedirectionBlock* jniRedirectionBlocks;
-#endif /* J9VM_NEEDS_JNI_REDIRECTION */
+#endif /* defined(J9VM_NEEDS_JNI_REDIRECTION) */
 	struct J9JITExceptionTable* jitMetaDataList;
 	struct J9MemorySegment* classSegments;
 	struct J9RAMClassFreeListBlock* ramClassLargeBlockFreeList;
@@ -3562,21 +3729,67 @@ typedef struct J9ClassLoader {
 	omrthread_rwmutex_t cpEntriesMutex;
 	UDATA initClassPathEntryCount;
 	UDATA asyncGetCallTraceUsed;
+	omrthread_monitor_t mapCacheMutex;
+	struct J9HashTable* localmapCache;
+	struct J9HashTable* argsbitsCache;
+	struct J9HashTable* stackmapCache;
+#if defined(J9VM_OPT_JFR)
+	J9HashTable *typeIDs;
+#endif /* defined(J9VM_OPT_JFR) */
+
+	/**
+	 * The set of class loaders directly observed to outlive this one.
+	 *
+	 * These are the defining loaders of classes for which this loader is an
+	 * initiating loader but not itself the defining loader. As long as this
+	 * loader remains live, such classes and therefore their defining loaders
+	 * are also live. Every loader in the transitive closure will outlive this
+	 * loader.
+	 *
+	 * Here the term "outlive" should be understood to be non-strict. That is,
+	 * two loaders with the exact same lifetime outlive each other.
+	 *
+	 * Permanent loaders are excluded, since they would be uninformative
+	 * (systemClassLoader, applicationClassLoader, and extensionClassLoader).
+	 * Similarly, there's no need to maintain a graph of the permanent loaders,
+	 * so for them nothing will be added to the outliving loader set. Instead,
+	 * the field will be set to a special value to indicate that the loader is
+	 * permanent.
+	 *
+	 * The value is one of the following representations:
+	 * - empty set, permanent loader: J9CLASSLOADER_OUTLIVING_LOADERS_PERMANENT
+	 * - empty set: null
+	 * - singleton set: J9ClassLoader pointer tagged with J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG
+	 * - set of two or more: untagged pointer to J9HashTable of J9ClassLoader pointers
+	 *
+	 * Protected by J9JavaVM.classTableMutex.
+	 */
+	void *outlivingLoaders;
 } J9ClassLoader;
 
-#define J9CLASSLOADER_SHARED_CLASSES_ENABLED  8
-#define J9CLASSLOADER_SUBSET_VISIBILITY  64
-#define J9CLASSLOADER_PARALLEL_CAPABLE  0x100
-#define J9CLASSLOADER_ANON_CLASS_LOADER  0x400
-#define J9CLASSLOADER_CONTAINS_METHODS_PRESENT_IN_MCC_HASH  32
-#define J9CLASSLOADER_CONTAINS_JXES  1
-#define J9CLASSLOADER_INVARIANTS_SHARABLE  4
-#define J9CLASSLOADER_CLASSPATH_SET  2
-#define J9CLASSLOADER_CONTAINS_JITTED_METHODS  16
+#define J9CLASSLOADER_CONTAINS_JXES 0x1
+#define J9CLASSLOADER_CLASSPATH_SET 0x2
+#define J9CLASSLOADER_INVARIANTS_SHARABLE 0x4
+#define J9CLASSLOADER_SHARED_CLASSES_ENABLED 0x8
+#define J9CLASSLOADER_CONTAINS_JITTED_METHODS 0x10
+#define J9CLASSLOADER_CONTAINS_METHODS_PRESENT_IN_MCC_HASH 0x20
+#define J9CLASSLOADER_SUBSET_VISIBILITY 0x40
+#define J9CLASSLOADER_UNUSED_0x80 0x80
+#define J9CLASSLOADER_PARALLEL_CAPABLE 0x100
+#define J9CLASSLOADER_UNUSED_0x200 0x200
+#define J9CLASSLOADER_ANON_CLASS_LOADER 0x400
 
 #define J9CLASSLOADER_CLASSLOADEROBJECT(currentThread, object) J9VMTHREAD_JAVAVM(currentThread)->memoryManagerFunctions->j9gc_objaccess_readObjectFromInternalVMSlot((currentThread), J9VMTHREAD_JAVAVM(currentThread), (j9object_t*)&((object)->classLoaderObject))
 #define J9CLASSLOADER_SET_CLASSLOADEROBJECT(currentThread, object, value) J9VMTHREAD_JAVAVM(currentThread)->memoryManagerFunctions->j9gc_objaccess_storeObjectToInternalVMSlot((currentThread), (j9object_t*)&((object)->classLoaderObject), (value))
 #define TMP_J9CLASSLOADER_CLASSLOADEROBJECT(object) ((object)->classLoaderObject)
+
+#define J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG 1
+
+/* Use 2 so that J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG won't be set.
+ * This way it's possible to test for J9CLASSLOADER_OUTLIVING_LOADERS_PERMANENT
+ * and J9CLASSLOADER_OUTLIVING_LOADERS_SINGLE_TAG in either order.
+ */
+#define J9CLASSLOADER_OUTLIVING_LOADERS_PERMANENT ((void *)(UDATA)2)
 
 #if defined(_MSC_VER)
 #pragma warning(push)
@@ -3591,6 +3804,8 @@ typedef struct J9UTF8 {
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #endif /* defined(_MSC_VER) */
+
+#define J9UTF8_MAX_LENGTH U_16_MAX
 
 typedef struct J9ROMClass {
 	U_32 romSize;
@@ -3652,11 +3867,11 @@ typedef struct J9ROMClass {
 #if JAVA_SPEC_VERSION >= 11
 	U_32 padding;
 #endif /* JAVA_SPEC_VERSION >= 11 */
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 #if JAVA_SPEC_VERSION < 11
 	U_32 padding;
 #endif /* JAVA_SPEC_VERSION < 11 */
-#endif /* J9VM_ENV_DATA64 */
+#endif /* defined(J9VM_ENV_DATA64) */
 } J9ROMClass;
 
 #define J9ROMCLASS_CLASSNAME(base) NNSRP_GET((base)->className, struct J9UTF8*)
@@ -3719,8 +3934,12 @@ typedef struct J9ROMArrayClass {
 	U_32 optionalFlags;
 	J9SRP optionalInfo;
 	U_32 maxBranchCount;
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+	U_32 invokeCacheCount;
+#else /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 	U_32 methodTypeCount;
 	U_32 varHandleMethodTypeCount;
+#endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 	U_32 bsmCount;
 	U_32 callSiteCount;
 	J9SRP callSiteData;
@@ -3730,16 +3949,18 @@ typedef struct J9ROMArrayClass {
 	U_16 specialSplitMethodRefCount;
 	J9SRP staticSplitMethodRefIndexes;
 	J9SRP specialSplitMethodRefIndexes;
+#if defined(J9VM_OPT_METHOD_HANDLE)
 	J9SRP varHandleMethodTypeLookupTable;
+#endif /* defined(J9VM_OPT_METHOD_HANDLE) */
 #if defined(J9VM_ENV_DATA64)
 #if JAVA_SPEC_VERSION >= 11
 	U_32 padding;
 #endif /* JAVA_SPEC_VERSION >= 11 */
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 #if JAVA_SPEC_VERSION < 11
 	U_32 padding;
 #endif /* JAVA_SPEC_VERSION < 11 */
-#endif /* J9VM_ENV_DATA64 */
+#endif /* defined(J9VM_ENV_DATA64) */
 } J9ROMArrayClass;
 
 #define J9ROMARRAYCLASS_CLASSNAME(base) NNSRP_GET((base)->className, struct J9UTF8*)
@@ -3816,11 +4037,11 @@ typedef struct J9ROMReflectClass {
 #if JAVA_SPEC_VERSION >= 11
 	U_32 padding;
 #endif /* JAVA_SPEC_VERSION >= 11 */
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 #if JAVA_SPEC_VERSION < 11
 	U_32 padding;
 #endif /* JAVA_SPEC_VERSION < 11 */
-#endif /* J9VM_ENV_DATA64 */
+#endif /* defined(J9VM_ENV_DATA64) */
 } J9ROMReflectClass;
 
 #define J9ROMREFLECTCLASS_CLASSNAME(base) NNSRP_GET((base)->className, struct J9UTF8*)
@@ -4022,6 +4243,7 @@ typedef struct J9JITConfig {
 	void *old_slow_jitThrowInstantiationException;
 	void *old_slow_jitThrowNullPointerException;
 	void *old_slow_jitThrowWrongMethodTypeException;
+	void *old_slow_jitThrowIdentityException;
 	void *old_fast_jitTypeCheckArrayStoreWithNullCheck;
 	void *old_slow_jitTypeCheckArrayStoreWithNullCheck;
 	void *old_fast_jitTypeCheckArrayStore;
@@ -4144,6 +4366,9 @@ typedef struct J9JITConfig {
 	UDATA  ( *getByteCodeIndexFromStackMap)(struct J9JITExceptionTable *metaData, void *stackMap) ;
 	U_32  ( *getJitRegisterMap)(struct J9JITExceptionTable *metadata, void * stackMap) ;
 	UDATA  ( *getCurrentByteCodeIndexAndIsSameReceiver)(struct J9JITExceptionTable * methodMetaData, void * stackMap, void * currentInlinedCallSite, UDATA * isSameReceiver) ;
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+	struct J9JITInvokeBasicCallSite* ( *jitGetInvokeBasicCallSiteFromPC)(struct J9VMThread *vmThread, UDATA jitPC);
+#endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 	void  ( *jitCodeBreakpointAdded)(struct J9VMThread * currentThread, J9Method * method) ;
 	void  ( *jitCodeBreakpointRemoved)(struct J9VMThread * currentThread, J9Method * method) ;
 	void  ( *jitDataBreakpointAdded)(struct J9VMThread * currentThread) ;
@@ -4157,6 +4382,7 @@ typedef struct J9JITConfig {
 	void  ( *jitFlushCompilationQueue)(struct J9VMThread * currentThread, J9JITFlushCompilationQueueReason reason) ;
 	void  ( *jitDecompileMethodForFramePop)(struct J9VMThread * currentThread, UDATA skipCount) ;
 	void  ( *jitExceptionCaught)(struct J9VMThread * currentThread) ;
+	void  ( *jitAddPermanentLoader)(struct J9VMThread *currentThread, struct J9ClassLoader *loader);
 	void  ( *j9jit_printf)(void *voidConfig, const char *format, ...) ;
 	void* tracingHook;
 	void  ( *jitCheckScavengeOnResolve)(struct J9VMThread *currentThread) ;
@@ -4244,6 +4470,9 @@ typedef struct J9JITConfig {
 	UDATA osrStackFrameMaximumSize;
 	void* jitFillOSRBufferReturn;
 	IDATA  ( *launchGPU)(struct J9VMThread *vmThread, jobject invokeObject, J9Method *method, int deviceId, I_32 gridDimX, I_32 gridDimY, I_32 gridDimZ, I_32 blockDimX, I_32 blockDimY, I_32 blockDimZ, void **args) ;
+#if JAVA_SPEC_VERSION >= 24
+	void* jitExitInterpreter0RestoreAll;
+#endif /* JAVA_SPEC_VERSION >= 24 */
 	void* jitExitInterpreter0;
 	void* jitExitInterpreter1;
 	void* jitExitInterpreterF;
@@ -4261,7 +4490,7 @@ typedef struct J9JITConfig {
 	void* compilationRuntime;
 #if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
 	void ( *jitSetMutableCallSiteTarget)(struct J9VMThread *vmThread, j9object_t mcs, j9object_t newTarget) ;
-#endif /* J9VM_OPT_OPENJDK_METHODHANDLE */
+#endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 	U_8* (*codeCacheWarmAlloc)(void *codeCache);
 	U_8* (*codeCacheColdAlloc)(void *codeCache);
 	void ( *printAOTHeaderProcessorFeatures)(struct TR_AOTHeader * aotHeaderAddress, char * buff, const size_t BUFF_SIZE);
@@ -4272,8 +4501,13 @@ typedef struct J9JITConfig {
 	int32_t (*waitJITServerTermination)(struct J9JITConfig *jitConfig);
 	uint64_t clientUID;
 	uint64_t serverUID;
-#endif /* J9VM_OPT_JITSERVER */
+#endif /* defined(J9VM_OPT_JITSERVER) */
 	void (*jitAddNewLowToHighRSSRegion)(const char *name, uint8_t *start, uint32_t size, size_t pageSize);
+#if defined(J9VM_OPT_JITSERVER)
+	void *serverAOTMethodSet;
+	UDATA serverAOTQueryThread;
+#endif /* defined(J9VM_OPT_JITSERVER) */
+	I_32 lowCodeCacheFreeSpace; /* bool set to 1 when the JIT detects a very low amount of free code cache space; never reset */
 } J9JITConfig;
 
 #if defined(J9VM_OPT_CRIU_SUPPORT)
@@ -4311,6 +4545,8 @@ typedef struct J9DelayedLockingOpertionsRecord {
 #define J9VM_CRIU_ENABLE_CRIU_SEC_PROVIDER 0x40
 #define J9VM_CRAC_IS_CHECKPOINT_ENABLED 0x80
 #define J9VM_CRIU_SUPPORT_DEBUG_ON_RESTORE 0x100
+#define J9VM_CRIU_TRANSITION_TO_DEBUG_INTERPRETER 0x200
+#define J9VM_CRIU_ENABLE_TIME_COMPENSATION 0x400
 
 /* matches maximum count defined by JDWP in threadControl.c */
 #define J9VM_CRIU_MAX_DEBUG_THREADS_STORED 10
@@ -4357,6 +4593,8 @@ typedef struct J9CRIUCheckpointState {
 	int (*criuInitOptsFunctionPointerType)(void);
 	int (*criuDumpFunctionPointerType)(void);
 	void (*criuSetGhostFileLimitFunctionPointerType)(U_32 ghostFileLimit);
+	void (*criuSetTcpCloseFunctionPointerType)(BOOLEAN tcpClose);
+	void (*criuSetTcpTcpSkipInFlightFunctionPointerType)(BOOLEAN tcpSkipInFlight);
 	UDATA libCRIUHandle;
 	struct J9VMInitArgs *restoreArgsList;
 	char *restoreArgsChars;
@@ -4368,6 +4606,9 @@ typedef struct J9CRIUCheckpointState {
 	/* the array of threads is updated by the JDWP agent */
 	jthread javaDebugThreads[J9VM_CRIU_MAX_DEBUG_THREADS_STORED];
 	UDATA javaDebugThreadCount;
+	jvmtiEnv *jvmtienv;
+	jvmtiCapabilities requiredCapabilities;
+	BOOLEAN isDebugOnRestoreEnabled;
 } J9CRIUCheckpointState;
 #endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
 
@@ -4407,7 +4648,6 @@ typedef struct J9CRIUCheckpointState {
 #define J9JIT_COMPILE_CLINIT  0x400000
 #define J9JIT_JVMPI_INLINE_ALLOCATION_OFF  32
 
-
 #if defined(J9VM_ARCH_X86)
 
 typedef struct J9VMJITRegisterState {
@@ -4444,7 +4684,7 @@ typedef struct J9VMJITRegisterState {
 	UDATA jit_fpr13;
 	UDATA jit_fpr14;
 	UDATA jit_fpr15;
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 	UDATA jit_eax;
 	UDATA jit_ebx;
 	UDATA jit_ecx;
@@ -4469,10 +4709,10 @@ typedef struct J9VMJITRegisterState {
 	UDATA fpPreserved7hi;
 	UDATA jit_fpr7;
 	UDATA fpPreserved8hi;
-#endif /* J9VM_ENV_DATA64 */
+#endif /* defined(J9VM_ENV_DATA64) */
 } J9VMJITRegisterState;
 
-#endif /* J9VM_ARCH_X86 */
+#endif /* defined(J9VM_ARCH_X86) */
 
 typedef struct J9VMEntryLocalStorage {
 	struct J9VMEntryLocalStorage* oldEntryLocalStorage;
@@ -4483,13 +4723,13 @@ typedef struct J9VMEntryLocalStorage {
 	UDATA* gpLink;
 	UDATA* gpHandler;
 	struct J9VMThread* currentVMThread;
-#endif /* WIN32 && !J9VM_ENV_DATA64 */
+#endif /* defined(WIN32) && !defined(J9VM_ENV_DATA64) */
 #if defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT)
 	struct J9VMThread* currentVMThread;
-#endif /* J9VM_PORT_ZOS_CEEHDLRSUPPORT */
+#endif /* defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT) */
 #if defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT)
 	UDATA savedJavaOffloadState;
-#endif /* J9VM_OPT_JAVA_OFFLOAD_SUPPORT */
+#endif /* defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT) */
 	UDATA jitTempSpace[4];
 #if defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT)
 	UDATA calloutVMState;
@@ -4497,7 +4737,7 @@ typedef struct J9VMEntryLocalStorage {
 	UDATA* ceehdlrGPRBase;
 	UDATA* ceehdlrFPRBase;
 	UDATA* ceehdlrFPCLocation;
-#endif /* J9VM_PORT_ZOS_CEEHDLRSUPPORT */
+#endif /* defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT) */
 	UDATA** machineSPSaveSlot;
 } J9VMEntryLocalStorage;
 
@@ -4561,18 +4801,18 @@ typedef struct J9MemoryManagerFunctions {
 	void  ( *j9gc_finalizer_shutdown)(struct J9JavaVM * vm) ;
 	UDATA ( *j9gc_wait_for_reference_processing)(struct J9JavaVM * vm) ;
 	void  ( *runFinalization)(struct J9VMThread *vmThread) ;
-#endif /* J9VM_GC_FINALIZATION */
+#endif /* defined(J9VM_GC_FINALIZATION) */
 #if defined(J9VM_GC_DYNAMIC_CLASS_UNLOADING)
 	UDATA  ( *forceClassLoaderUnload)(struct J9VMThread *vmThread, J9ClassLoader *classLoader) ;
-#endif /* J9VM_GC_DYNAMIC_CLASS_UNLOADING */
+#endif /* defined(J9VM_GC_DYNAMIC_CLASS_UNLOADING) */
 #if defined(J9VM_GC_FINALIZATION)
 	UDATA  ( *finalizeObjectCreated)(struct J9VMThread *vmThread, j9object_t object) ;
-#endif /* J9VM_GC_FINALIZATION */
+#endif /* defined(J9VM_GC_FINALIZATION) */
 	UDATA  ( *j9gc_ext_is_marked)(struct J9JavaVM *javaVM, j9object_t objectPtr) ;
 #if defined(J9VM_GC_BATCH_CLEAR_TLH)
 	void  ( *allocateZeroedTLHPages)(struct J9JavaVM *javaVM, UDATA flag) ;
 	UDATA  ( *isAllocateZeroedTLHPagesEnabled)(struct J9JavaVM *javaVM) ;
-#endif /* J9VM_GC_BATCH_CLEAR_TLH */
+#endif /* defined(J9VM_GC_BATCH_CLEAR_TLH) */
 	UDATA  ( *isStaticObjectAllocateFlags)(struct J9JavaVM *javaVM) ;
 	UDATA  ( *getStaticObjectAllocateFlags)(struct J9JavaVM *javaVM) ;
 	UDATA  ( *j9gc_scavenger_enabled)(struct J9JavaVM *javaVM) ;
@@ -4584,7 +4824,7 @@ typedef struct J9MemoryManagerFunctions {
 #if defined(J9VM_GC_HEAP_CARD_TABLE)
 	UDATA  ( *j9gc_concurrent_getCardSize)(struct J9JavaVM *javaVM) ;
 	UDATA  ( *j9gc_concurrent_getHeapBase)(struct J9JavaVM *javaVM) ;
-#endif /* J9VM_GC_HEAP_CARD_TABLE */
+#endif /* defined(J9VM_GC_HEAP_CARD_TABLE) */
 	UDATA  ( *j9gc_modron_getWriteBarrierType)(struct J9JavaVM *javaVM) ;
 	UDATA  ( *j9gc_modron_getReadBarrierType)(struct J9JavaVM *javaVM) ;
 	jint  (JNICALL *queryGCStatus)(JavaVM *vm, jint *nHeaps, GCStatus *status, jint statusSize) ;
@@ -4610,11 +4850,13 @@ typedef struct J9MemoryManagerFunctions {
 	UDATA  ( *j9gc_ext_check_is_valid_heap_object)(struct J9JavaVM *javaVM, j9object_t ptr, UDATA flags) ;
 #if defined(J9VM_GC_FINALIZATION)
 	UDATA  ( *j9gc_get_objects_pending_finalization_count)(struct J9JavaVM* vm) ;
-#endif /* J9VM_GC_FINALIZATION */
+#endif /* defined(J9VM_GC_FINALIZATION) */
 	UDATA  ( *j9gc_set_softmx)(struct J9JavaVM *javaVM, UDATA newsoftmx) ;
 	UDATA  ( *j9gc_get_softmx)(struct J9JavaVM *javaVM) ;
 	UDATA  ( *j9gc_get_initial_heap_size)(struct J9JavaVM *javaVM) ;
 	UDATA  ( *j9gc_get_maximum_heap_size)(struct J9JavaVM *javaVM) ;
+	UDATA  ( *j9gc_get_minimum_young_generation_size)(struct J9JavaVM *javaVM) ;
+	UDATA  ( *j9gc_get_maximum_young_generation_size)(struct J9JavaVM *javaVM) ;
 	UDATA  ( *j9gc_objaccess_checkClassLive)(struct J9JavaVM *javaVM, J9Class *classPtr) ;
 #if defined(J9VM_GC_OBJECT_ACCESS_BARRIER)
 	IDATA  ( *j9gc_objaccess_indexableReadI8)(struct J9VMThread *vmThread, J9IndexableObject *srcObject, I_32 index, UDATA isVolatile) ;
@@ -4637,9 +4879,10 @@ typedef struct J9MemoryManagerFunctions {
 	void  ( *j9gc_objaccess_indexableStoreU64)(struct J9VMThread *vmThread, J9IndexableObject *destObject, I_32 index, U_64 value, UDATA isVolatile) ;
 #if !defined(J9VM_ENV_DATA64)
 	void  ( *j9gc_objaccess_indexableStoreU64Split)(struct J9VMThread *vmThread, J9IndexableObject *destObject, I_32 index, U_32 valueSlot0, U_32 valueSlot1, UDATA isVolatile) ;
-#endif /* !J9VM_ENV_DATA64 */
+#endif /* !defined(J9VM_ENV_DATA64) */
 	void  ( *j9gc_objaccess_indexableStoreObject)(struct J9VMThread *vmThread, J9IndexableObject *destObject, I_32 index, j9object_t value, UDATA isVolatile) ;
 	void  ( *j9gc_objaccess_indexableStoreAddress)(struct J9VMThread *vmThread, J9IndexableObject *destObject, I_32 index, void *value, UDATA isVolatile) ;
+	IDATA  ( *j9gc_objaccess_indexableDataDisplacement)(struct J9StackWalkState *walkState, J9IndexableObject *src, J9IndexableObject *dst) ;
 	IDATA  ( *j9gc_objaccess_mixedObjectReadI32)(struct J9VMThread *vmThread, j9object_t srcObject, UDATA offset, UDATA isVolatile) ;
 	UDATA  ( *j9gc_objaccess_mixedObjectReadU32)(struct J9VMThread *vmThread, j9object_t srcObject, UDATA offset, UDATA isVolatile) ;
 	I_64  ( *j9gc_objaccess_mixedObjectReadI64)(struct J9VMThread *vmThread, j9object_t srcObject, UDATA offset, UDATA isVolatile) ;
@@ -4654,7 +4897,7 @@ typedef struct J9MemoryManagerFunctions {
 	void  ( *j9gc_objaccess_mixedObjectStoreAddress)(struct J9VMThread *vmThread, j9object_t destObject, UDATA offset, void *value, UDATA isVolatile) ;
 #if !defined(J9VM_ENV_DATA64)
 	void  ( *j9gc_objaccess_mixedObjectStoreU64Split)(struct J9VMThread *vmThread, j9object_t destObject, UDATA offset, U_32 valueSlot0, U_32 valueSlot1, UDATA isVolatile) ;
-#endif /* !J9VM_ENV_DATA64 */
+#endif /* !defined(J9VM_ENV_DATA64) */
 	UDATA  ( *j9gc_objaccess_mixedObjectCompareAndSwapInt)(struct J9VMThread *vmThread, j9object_t destObject, UDATA offset, U_32 compareValue, U_32 swapValue) ;
 	UDATA  ( *j9gc_objaccess_mixedObjectCompareAndSwapLong)(struct J9VMThread *vmThread, j9object_t destObject, UDATA offset, U_64 compareValue, U_64 swapValue) ;
 	U_32  ( *j9gc_objaccess_mixedObjectCompareAndExchangeInt)(struct J9VMThread *vmThread, j9object_t destObject, UDATA offset, U_32 compareValue, U_32 swapValue) ;
@@ -4673,7 +4916,7 @@ typedef struct J9MemoryManagerFunctions {
 	void  ( *j9gc_objaccess_staticStoreAddress)(struct J9VMThread *vmThread, J9Class *clazz, void **destSlot, void *value, UDATA isVolatile) ;
 #if !defined(J9VM_ENV_DATA64)
 	void  ( *j9gc_objaccess_staticStoreU64Split)(struct J9VMThread *vmThread, J9Class *clazz, U_64 *destSlot, U_32 valueSlot0, U_32 valueSlot1, UDATA isVolatile) ;
-#endif /* !J9VM_ENV_DATA64 */
+#endif /* !defined(J9VM_ENV_DATA64) */
 	void  ( *j9gc_objaccess_storeObjectToInternalVMSlot)(struct J9VMThread *vmThread, j9object_t *destSlot, j9object_t value) ;
 	j9object_t  ( *j9gc_objaccess_readObjectFromInternalVMSlot)(struct J9VMThread *vmThread, struct J9JavaVM *vm, j9object_t *srcSlot) ;
 	U_8*  ( *j9gc_objaccess_getArrayObjectDataAddress)(struct J9VMThread *vmThread, J9IndexableObject *arrayObject) ;
@@ -4696,10 +4939,12 @@ typedef struct J9MemoryManagerFunctions {
 	UDATA  ( *j9gc_objaccess_compressedPointersShift)(struct J9VMThread *vmThread) ;
 	UDATA  ( *j9gc_objaccess_compressedPointersShadowHeapBase)(struct J9VMThread *vmThread) ;
 	UDATA  ( *j9gc_objaccess_compressedPointersShadowHeapTop)(struct J9VMThread *vmThread) ;
-#endif /* J9VM_GC_OBJECT_ACCESS_BARRIER */
+#endif /* defined(J9VM_GC_OBJECT_ACCESS_BARRIER) */
 	const char*  ( *j9gc_get_gcmodestring)(struct J9JavaVM *javaVM) ;
 	UDATA  ( *j9gc_get_object_size_in_bytes)(struct J9JavaVM* javaVM, j9object_t objectPtr) ;
 	UDATA  ( *j9gc_get_object_total_footprint_in_bytes)(struct J9JavaVM *javaVM, j9object_t objectPtr);
+	BOOLEAN ( *j9gc_get_explicit_GC_disabled)(struct J9JavaVM *javaVM) ;
+	UDATA  ( *j9gc_get_unique_GC_count)(struct J9JavaVM *javaVM) ;
 	UDATA  ( *j9gc_modron_global_collect)(struct J9VMThread *vmThread) ;
 	UDATA  ( *j9gc_modron_global_collect_with_overrides)(struct J9VMThread *vmThread, U_32 overrideFlags) ;
 	UDATA  ( *j9gc_modron_local_collect)(struct J9VMThread *vmThread) ;
@@ -4720,6 +4965,7 @@ typedef struct J9MemoryManagerFunctions {
 	void  ( *j9mm_get_guaranteed_nursery_range)(struct J9JavaVM* javaVM, void** start, void** end) ;
 	UDATA  ( *j9gc_arraylet_getLeafSize)(struct J9JavaVM* javaVM) ;
 	UDATA  ( *j9gc_arraylet_getLeafLogSize)(struct J9JavaVM* javaVM) ;
+	void  ( *j9gc_get_offheap_data)(struct J9JavaVM *javaVM, void **offheapControlStructure, void **base, void **top, UDATA *usage);
 	void  ( *j9gc_set_allocation_sampling_interval)(struct J9JavaVM *vm, UDATA samplingInterval);
 	void  ( *j9gc_set_allocation_threshold)(struct J9VMThread *vmThread, UDATA low, UDATA high) ;
 	void  ( *j9gc_objaccess_recentlyAllocatedObject)(struct J9VMThread *vmThread, J9Object *dstObject) ;
@@ -4739,15 +4985,16 @@ typedef struct J9MemoryManagerFunctions {
 	U_32  ( *j9gc_objaccess_staticCompareAndExchangeInt)(struct J9VMThread *vmThread, J9Class *destClass, U_32 *destAddress, U_32 compareValue, U_32 swapValue) ;
 #if !defined(J9VM_ENV_DATA64)
 	UDATA  ( *j9gc_objaccess_mixedObjectCompareAndSwapLongSplit)(struct J9VMThread *vmThread, J9Object *destObject, UDATA offset, U_32 compareValueSlot0, U_32 compareValueSlot1, U_32 swapValueSlot0, U_32 swapValueSlot1) ;
-#endif /* !J9VM_ENV_DATA64 */
+#endif /* !defined(J9VM_ENV_DATA64) */
 	UDATA  ( *j9gc_objaccess_staticCompareAndSwapLong)(struct J9VMThread *vmThread, J9Class *destClass, U_64 *destAddress, U_64 compareValue, U_64 swapValue) ;
 	U_64 ( *j9gc_objaccess_staticCompareAndExchangeLong)(struct J9VMThread *vmThread, J9Class *destClass, U_64 *destAddress, U_64 compareValue, U_64 swapValue) ;
 #if !defined(J9VM_ENV_DATA64)
 	UDATA  ( *j9gc_objaccess_staticCompareAndSwapLongSplit)(struct J9VMThread *vmThread, J9Class *destClass, U_64 *destAddress, U_32 compareValueSlot0, U_32 compareValueSlot1, U_32 swapValueSlot0, U_32 swapValueSlot1) ;
-#endif /* !J9VM_ENV_DATA64 */
-#endif /* J9VM_GC_OBJECT_ACCESS_BARRIER */
+#endif /* !defined(J9VM_ENV_DATA64) */
+#endif /* defined(J9VM_GC_OBJECT_ACCESS_BARRIER) */
 	UDATA  ( *j9gc_get_bytes_allocated_by_thread)(struct J9VMThread *vmThread) ;
 	BOOLEAN ( *j9gc_get_cumulative_bytes_allocated_by_thread)(struct J9VMThread *vmThread, UDATA *cumulativeValue) ;
+	BOOLEAN ( *j9gc_get_cumulative_class_unloading_stats)(struct J9VMThread *vmThread, UDATA *anonumous, UDATA *classes, UDATA *classloaders) ;
 
 	jvmtiIterationControl  ( *j9mm_iterate_all_ownable_synchronizer_objects)(struct J9VMThread *vmThread, J9PortLibrary *portLibrary, UDATA flags, jvmtiIterationControl (*func)(struct J9VMThread *vmThread, struct J9MM_IterateObjectDescriptor *object, void *userData), void *userData) ;
 	jvmtiIterationControl  ( *j9mm_iterate_all_continuation_objects)(struct J9VMThread *vmThread, J9PortLibrary *portLibrary, UDATA flags, jvmtiIterationControl (*func)(struct J9VMThread *vmThread, struct J9MM_IterateObjectDescriptor *object, void *userData), void *userData) ;
@@ -4788,6 +5035,7 @@ typedef struct J9InternalVMFunctions {
 	UDATA  ( *hashClassTableAtPut)(struct J9VMThread *vmThread, struct J9ClassLoader *classLoader, U_8 *className, UDATA classNameLength, struct J9Class *value) ;
 	UDATA  ( *hashClassTableDelete)(struct J9ClassLoader *classLoader, U_8 *className, UDATA classNameLength) ;
 	void  ( *hashClassTableReplace)(struct J9VMThread* vmThread, struct J9ClassLoader *classLoader, struct J9Class *originalClass, struct J9Class *replacementClass) ;
+	struct J9Class *(*segmentIteratorNextClass)(struct J9Class **nextClass);
 	struct J9ObjectMonitor *  ( *monitorTableAt)(struct J9VMThread* vmStruct, j9object_t object) ;
 	struct J9VMThread*  ( *allocateVMThread)(struct J9JavaVM *vm, omrthread_t osThread, UDATA privateFlags, void *memorySpace, J9Object *threadObject) ;
 	void  ( *deallocateVMThread)(struct J9VMThread * vmThread, UDATA decrementZombieCount, UDATA sendThreadDestroyEvent) ;
@@ -4795,6 +5043,10 @@ typedef struct J9InternalVMFunctions {
 	IDATA  ( *javaThreadProc)(void *entryarg) ;
 	char*  ( *copyStringToUTF8WithMemAlloc)(struct J9VMThread *currentThread, j9object_t string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, char *buffer, UDATA bufferLength, UDATA *utf8Length) ;
 	J9UTF8* ( *copyStringToJ9UTF8WithMemAlloc)(struct J9VMThread *vmThread, j9object_t string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, char *buffer, UDATA bufferLength) ;
+	J9UTF8* ( *copyStringToJ9UTF8WithPortLib)(struct J9VMThread *vmThread, j9object_t string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, OMRPortLibrary *portLib) ;
+	char*  ( *copyJ9UTF8ToUTF8WithMemAlloc)(struct J9VMThread *vmThread, J9UTF8 *string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, char *buffer, UDATA bufferLength) ;
+	J9UTF8* ( *copyJ9UTF8WithMemAlloc)(struct J9VMThread *vmThread, J9UTF8 *string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, char *buffer, UDATA bufferLength) ;
+	J9UTF8* ( *copyJ9UTF8WithPortLib)(struct J9VMThread *vmThread, J9UTF8 *string, UDATA stringFlags, const char *prependStr, UDATA prependStrLength, OMRPortLibrary *portLib) ;
 	void  ( *internalAcquireVMAccess)(struct J9VMThread * currentThread) ;
 	void  ( *internalAcquireVMAccessWithMask)(struct J9VMThread * currentThread, UDATA haltFlags) ;
 	void  ( *internalAcquireVMAccessNoMutexWithMask)(struct J9VMThread * vmThread, UDATA haltFlags) ;
@@ -4805,7 +5057,8 @@ typedef struct J9InternalVMFunctions {
 	struct J9Class*  ( *internalFindKnownClass)(struct J9VMThread *currentThread, UDATA index, UDATA flags) ;
 	struct J9Class*  ( *resolveKnownClass)(struct J9JavaVM * vm, UDATA index) ;
 	UDATA  ( *computeHashForUTF8)(const U_8 * string, UDATA size) ;
-	IDATA  ( *getStringUTF8Length)(struct J9VMThread *vmThread, j9object_t string) ;
+	UDATA  ( *getStringUTF8Length)(struct J9VMThread *vmThread, j9object_t string) ;
+	U_64  ( *getStringUTF8LengthTruncated)(struct J9VMThread *vmThread, j9object_t string, U_64 maxLength) ;
 	void  ( *acquireExclusiveVMAccess)(struct J9VMThread * vmThread) ;
 	void  ( *releaseExclusiveVMAccess)(struct J9VMThread * vmThread) ;
 	void  ( *internalReleaseVMAccess)(struct J9VMThread * currentThread) ;
@@ -4817,7 +5070,7 @@ typedef struct J9InternalVMFunctions {
 	void  ( *internalAcquireVMAccessClearStatus)(struct J9VMThread * vmThread, UDATA flags) ;
 #if defined(J9VM_OPT_REFLECT)
 	j9object_t  ( *helperMultiANewArray)(struct J9VMThread *vmStruct, J9ArrayClass *classPtr, UDATA dimensions, I_32 *dimensionArray, UDATA allocationType) ;
-#endif /* J9VM_OPT_REFLECT */
+#endif /* defined(J9VM_OPT_REFLECT) */
 	UDATA  ( *javaLookupMethod)(struct J9VMThread *currentThread, struct J9Class *clazz, struct J9ROMNameAndSignature *selector, struct J9Class *senderClass, UDATA options) ;
 	UDATA  ( *javaLookupMethodImpl)(struct J9VMThread *currentThread, struct J9Class *clazz, struct J9ROMNameAndSignature *selector, struct J9Class *senderClass, UDATA options, BOOLEAN *foundDefaultConflicts) ;
 	void  ( *setCurrentException)(struct J9VMThread *currentThread, UDATA exceptionNumber, UDATA *detailMessage) ;
@@ -4856,7 +5109,7 @@ typedef struct J9InternalVMFunctions {
 	UDATA  ( *isExceptionTypeCaughtByHandler)(struct J9VMThread *currentThread, struct J9Class *thrownExceptionClass, J9ConstantPool *constantPool, UDATA handlerIndex, J9StackWalkState *walkState) ;
 #if defined(J9VM_IVE_ROM_IMAGE_HELPERS) || (defined(J9VM_OPT_DYNAMIC_LOAD_SUPPORT) && defined(J9VM_OPT_ROM_IMAGE_SUPPORT))
 	struct J9MemorySegment*  ( *romImageNewSegment)(struct J9JavaVM *vm, struct J9ROMImageHeader *header, UDATA isBaseType, struct J9ClassLoader *classLoader ) ;
-#endif /* J9VM_IVE_ROM_IMAGE_HELPERS || (J9VM_OPT_DYNAMIC_LOAD_SUPPORT && J9VM_OPT_ROM_IMAGE_SUPPORT) */
+#endif /* defined(J9VM_IVE_ROM_IMAGE_HELPERS) || (defined(J9VM_OPT_DYNAMIC_LOAD_SUPPORT) && defined(J9VM_OPT_ROM_IMAGE_SUPPORT)) */
 	void  (JNICALL *runCallInMethod)(JNIEnv *env, jobject receiver, jclass clazz, jmethodID methodID, void* args) ;
 	j9object_t  ( *catUtfToString4)(struct J9VMThread * vmThread, const U_8 *data1, UDATA length1, const U_8 *data2, UDATA length2, const U_8 *data3, UDATA length3, const U_8 *data4, UDATA length4) ;
 	struct J9MemorySegmentList*  ( *allocateMemorySegmentList)(struct J9JavaVM * javaVM, U_32 numberOfMemorySegments, U_32 memoryCategory) ;
@@ -4868,7 +5121,7 @@ typedef struct J9InternalVMFunctions {
 	struct J9MemorySegment*  ( *allocateClassMemorySegment)(struct J9JavaVM *javaVM, UDATA requiredSize, UDATA segmentType, struct J9ClassLoader *classLoader, UDATA allocationIncrement) ;
 #if defined(J9VM_GC_FINALIZATION)
 	void  ( *jniResetStackReferences)(JNIEnv *env) ;
-#endif /* J9VM_GC_FINALIZATION */
+#endif /* defined(J9VM_GC_FINALIZATION) */
 	void  ( *freeClassLoader)(struct J9ClassLoader *classLoader, struct J9JavaVM *javaVM, struct J9VMThread *vmThread, UDATA needsFrameBuild) ;
 	jobject  (JNICALL *j9jni_createLocalRef)(JNIEnv *env, j9object_t object) ;
 	void  (JNICALL *j9jni_deleteLocalRef)(JNIEnv *env, jobject localRef) ;
@@ -4883,6 +5136,9 @@ typedef struct J9InternalVMFunctions {
 	void  ( *printThreadInfo)(struct J9JavaVM *vm, struct J9VMThread *self, char *toFile, BOOLEAN allThreads) ;
 	void  (JNICALL *initializeAttachedThread)(struct J9VMThread *vmContext, const char *name, j9object_t *group, UDATA daemon, struct J9VMThread *initializee) ;
 	void  ( *initializeMethodRunAddressNoHook)(struct J9JavaVM* vm, J9Method *method) ;
+#if defined(J9VM_OPT_SNAPSHOTS)
+	void  ( *initializeMethodRunAddressForSnapshot)(struct J9JavaVM *vm, struct J9Method *method) ;
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
 	void  (JNICALL *sidecarInvokeReflectMethod)(struct J9VMThread *vmContext, jobject methodRef, jobject recevierRef, jobjectArray argsRef) ;
 	void  (JNICALL *sidecarInvokeReflectConstructor)(struct J9VMThread *vmContext, jobject constructorRef, jobject recevierRef, jobjectArray argsRef) ;
 	struct J9MemorySegmentList*  ( *allocateMemorySegmentListWithSize)(struct J9JavaVM * javaVM, U_32 numberOfMemorySegments, UDATA sizeOfElements, U_32 memoryCategory) ;
@@ -4895,10 +5151,10 @@ typedef struct J9InternalVMFunctions {
 	void  ( *releaseExclusiveVMAccessMetronome)(struct J9VMThread * vmThread) ;
 	UDATA  ( *requestExclusiveVMAccessMetronomeTemp)(struct J9JavaVM *vm, UDATA block, UDATA *vmResponsesRequired, UDATA *jniResponsesRequired, UDATA *gcPriority) ;
 	void  ( *waitForExclusiveVMAccessMetronomeTemp)(struct J9VMThread * vmThread, UDATA vmResponsesRequired, UDATA jniResponsesRequired) ;
-#endif /* J9VM_GC_REALTIME */
+#endif /* defined(J9VM_GC_REALTIME) */
 #if defined(J9VM_GC_JNI_ARRAY_CACHE)
 	void  ( *cleanupVMThreadJniArrayCache)(struct J9VMThread *vmThread) ;
-#endif /* J9VM_GC_JNI_ARRAY_CACHE */
+#endif /* defined(J9VM_GC_JNI_ARRAY_CACHE) */
 	struct J9ObjectMonitor *  ( *objectMonitorInflate)(struct J9VMThread* vmStruct, j9object_t object, UDATA lock) ;
 	UDATA  ( *objectMonitorEnterNonBlocking)(struct J9VMThread *currentThread, j9object_t object) ;
 	UDATA  ( *objectMonitorEnterBlocking)(struct J9VMThread *currentThread) ;
@@ -4923,11 +5179,11 @@ typedef struct J9InternalVMFunctions {
 	void  ( *allClassLoadersEndDo)(struct J9ClassLoaderWalkState* state) ;
 #if defined(J9VM_OPT_ROM_IMAGE_SUPPORT) || defined(J9VM_IVE_ROM_IMAGE_HELPERS)
 	struct J9ROMClass*  ( *romClassLoadFromCookie)(struct J9VMThread *vmStruct, U_8 *clsName, UDATA clsNameLength, U_8 *romClassBytes, UDATA romClassLength) ;
-#endif /* J9VM_OPT_ROM_IMAGE_SUPPORT || J9VM_IVE_ROM_IMAGE_HELPERS */
+#endif /* defined(J9VM_OPT_ROM_IMAGE_SUPPORT) || defined(J9VM_IVE_ROM_IMAGE_HELPERS) */
 #if defined(J9VM_GC_DYNAMIC_CLASS_UNLOADING)
 	void  ( *cleanUpClassLoader)(struct J9VMThread *vmThread, struct J9ClassLoader* classLoader) ;
-#endif /* J9VM_GC_DYNAMIC_CLASS_UNLOADING */
-	UDATA  ( *iterateStackTrace)(struct J9VMThread * vmThread, j9object_t* exception,  UDATA  (*callback) (struct J9VMThread * vmThread, void * userData, UDATA bytecodeOffset, struct J9ROMClass * romClass, struct J9ROMMethod * romMethod, J9UTF8 * fileName, UDATA lineNumber, struct J9ClassLoader* classLoader, struct J9Class* ramClass), void * userData, UDATA pruneConstructors, UDATA skipHiddenFrames) ;
+#endif /* defined(J9VM_GC_DYNAMIC_CLASS_UNLOADING) */
+	UDATA  ( *iterateStackTrace)(struct J9VMThread * vmThread, j9object_t* exception,  UDATA  (*callback) (struct J9VMThread * vmThread, void * userData, UDATA bytecodeOffset, struct J9ROMClass * romClass, struct J9ROMMethod * romMethod, J9UTF8 * fileName, UDATA lineNumber, struct J9ClassLoader* classLoader, struct J9Class* ramClass, UDATA frameType), void * userData, UDATA pruneConstructors, UDATA skipHiddenFrames) ;
 	char*  ( *getNPEMessage)(struct J9NPEMessageData *npeMsgData);
 	void  ( *internalReleaseVMAccessNoMutex)(struct J9VMThread * vmThread) ;
 	struct J9HookInterface**  ( *getVMHookInterface)(struct J9JavaVM* vm) ;
@@ -4964,9 +5220,9 @@ typedef struct J9InternalVMFunctions {
 	void  ( *reportHotField)(struct J9JavaVM *javaVM, int32_t reducedCpuUtil, J9Class* clazz, uint8_t fieldOffset,  uint32_t reducedFrequency) ;
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
 	struct J9ROMFieldOffsetWalkResult*  ( *fieldOffsetsStartDo)(struct J9JavaVM *vm, struct J9ROMClass *romClass, struct J9Class *superClazz, struct J9ROMFieldOffsetWalkState *state, U_32 flags, J9FlattenedClassCache *flattenedClassCache) ;
-#else /* J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES */
+#else /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 	struct J9ROMFieldOffsetWalkResult*  ( *fieldOffsetsStartDo)(struct J9JavaVM *vm, struct J9ROMClass *romClass, struct J9Class *superClazz, struct J9ROMFieldOffsetWalkState *state, U_32 flags) ;
-#endif /* J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES */
+#endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 	void ( *defaultValueWithUnflattenedFlattenables)(struct J9VMThread *currentThread, struct J9Class *clazz, j9object_t instance) ;
 	struct J9ROMFieldOffsetWalkResult*  ( *fieldOffsetsNextDo)(struct J9ROMFieldOffsetWalkState *state) ;
 	struct J9ROMFieldShape*  ( *fullTraversalFieldOffsetsStartDo)(struct J9JavaVM *vm, struct J9Class *clazz, struct J9ROMFullTraversalFieldOffsetWalkState *state, U_32 flags) ;
@@ -5010,7 +5266,7 @@ typedef struct J9InternalVMFunctions {
 	IDATA  ( *getOwnedObjectMonitors)(struct J9VMThread *currentThread, struct J9VMThread *targetThread, struct J9ObjectMonitorInfo *info, IDATA infoLen, BOOLEAN reportErrors) ;
 #if !defined(J9VM_SIZE_SMALL_CODE)
 	void  ( *fieldIndexTableRemove)(struct J9JavaVM* javaVM, struct J9Class *ramClass) ;
-#endif /* J9VM_SIZE_SMALL_CODE */
+#endif /* !defined(J9VM_SIZE_SMALL_CODE) */
 	UDATA  ( *getJavaThreadPriority)(struct J9JavaVM* vm, struct J9VMThread* thread) ;
 	void  ( *atomicOrIntoConstantPool)(struct J9JavaVM *vm, struct J9Method *method, UDATA bits) ;
 	void  ( *atomicAndIntoConstantPool)(struct J9JavaVM *vm, struct J9Method *method, UDATA bits) ;
@@ -5053,7 +5309,7 @@ typedef struct J9InternalVMFunctions {
 	void  ( *mustHaveVMAccess)(struct J9VMThread * vmThread) ;
 #if defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT)
 	void  ( *javaAndCStacksMustBeInSync)(struct J9VMThread * vmThread, BOOLEAN fromJIT) ;
-#endif /* J9VM_PORT_ZOS_CEEHDLRSUPPORT */
+#endif /* defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT) */
 	struct J9Class*  ( *findFieldSignatureClass)(struct J9VMThread *vmStruct, J9ConstantPool *ramCP, UDATA fieldRefCpIndex) ;
 	void  ( *walkBytecodeFrameSlots)(J9StackWalkState *walkState, struct J9Method *method, UDATA offsetPC, UDATA *pendingBase, UDATA pendingStackHeight, UDATA *localBase, UDATA numberOfLocals, UDATA alwaysLocalMap) ;
 	void*  ( *jniNativeMethodProperties)(struct J9VMThread *currentThread, struct J9Method *jniNativeMethod, UDATA *properties) ;
@@ -5078,7 +5334,7 @@ typedef struct J9InternalVMFunctions {
 #if defined(J9VM_INTERP_ATOMIC_FREE_JNI)
 	void  ( *internalEnterVMFromJNI)(struct J9VMThread * currentThread) ;
 	void  ( *internalExitVMToJNI)(struct J9VMThread * currentThread) ;
-#endif /* J9VM_INTERP_ATOMIC_FREE_JNI */
+#endif /* defined(J9VM_INTERP_ATOMIC_FREE_JNI) */
 	struct J9HashTable* ( *hashModuleNameTableNew)(struct J9JavaVM * vm, U_32 initialSize) ;
 	struct J9HashTable* ( *hashModulePointerTableNew)(struct J9JavaVM * vm, U_32 initialSize) ;
 	struct J9HashTable* ( *hashPackageTableNew)(struct J9JavaVM * vm, U_32 initialSize) ;
@@ -5103,7 +5359,7 @@ typedef struct J9InternalVMFunctions {
 	void ( *rasSetServiceLevel)(struct J9JavaVM *vm, const char *runtimeVersion);
 #if defined(J9VM_INTERP_ATOMIC_FREE_JNI_USES_FLUSH)
 	void ( *flushProcessWriteBuffers)(struct J9JavaVM *vm);
-#endif /* J9VM_INTERP_ATOMIC_FREE_JNI_USES_FLUSH */
+#endif /* defined(J9VM_INTERP_ATOMIC_FREE_JNI_USES_FLUSH) */
 	IDATA ( *registerPredefinedHandler)(struct J9JavaVM *vm, U_32 signal, void **oldOSHandler);
 	IDATA ( *registerOSHandler)(struct J9JavaVM *vm, U_32 signal, void *newOSHandler, void **oldOSHandler);
 	void ( *throwNativeOOMError)(JNIEnv *env, U_32 moduleName, U_32 messageNumber);
@@ -5117,7 +5373,7 @@ typedef struct J9InternalVMFunctions {
 	J9Class* ( *peekClassHashTable)(struct J9VMThread* currentThread, J9ClassLoader* classLoader, U_8* className, UDATA classNameLength);
 #if defined(J9VM_OPT_JITSERVER)
 	BOOLEAN ( *isJITServerEnabled )(struct J9JavaVM *vm);
-#endif /* J9VM_OPT_JITSERVER */
+#endif /* defined(J9VM_OPT_JITSERVER) */
 	IDATA ( *createJoinableThreadWithCategory)(omrthread_t* handle, UDATA stacksize, UDATA priority, UDATA suspend, omrthread_entrypoint_t entrypoint, void* entryarg, U_32 category) ;
 	BOOLEAN ( *valueTypeCapableAcmp)(struct J9VMThread *currentThread, j9object_t lhs, j9object_t rhs) ;
 	BOOLEAN ( *isFieldNullRestricted)(J9ROMFieldShape *field);
@@ -5143,14 +5399,15 @@ typedef struct J9InternalVMFunctions {
 #if defined(J9VM_OPT_CRIU_SUPPORT)
 	BOOLEAN (*jvmCheckpointHooks)(struct J9VMThread *currentThread);
 	BOOLEAN (*jvmRestoreHooks)(struct J9VMThread *currentThread);
-	BOOLEAN (*isCRaCorCRIUSupportEnabled)(struct J9VMThread *currentThread);
-	BOOLEAN (*isCRaCorCRIUSupportEnabled_VM)(struct J9JavaVM *vm);
+	BOOLEAN (*isCRaCorCRIUSupportEnabled)(struct J9JavaVM *vm);
 	BOOLEAN (*isCRIUSupportEnabled)(struct J9VMThread *currentThread);
+	BOOLEAN (*isTimeCompensationEnabled)(struct J9VMThread *currentThread);
 	BOOLEAN (*enableCRIUSecProvider)(struct J9VMThread *currentThread);
-	BOOLEAN (*isCheckpointAllowed)(struct J9VMThread *currentThread);
+	BOOLEAN (*isCheckpointAllowed)(struct J9JavaVM *vm);
 	BOOLEAN (*isNonPortableRestoreMode)(struct J9VMThread *currentThread);
 	BOOLEAN (*isJVMInPortableRestoreMode)(struct J9VMThread *currentThread);
-	BOOLEAN (*isDebugOnRestoreEnabled)(struct J9VMThread *currentThread);
+	BOOLEAN (*isDebugOnRestoreEnabled)(struct J9JavaVM *vm);
+	BOOLEAN (*isDebugAgentDisabled)(struct J9JavaVM *vm);
 	void (*setRequiredGhostFileLimit)(struct J9VMThread *currentThread, U_32 ghostFileLimit);
 	BOOLEAN (*runInternalJVMCheckpointHooks)(struct J9VMThread *currentThread, const char **nlsMsgFormat);
 	BOOLEAN (*runInternalJVMRestoreHooks)(struct J9VMThread *currentThread, const char **nlsMsgFormat);
@@ -5161,7 +5418,8 @@ typedef struct J9InternalVMFunctions {
 	jobject (*getRestoreSystemProperites)(struct J9VMThread *currentThread);
 	BOOLEAN (*setupJNIFieldIDsAndCRIUAPI)(JNIEnv *env, jclass *currentExceptionClass, IDATA *systemReturnCode, const char **nlsMsgFormat);
 	void JNICALL (*criuCheckpointJVMImpl)(JNIEnv *env, jstring imagesDir, jboolean leaveRunning, jboolean shellJob, jboolean extUnixSupport, jint logLevel, jstring logFile,
-			jboolean fileLocks, jstring workDir, jboolean tcpEstablished, jboolean autoDedup, jboolean trackMemory, jboolean unprivileged, jstring optionsFile, jstring environmentFile, jlong ghostFileLimit);
+			jboolean fileLocks, jstring workDir, jboolean tcpEstablished, jboolean autoDedup, jboolean trackMemory, jboolean unprivileged, jstring optionsFile,
+			jstring environmentFile, jlong ghostFileLimit, jboolean tcpClose, jboolean tcpSkipInFlight);
 #endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
 	j9object_t (*getClassNameString)(struct J9VMThread *currentThread, j9object_t classObject, jboolean internAndAssign);
 	j9object_t* (*getDefaultValueSlotAddress)(struct J9Class *clazz);
@@ -5187,14 +5445,38 @@ typedef struct J9InternalVMFunctions {
 	UDATA (*walkAllStackFrames)(struct J9VMThread *currentThread, J9StackWalkState *walkState);
 	BOOLEAN (*acquireVThreadInspector)(struct J9VMThread *currentThread, jobject thread, BOOLEAN spin);
 	void (*releaseVThreadInspector)(struct J9VMThread *currentThread, jobject thread);
+	void (*enterVThreadTransitionCritical)(struct J9VMThread *currentThread, jobject thread);
+	void (*exitVThreadTransitionCritical)(struct J9VMThread *currentThread, jobject thread);
 #endif /* JAVA_SPEC_VERSION >= 19 */
 	UDATA (*checkArgsConsumed)(struct J9JavaVM * vm, struct J9PortLibrary* portLibrary, struct J9VMInitArgs* j9vm_args);
 #if defined(J9VM_ZOS_3164_INTEROPERABILITY) && (JAVA_SPEC_VERSION >= 17)
 	I_32 (*invoke31BitJNI_OnXLoad)(struct J9JavaVM *vm, void *handle, jboolean isOnLoad, void *reserved);
 #endif /* defined(J9VM_ZOS_3164_INTEROPERABILITY) && (JAVA_SPEC_VERSION >= 17) */
 #if defined(J9VM_OPT_JFR)
+	jint (*initializeJFR)(struct J9JavaVM *vm, BOOLEAN lateInit);
+	jboolean (*isJFREnabled)(struct J9JavaVM *vm);
+	jboolean (*isJFRRecordingStarted)(struct J9JavaVM *vm);
+	void (*jfrDump)(struct J9VMThread *currentThread, BOOLEAN finalWrite);
 	void (*jfrExecutionSample)(struct J9VMThread *currentThread, struct J9VMThread *sampleThread);
+	jboolean (*setJFRRecordingFileName)(struct J9JavaVM *vm, char *fileName);
+	void (*tearDownJFR)(struct J9JavaVM *vm);
+	jlong (*getTypeIdUTF8)(struct J9VMThread *currentThread, const struct J9UTF8 *className);
+	jlong (*getTypeId)(struct J9VMThread *currentThread, struct J9Class *clazz);
 #endif /* defined(J9VM_OPT_JFR) */
+#if defined(J9VM_OPT_SNAPSHOTS)
+	void (*initializeSnapshotClassLoaderObject)(struct J9JavaVM *javaVM, struct J9ClassLoader *classLoader, j9object_t classLoaderObject);
+	struct J9Class * (*initializeSnapshotClassObject)(struct J9JavaVM *javaVM, struct J9ClassLoader *classLoader, struct J9Class *clazz);
+	BOOLEAN (*loadWarmClassFromSnapshot)(struct J9VMThread *vmThread, struct J9ClassLoader *classLoader, struct J9Class *clazz);
+	void (*initializeBaseClasses)(struct J9JavaVM *javaVM);
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+#if JAVA_SPEC_VERSION >= 24
+	struct J9ObjectMonitor * (*monitorTablePeek)(struct J9JavaVM *vm, j9object_t object);
+	jobject (*takeVirtualThreadListToUnblock)(struct J9VMThread *currentThread);
+	UDATA (*preparePinnedVirtualThreadForUnmount)(struct J9VMThread *currentThread, j9object_t syncObj, BOOLEAN isObjectWait);
+	J9ObjectMonitor * (*detachMonitorInfo)(struct J9VMThread *currentThread, j9object_t lockObject, BOOLEAN *alreadyDetached);
+#endif /* JAVA_SPEC_VERSION >= 24 */
+	jobjectArray (*getSystemPropertyList)(JNIEnv *env);
+	void (*freeMapCaches)(struct J9ClassLoader *classLoader);
 } J9InternalVMFunctions;
 
 /* Jazz 99339: define a new structure to replace JavaVM so as to pass J9NativeLibrary to JVMTIEnv  */
@@ -5208,23 +5490,23 @@ typedef struct J9InvocationJavaVM {
 typedef struct J9JITGPRSpillArea {
 #if defined(J9VM_ARCH_S390)
 	U_8 jitGPRs[16 * 8];	/* r0-r15 full 8-byte */
-#elif defined(J9VM_ARCH_POWER) /* J9VM_ARCH_S390 */
+#elif defined(J9VM_ARCH_POWER) /* defined(J9VM_ARCH_S390) */
 	UDATA jitGPRs[32];	/* r0-r31 */
 	UDATA jitCR;
 	UDATA jitLR;
-#elif defined(J9VM_ARCH_ARM) /* J9VM_ARCH_POWER */
+#elif defined(J9VM_ARCH_ARM) /* defined(J9VM_ARCH_POWER) */
 #if defined(J9VM_ENV_DATA64)
 	/* ARM 64 */
 #error ARM 64 unsupported
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 	/* ARM 32 */
 	UDATA jitGPRs[16];	/* r0-r15 */
-#endif /* J9VM_ENV_DATA64 */
-#elif defined(J9VM_ARCH_AARCH64) /* J9VM_ARCH_ARM */
+#endif /* defined(J9VM_ENV_DATA64) */
+#elif defined(J9VM_ARCH_AARCH64) /* defined(J9VM_ARCH_ARM) */
 	UDATA jitGPRs[32]; /* x0-x31 */
-#elif defined(J9VM_ARCH_RISCV) /* J9VM_ARCH_AARCH64 */
+#elif defined(J9VM_ARCH_RISCV) /* defined(J9VM_ARCH_AARCH64) */
 	UDATA jitGPRs[32];	/* x0-x31 */
-#elif defined(J9VM_ARCH_X86) /* J9VM_ARCH_RISCV */
+#elif defined(J9VM_ARCH_X86) /* defined(J9VM_ARCH_RISCV) */
 #if defined(J9VM_ENV_DATA64)
 	union {
 		UDATA numbered[16];
@@ -5247,7 +5529,7 @@ typedef struct J9JITGPRSpillArea {
 			UDATA r15;
 		} named;
 	} jitGPRs;
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 	union {
 		UDATA numbered[8];
 		struct {
@@ -5261,10 +5543,10 @@ typedef struct J9JITGPRSpillArea {
 			UDATA rsp;
 		} named;
 	} jitGPRs;
-#endif /* J9VM_ENV_DATA64 */
-#else /* J9VM_ARCH_X86 */
+#endif /* defined(J9VM_ENV_DATA64) */
+#else /* defined(J9VM_ARCH_X86) */
 #error Unknown architecture
-#endif /* J9VM_ARCH_X86 */
+#endif /* defined(J9VM_ARCH_X86) */
 } J9JITGPRSpillArea;
 
 /* it's a bit-wise struct of CarrierThread ID and continuation flags
@@ -5273,6 +5555,17 @@ typedef struct J9JITGPRSpillArea {
 typedef uintptr_t ContinuationState;
 
 #if JAVA_SPEC_VERSION >= 19
+#define J9VM_CONTINUATION_RETURN_FROM_YIELD 1
+#if JAVA_SPEC_VERSION >= 24
+#define J9VM_CONTINUATION_RETURN_FROM_MONITOR_ENTER 0
+#define J9VM_CONTINUATION_RETURN_FROM_OBJECT_WAIT   2
+#define J9VM_CONTINUATION_RETURN_FROM_SYNC_METHOD   3
+#define J9VM_CONTINUATION_RETURN_FROM_JIT_MONITOR_ENTER 4
+#define J9VM_CONTINUATION_RETURN_FROM_SYNC_METHOD_JNI 5
+
+#define J9VM_CONTINUATION_RUNTIMEFLAG_JVMTI_CONTENDED_MONITOR_ENTER_RECORDED 0x1
+#endif /* JAVA_SPEC_VERSION >= 24 */
+
 typedef struct J9VMContinuation {
 	UDATA* arg0EA;
 	UDATA* bytecodes;
@@ -5288,8 +5581,30 @@ typedef struct J9VMContinuation {
 	struct J9I2JState i2jState;
 	struct J9VMEntryLocalStorage* oldEntryLocalStorage;
 	UDATA dropFlags;
+	UDATA returnState;
+#if JAVA_SPEC_VERSION >= 24
+	IDATA waitingMonitorEnterCount;
+	UDATA ownedMonitorCount;
+	struct J9Pool* monitorEnterRecordPool;
+	struct J9MonitorEnterRecord* monitorEnterRecords;
+	struct J9MonitorEnterRecord* jniMonitorEnterRecords;
+	j9object_t vthread;
+	struct J9VMContinuation* nextWaitingContinuation;
+	struct J9ObjectMonitor* objectWaitMonitor;
+	struct J9ObjectMonitor* enteredMonitors;
+	UDATA runtimeFlags;
+	I_64 startTicks;
+	struct J9VMThread* previousOwner;
+#endif /* JAVA_SPEC_VERSION >= 24 */
 } J9VMContinuation;
 #endif /* JAVA_SPEC_VERSION >= 19 */
+
+#if JAVA_SPEC_VERSION >= 24
+#define J9_OBJECT_MONITOR_OWNER_DETACHED 0x1
+#define IS_J9_OBJECT_MONITOR_OWNER_DETACHED(owner) (J9_OBJECT_MONITOR_OWNER_DETACHED == (UDATA)(owner))
+#else /* JAVA_SPEC_VERSION >= 24 */
+#define IS_J9_OBJECT_MONITOR_OWNER_DETACHED(owner) FALSE
+#endif /* JAVA_SPEC_VERSION >= 24 */
 
 /* @ddr_namespace: map_to_type=J9VMThread */
 
@@ -5440,7 +5755,7 @@ typedef struct J9VMThread {
 	UDATA contiguousIndexableHeaderSize;
 	UDATA discontiguousIndexableHeaderSize;
 #if defined(J9VM_ENV_DATA64)
-	UDATA isIndexableDataAddrPresent;
+	U_32 indexableObjectLayout;
 #endif /* defined(J9VM_ENV_DATA64) */
 	void* gpInfo;
 	void* jitVMwithThreadInfo;
@@ -5477,23 +5792,23 @@ typedef struct J9VMThread {
 #if 0 && !defined(J9VM_ENV_DATA64) /* Change to 0 or 1 based on number of fields above */
 	U_32 zosPadTo8;
 #endif /* !J9VM_ENV_DATA64 */
-#endif /* J9VM_JIT_FREE_SYSTEM_STACK_POINTER */
+#endif /* defined(J9VM_JIT_FREE_SYSTEM_STACK_POINTER) */
 #if defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT)
 	UDATA leConditionConvertedToJavaException;
 	UDATA percolatedConditionAndTriggeredDiagnostics;
-#endif /* J9VM_PORT_ZOS_CEEHDLRSUPPORT */
+#endif /* defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT) */
 #if defined(J9VM_JIT_RUNTIME_INSTRUMENTATION)
 	UDATA jitCurrentRIFlags;
 	UDATA jitPendingRIFlags;
 	struct J9RIParameters *riParameters;
 #if !defined(J9VM_ENV_DATA64) && defined(J9VM_JIT_FREE_SYSTEM_STACK_POINTER)
 	U_32 riPadTo8;
-#endif /* !J9VM_ENV_DATA64 */
-#endif /* J9VM_JIT_RUNTIME_INSTRUMENTATION */
+#endif /* !defined(J9VM_ENV_DATA64) && defined(J9VM_JIT_FREE_SYSTEM_STACK_POINTER) */
+#endif /* defined(J9VM_JIT_RUNTIME_INSTRUMENTATION) */
 #if defined(J9VM_ZOS_3164_INTEROPERABILITY)
 	U_32 jniEnv31;
 	U_32 jniEnvPadTo8; /* Possible to optimize with future guarded U_32 member in ENV_DATA64. */
-#endif /* J9VM_ZOS_3164_INTEROPERABILITY */
+#endif /* defined(J9VM_ZOS_3164_INTEROPERABILITY) */
 	UDATA* osrJittedFrameCopy;
 	struct J9OSRBuffer* osrBuffer;
 	void* osrReturnAddress;
@@ -5507,7 +5822,7 @@ typedef struct J9VMThread {
 #if defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT)
 	UDATA javaOffloadState;
 	UDATA invokedCalldisp;
-#endif /* J9VM_OPT_JAVA_OFFLOAD_SUPPORT */
+#endif /* defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT) */
 	void *gpuInfo;
 	void *startOfMemoryBlock;
 	UDATA inNative;
@@ -5517,7 +5832,7 @@ typedef struct J9VMThread {
 #endif
 #if defined(J9VM_JIT_TRANSACTION_DIAGNOSTIC_THREAD_BLOCK)
 	U_8 transactionDiagBlock[256];
-#endif /* J9VM_JIT_TRANSACTION_DIAGNOSTIC_THREAD_BLOCK */
+#endif /* defined(J9VM_JIT_TRANSACTION_DIAGNOSTIC_THREAD_BLOCK) */
 #if defined(OMR_GC_CONCURRENT_SCAVENGER)
 	struct J9GSParameters gsParameters;
 	UDATA readBarrierRangeCheckBase;
@@ -5525,8 +5840,8 @@ typedef struct J9VMThread {
 #if defined(OMR_GC_COMPRESSED_POINTERS)
 	U_32 readBarrierRangeCheckBaseCompressed;
 	U_32 readBarrierRangeCheckTopCompressed;
-#endif /* OMR_GC_COMPRESSED_POINTERS */
-#endif /* OMR_GC_CONCURRENT_SCAVENGER */
+#endif /* defined(OMR_GC_COMPRESSED_POINTERS) */
+#endif /* defined(OMR_GC_CONCURRENT_SCAVENGER) */
 	UDATA safePointCount;
 	struct J9HashTable * volatile utfCache;
 #if defined(J9VM_OPT_JFR)
@@ -5554,8 +5869,15 @@ typedef struct J9VMThread {
 	j9object_t closeScopeObj;
 #endif /* JAVA_SPEC_VERSION >= 22 */
 	UDATA unsafeIndexableHeaderSize;
+#if defined(J9VM_OPT_JFR)
+	J9ThreadJFRState threadJfrState;
+#endif /* defined(J9VM_OPT_JFR) */
 } J9VMThread;
 
+#if defined(J9VM_ENV_DATA64)
+#define J9VMTHREAD_IS_ARRAYLET_ENABLED(vmThread) (J9IndexableObjectLayout_ArrayletMask & (vmThread)->indexableObjectLayout)
+#define J9VMTHREAD_IS_INDEXBLE_DATAADDR_PRESENT(vmThread) (J9IndexableObjectLayout_DataAddrMask & (vmThread)->indexableObjectLayout)
+#endif
 #define J9VMTHREAD_ALIGNMENT  0x100
 #define J9VMTHREAD_RESERVED_C_STACK_FRACTION  8
 #define J9VMTHREAD_STATE_RUNNING  1
@@ -5626,9 +5948,19 @@ typedef struct JFRState {
 	IDATA blobFileDescriptor;
 	void *jfrWriter;
 	UDATA jfrChunkCount;
+	I_64 chunkStartTime;
+	I_64 chunkStartTicks;
 	void *constantEvents;
 	BOOLEAN isConstantEventsInitialized;
+	BOOLEAN isStarted;
 	omrthread_monitor_t isConstantEventsInitializedMutex;
+	J9SysinfoCPUTime prevSysCPUTime;
+	omrthread_process_time_t prevProcCPUTimes;
+	int64_t prevProcTimestamp;
+	int64_t prevContextSwitchTimestamp;
+	uint64_t prevContextSwitches;
+	omrthread_monitor_t typeIDMonitor;
+	jlong typeIDcount;
 } JFRState;
 
 typedef struct J9ReflectFunctionTable {
@@ -5707,6 +6039,7 @@ typedef struct J9JavaVM {
 	U_32 runtimeFlags;
 	U_32 extendedRuntimeFlags;
 	U_32 extendedRuntimeFlags2;
+	U_32 extendedRuntimeFlags3;
 	UDATA zeroOptions;
 	struct J9Pool* hotFieldClassInfoPool;
 	omrthread_monitor_t hotFieldClassInfoPoolMutex;
@@ -5760,6 +6093,8 @@ typedef struct J9JavaVM {
 	UDATA anonClassCount;
 	UDATA totalThreadCount;
 	UDATA daemonThreadCount;
+	UDATA accumulatedThreadCount;
+	UDATA peakThreadCount;
 	omrthread_t finalizeMainThread;
 	omrthread_monitor_t finalizeMainMonitor;
 	omrthread_monitor_t processReferenceMonitor; /* the monitor for synchronizing between reference process and j9gc_wait_for_reference_processing() (only for Java 9 and later) */
@@ -5777,10 +6112,12 @@ typedef struct J9JavaVM {
 	/* extensionClassLoader holds the platform class loader in Java 11+ */
 	struct J9ClassLoader* extensionClassLoader;
 	struct J9ClassLoader* applicationClassLoader;
+#if JAVA_SPEC_VERSION < 24
 	UDATA doPrivilegedMethodID1;
 	UDATA doPrivilegedMethodID2;
 	UDATA doPrivilegedWithContextMethodID1;
 	UDATA doPrivilegedWithContextMethodID2;
+#endif /* JAVA_SPEC_VERSION < 24 */
 	void* defaultMemorySpace;
 	j9object_t* systemThreadGroupRef;
 	omrthread_monitor_t classLoaderBlocksMutex;
@@ -5799,7 +6136,7 @@ typedef struct J9JavaVM {
 	j9object_t scvTenureRatioLow;
 #if defined(J9VM_ENV_SHARED_LIBS_USE_GLOBAL_TABLE) || defined(J9VM_ENV_CALL_VIA_TABLE)
 	UDATA jitTOC;
-#endif /* J9VM_ENV_SHARED_LIBS_USE_GLOBAL_TABLE || J9VM_ENV_CALL_VIA_TABLE */
+#endif /* defined(J9VM_ENV_SHARED_LIBS_USE_GLOBAL_TABLE) || defined(J9VM_ENV_CALL_VIA_TABLE) */
 	UDATA stackWalkCount;
 	omrthread_monitor_t aotRuntimeInitMutex;
 	UDATA  ( *aotFindAndInitializeMethodEntryPoint)(struct J9JavaVM *javaVM, struct J9ConstantPool *ramCP, struct J9Method *method, struct J9JXEDescription *jxeDescription) ;
@@ -5808,11 +6145,10 @@ typedef struct J9JavaVM {
 	UDATA threadDllHandle;
 	struct J9ROMImageHeader* arrayROMClasses;
 	struct J9BytecodeVerificationData* bytecodeVerificationData;
-	char* jclDLLName;
 	UDATA defaultOSStackSize;
 #if defined(J9VM_ENV_SHARED_LIBS_USE_GLOBAL_TABLE) || defined(J9VM_ENV_CALL_VIA_TABLE)
 	UDATA magicLinkageValue;
-#endif /* J9VM_ENV_SHARED_LIBS_USE_GLOBAL_TABLE || J9VM_ENV_CALL_VIA_TABLE */
+#endif /* defined(J9VM_ENV_SHARED_LIBS_USE_GLOBAL_TABLE) || defined(J9VM_ENV_CALL_VIA_TABLE) */
 	void*  ( *hookVMEvent)(struct J9JavaVM *javaVM, UDATA eventNumber, void * newHandler) ;
 	void* jniFunctionTable;
 	void* jniSendTarget;
@@ -5841,7 +6177,7 @@ typedef struct J9JavaVM {
 #if defined(J9VM_ENV_SHARED_LIBS_USE_GLOBAL_TABLE) || defined(J9VM_ENV_CALL_VIA_TABLE)
 	UDATA jclTOC;
 	UDATA hookTOC;
-#endif /* J9VM_ENV_SHARED_LIBS_USE_GLOBAL_TABLE || J9VM_ENV_CALL_VIA_TABLE */
+#endif /* defined(J9VM_ENV_SHARED_LIBS_USE_GLOBAL_TABLE) || defined(J9VM_ENV_CALL_VIA_TABLE) */
 	UDATA initialStackSize;
 	struct J9VerboseStruct* verboseStruct;
 	void* codertOldAboutToBootstrap;
@@ -5896,7 +6232,7 @@ typedef struct J9JavaVM {
 	void  ( *javaOffloadSwitchOffWithReasonFunc)(struct J9VMThread *vmThread, UDATA reason) ;
 	void  ( *javaOffloadSwitchOnNoEnvWithReasonFunc)(struct J9JavaVM *vm, omrthread_t thr, UDATA reason) ;
 	void  ( *javaOffloadSwitchOffNoEnvWithReasonFunc)(struct J9JavaVM *vm, omrthread_t thr, UDATA reason) ;
-#endif /* J9VM_OPT_JAVA_OFFLOAD_SUPPORT */
+#endif /* defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT) */
 	UDATA maxInvariantLocalTableNodeCount;
 	JVMExt jvmExtensionInterface;
 	jclass srMethodAccessor;
@@ -5934,9 +6270,9 @@ typedef struct J9JavaVM {
 	UDATA vTableScratchSize;
 #if defined(J9VM_JIT_CLASS_UNLOAD_RWMONITOR)
 	omrthread_rwmutex_t classUnloadMutex;
-#else
+#else /* defined(J9VM_JIT_CLASS_UNLOAD_RWMONITOR) */
 	omrthread_monitor_t classUnloadMutex;
-#endif
+#endif /* defined(J9VM_JIT_CLASS_UNLOAD_RWMONITOR) */
 	/* When GC runs as part of class redefinition, it could unload classes and
 	 * therefore try to acquire the class unload mutex, which is already held
 	 * to prevent JIT compilation from running concurrently with redefinition.
@@ -5965,10 +6301,10 @@ typedef struct J9JavaVM {
 	struct J9HashTable* contendedLoadTable;
 #if defined(OMR_GC_COMPRESSED_POINTERS)
 	UDATA compressedPointersShift;
-#endif /* OMR_GC_COMPRESSED_POINTERS */
+#endif /* defined(OMR_GC_COMPRESSED_POINTERS) */
 #if defined(OMR_GC_CONCURRENT_SCAVENGER) && defined(J9VM_ARCH_S390)
 	void ( *invokeJ9ReadBarrier)(struct J9VMThread *currentThread);
-#endif
+#endif /* defined(OMR_GC_CONCURRENT_SCAVENGER) && defined(J9VM_ARCH_S390) */
 	UDATA objectAlignmentInBytes;
 	UDATA objectAlignmentShift;
 	struct J9InitializerMethods initialMethods;
@@ -5991,7 +6327,8 @@ typedef struct J9JavaVM {
 	UDATA discontiguousIndexableHeaderSize;
 #if defined(J9VM_ENV_DATA64)
 	UDATA isIndexableDataAddrPresent;
-	BOOLEAN isIndexableDualHeaderShapeEnabled;
+	U_32 indexableObjectLayout;
+	U_32 isIndexableDualHeaderShapeEnabled;
 #endif /* defined(J9VM_ENV_DATA64) */
 	struct J9VMThread* exclusiveVMAccessQueueHead;
 	struct J9VMThread* exclusiveVMAccessQueueTail;
@@ -6017,7 +6354,7 @@ typedef struct J9JavaVM {
 	UDATA phase;
 #if defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT)
 	UDATA leConditionConvertedToJavaException;
-#endif /* J9VM_PORT_ZOS_CEEHDLRSUPPORT */
+#endif /* defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT) */
 	void* originalSIGPIPESignalAction;
 	void* finalizeWorkerData;
 	j9object_t* heapOOMStringRef;
@@ -6026,7 +6363,7 @@ typedef struct J9JavaVM {
 	UDATA minimumSuperclassArraySize;
 #if defined(J9VM_JIT_RUNTIME_INSTRUMENTATION)
 	IDATA jitRIHandlerKey;
-#endif /* J9VM_JIT_RUNTIME_INSTRUMENTATION */
+#endif /* defined(J9VM_JIT_RUNTIME_INSTRUMENTATION) */
 	UDATA osrGlobalBufferSize;
 	void* osrGlobalBuffer;
 	omrthread_monitor_t osrGlobalBufferLock;
@@ -6040,21 +6377,23 @@ typedef struct J9JavaVM {
 	omrthread_monitor_t nativeLibraryMonitor;
 	UDATA freePreviousClassLoaders;
 	struct J9ClassLoader* anonClassLoader;
+#if JAVA_SPEC_VERSION < 24
 	UDATA doPrivilegedWithContextPermissionMethodID1;
 	UDATA doPrivilegedWithContextPermissionMethodID2;
+#endif /* JAVA_SPEC_VERSION < 24 */
 	UDATA nativeLibrariesLoadMethodID;
 #if defined(J9VM_INTERP_CUSTOM_SPIN_OPTIONS)
 	struct J9Pool *customSpinOptions;
-#endif /* J9VM_INTERP_CUSTOM_SPIN_OPTIONS */
+#endif /* defined(J9VM_INTERP_CUSTOM_SPIN_OPTIONS) */
 	UDATA romMethodSortThreshold;
 #if defined(J9VM_THR_ASYNC_NAME_UPDATE)
 	IDATA threadNameHandlerKey;
-#endif /* J9VM_THR_ASYNC_NAME_UPDATE */
+#endif /* defined(J9VM_THR_ASYNC_NAME_UPDATE) */
 	char *decompileName;
 	omrthread_monitor_t classLoaderModuleAndLocationMutex;
 	struct J9Pool* modularityPool;
 	struct J9Module *javaBaseModule;
-	struct J9Module *unamedModuleForSystemLoader;
+	struct J9Module *unnamedModuleForSystemLoader;
 	J9ClassPathEntry *modulesPathEntry;
 	jclass jimModules;
 	jmethodID addReads;
@@ -6074,10 +6413,10 @@ typedef struct J9JavaVM {
 #if defined(J9UNIX) || defined(AIXPPC)
 	J9PortVmemIdentifier exclusiveGuardPage;
 	omrthread_monitor_t flushMutex;
-#elif defined(WIN32) /* J9UNIX || AIXPPC  */
+#elif defined(WIN32) /* defined(J9UNIX) || defined(AIXPPC)  */
 	void *flushFunction;
-#endif /* WIN32 */
-#endif /* J9VM_INTERP_ATOMIC_FREE_JNI_USES_FLUSH */
+#endif /* defined(WIN32) */
+#endif /* defined(J9VM_INTERP_ATOMIC_FREE_JNI_USES_FLUSH) */
 	omrthread_monitor_t constantDynamicMutex;
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
 	UDATA valueFlatteningThreshold;
@@ -6097,7 +6436,7 @@ typedef struct J9JavaVM {
 	U_32 minimumReservedRatio;
 	U_32 cancelAbsoluteThreshold;
 	U_32 minimumLearningRatio;
-#ifdef J9VM_OPT_OPENJDK_METHODHANDLE
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
 	UDATA vmindexOffset;
 	UDATA vmtargetOffset;
 	UDATA mutableCallSiteInvalidationCookieOffset;
@@ -6168,12 +6507,25 @@ typedef struct J9JavaVM {
 	omrthread_t jfrSamplerThread;
 	UDATA jfrSamplerState;
 	IDATA jfrAsyncKey;
+	IDATA jfrThreadCPULoadAsyncKey;
 #endif /* defined(J9VM_OPT_JFR) */
 #if JAVA_SPEC_VERSION >= 22
 	omrthread_monitor_t closeScopeMutex;
 	UDATA closeScopeNotifyCount;
 #endif /* JAVA_SPEC_VERSION >= 22 */
 	UDATA unsafeIndexableHeaderSize;
+#if defined(J9VM_OPT_SNAPSHOTS)
+	VMSnapshotImplPortLibrary *vmSnapshotImplPortLibrary;
+	const char *vmSnapshotFilePath;
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+#if defined(J9VM_OPT_JFR)
+	UDATA loadedClassCount;
+#endif /* defined(J9VM_OPT_JFR) */
+#if JAVA_SPEC_VERSION >= 24
+	J9VMContinuation *blockedContinuations;
+	omrthread_monitor_t blockedVirtualThreadsMutex;
+	BOOLEAN pendingBlockedVirtualThreadsNotify;
+#endif /* JAVA_SPEC_VERSION >= 24 */
 } J9JavaVM;
 
 #define J9JFR_SAMPLER_STATE_UNINITIALIZED 0
@@ -6213,7 +6565,10 @@ typedef struct J9JavaVM {
 #if defined(J9VM_OPT_CRIU_SUPPORT)
 #define J9_OBJECT_MONITOR_CRIU_SINGLE_THREAD_MODE_THROW 2
 #endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
-#define J9_OBJECT_MONITOR_BLOCKING 3
+#if JAVA_SPEC_VERSION >= 24
+#define J9_OBJECT_MONITOR_YIELD_VIRTUAL 3
+#endif /* JAVA_SPEC_VERSION >= 24 */
+#define J9_OBJECT_MONITOR_BLOCKING 4
 
 #if (JAVA_SPEC_VERSION >= 16) || defined(J9VM_OPT_CRIU_SUPPORT)
 #define J9_OBJECT_MONITOR_ENTER_FAILED(rc) ((UDATA)(rc) < J9_OBJECT_MONITOR_BLOCKING)
@@ -6224,6 +6579,10 @@ typedef struct J9JavaVM {
 #define J9JAVAVM_OBJECT_HEADER_SIZE(vm) (J9JAVAVM_COMPRESS_OBJECT_REFERENCES(vm) ? sizeof(J9ObjectCompressed) : sizeof(J9ObjectFull))
 #define J9JAVAVM_CONTIGUOUS_INDEXABLE_HEADER_SIZE(vm) ((vm)->contiguousIndexableHeaderSize)
 #define J9JAVAVM_DISCONTIGUOUS_INDEXABLE_HEADER_SIZE(vm) ((vm)->discontiguousIndexableHeaderSize)
+#if defined(J9VM_ENV_DATA64)
+#define J9JAVAVM_IS_ARRAYLET_ENABLED(vm) (J9IndexableObjectLayout_ArrayletMask & (vm)->indexableObjectLayout)
+#define J9JAVAVM_IS_INDEXBLE_DATAADDR_PRESENT(vm) (J9IndexableObjectLayout_DataAddrMask & (vm)->indexableObjectLayout)eObjectLayout)
+#endif
 
 #if JAVA_SPEC_VERSION >= 16
 /* The mask for the signature type identifier */
@@ -6371,7 +6730,7 @@ typedef struct J9JITWatchedStaticFieldData {
 
 #if J9_INLINE_JNI_MAX_ARG_COUNT != 32
 #error Math is depending on J9_INLINE_JNI_MAX_ARG_COUNT being 32
-#endif
+#endif /* J9_INLINE_JNI_MAX_ARG_COUNT != 32 */
 
 typedef struct J9CInterpreterStackFrame {
 #if defined(J9VM_ARCH_S390)
@@ -6394,8 +6753,8 @@ typedef struct J9CInterpreterStackFrame {
 	U_8 preservedVRs[8 * 16]; /* Save area for v16-v23 */
 #if defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT)
 	U_8 gprCEEHDLR[16 * 8]; /* r0-r15 full 8-byte save for CEEHDLR */
-#endif /* J9VM_PORT_ZOS_CEEHDLRSUPPORT */
-#else /* J9ZOS390 */
+#endif /* defined(J9VM_PORT_ZOS_CEEHDLRSUPPORT) */
+#else /* defined(J9ZOS390) */
 	/* z/Linux
 	 *
 	 * Stack must always be 8-byte aligned.
@@ -6408,16 +6767,16 @@ typedef struct J9CInterpreterStackFrame {
 #if defined(J9ZTPF)
 #if !defined(J9VM_ENV_DATA64)
 #error zTPF not supported on 32 bit
-#endif /* !J9VM_ENV_DATA64 */
+#endif /* !defined(J9VM_ENV_DATA64) */
 	UDATA zTPF[36];
-#endif /* J9ZTPF */
+#endif /* defined(J9ZTPF) */
 	UDATA outgoingArguments[J9_INLINE_JNI_MAX_ARG_COUNT];
 	U_8 preservedFPRs[8 * 8]; /* fp8-fp15 - callee saves in own frame */
-#endif /* J9ZOS390 */
+#endif /* defined(J9ZOS390) */
 	J9JITGPRSpillArea jitGPRs;
 	U_8 jitFPRs[16 * 8]; /* f0-f15 */
 	U_8 jitVRs[32 * 16]; /* v0-v31 */
-#elif defined(J9VM_ARCH_POWER) /* J9VM_ARCH_S390 */
+#elif defined(J9VM_ARCH_POWER) /* defined(J9VM_ARCH_S390) */
 #if defined(AIXPPC)
 	/* AIX
 	 *
@@ -6435,14 +6794,14 @@ typedef struct J9CInterpreterStackFrame {
 #if defined(J9VM_ENV_DATA64)
 	U_8 jitVRs[52 * 16]; /* vsr0-vsr51 */
 	UDATA align[3];
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 	UDATA align[1];
-#endif /* J9VM_ENV_DATA64 */
+#endif /* defined(J9VM_ENV_DATA64) */
 	UDATA preservedGPRs[19]; /* r13-r31 */
 	U_8 preservedFPRs[18 * 8]; /* fp14-31 */
 #if defined(J9VM_ENV_DATA64)
 	U_8 preservedVRs[12 * 16]; /* vsr52-vsr63 */
-#endif /* J9VM_ENV_DATA64 */
+#endif /* defined(J9VM_ENV_DATA64) */
 #elif defined(J9VM_ENV_DATA64) /* AIXPPC */
 #if defined(J9VM_ENV_LITTLE_ENDIAN)
 	/* Linux PPC 64 LE
@@ -6461,7 +6820,7 @@ typedef struct J9CInterpreterStackFrame {
 	UDATA preservedGPRs[18]; /* r14-r31 */
 	U_8 preservedFPRs[18 * 8]; /* fp14-31 */
 	U_8 preservedVRs[12 * 16]; /* vsr52-vsr63 */
-#else /* J9VM_ENV_LITTLE_ENDIAN */
+#else /* defined(J9VM_ENV_LITTLE_ENDIAN) */
 	/* Linux PPC 64 BE
 	 *
 	 * Stack must be 64-byte aligned.
@@ -6480,12 +6839,12 @@ typedef struct J9CInterpreterStackFrame {
 	UDATA preservedGPRs[18]; /* r14-r31 */
 	U_8 preservedFPRs[18 * 8]; /* fp14-31 */
 	U_8 preservedVRs[12 * 16]; /* vsr52-vsr63 */
-#endif /* J9VM_ENV_LITTLE_ENDIAN */
-#else /* J9VM_ENV_DATA64 */
+#endif /* defined(J9VM_ENV_LITTLE_ENDIAN) */
+#else /* defined(J9VM_ENV_DATA64) */
 #if defined(J9VM_ENV_LITTLE_ENDIAN)
 	/* Linux PPC 32 LE */
 #error Linux PPC 32 LE unsupported
-#else /* J9VM_ENV_LITTLE_ENDIAN */
+#else /* defined(J9VM_ENV_LITTLE_ENDIAN) */
 	/* Linux PPC 32 BE
 	 *
 	 * Stack must be 16-byte aligned.
@@ -6498,36 +6857,36 @@ typedef struct J9CInterpreterStackFrame {
 	UDATA preservedCR; /* callee saves in own frame */
 	UDATA preservedGPRs[19]; /* r13-r31 */
 	U_8 preservedFPRs[18 * 8]; /* fp14-31 */
-#endif /* J9VM_ENV_LITTLE_ENDIAN */
-#endif /* J9VM_ENV_DATA64 */
-#elif defined(J9VM_ARCH_ARM) /* J9VM_ARCH_POWER */
+#endif /* defined(J9VM_ENV_LITTLE_ENDIAN) */
+#endif /* defined(J9VM_ENV_DATA64) */
+#elif defined(J9VM_ARCH_ARM) /* defined(J9VM_ARCH_POWER) */
 #if defined(J9VM_ENV_DATA64)
 	/* ARM 64 */
 #error ARM 64 unsupported
-#else /* J9VM_ENV_DATA64 */
+#else /* defined(J9VM_ENV_DATA64) */
 	/* ARM 32 */
 	UDATA preservedGPRs[9]; /* r4-r11 and r14 */
 	UDATA align[1];
 	U_8 preservedFPRs[8 * 8]; /* fpr8-15 */
 	J9JITGPRSpillArea jitGPRs;
 	U_8 jitFPRs[16 * 8]; /* fpr0-15 */
-#endif /* J9VM_ENV_DATA64 */
-#elif defined(J9VM_ARCH_AARCH64) /* J9VM_ARCH_ARM */
+#endif /* defined(J9VM_ENV_DATA64) */
+#elif defined(J9VM_ARCH_AARCH64) /* defined(J9VM_ARCH_ARM) */
 	UDATA outgoingArguments[J9_INLINE_JNI_MAX_ARG_COUNT];
 	UDATA preservedGPRs[12]; /* x19-x30 */
 	U_8 preservedFPRs[8 * 8]; /* v8-15 */
 	J9JITGPRSpillArea jitGPRs;
 	U_8 jitFPRs[32 * 16]; /* v0-v31 */
-#elif defined(J9VM_ARCH_RISCV) /* J9VM_ARCH_AARCH64 */
+#elif defined(J9VM_ARCH_RISCV) /* defined(J9VM_ARCH_AARCH64) */
 	UDATA preservedGPRs[13];   /* x8, x9 and x18-x27 and ra */
 	U_8 preservedFPRs[12 * 8]; /* f8, f9 and f18-f27 */
 	J9JITGPRSpillArea jitGPRs;
 	U_8 jitFPRs[32 * 8];       /* f0-f31 */
 	U_8 padding[8]; /* padding to 16-byte boundary */
-#elif defined(J9VM_ARCH_X86) /* J9VM_ARCH_RISCV */
+#elif defined(J9VM_ARCH_X86) /* defined(J9VM_ARCH_RISCV) */
 #if defined(J9VM_ENV_DATA64) && defined(WIN32)
 	UDATA arguments[4]; /* outgoing arguments shadow */
-#endif /*J9VM_ENV_DATA64 && WIN32*/
+#endif /* defined(J9VM_ENV_DATA64) && defined(WIN32) */
 	UDATA vmStruct;
 	UDATA machineBP;
 #if defined(J9VM_ENV_DATA64)
@@ -6543,7 +6902,7 @@ typedef struct J9CInterpreterStackFrame {
 	/* r15,r14,r13,r12,rdi,rsi,rbx,rbp,return address
 	 * RSP is 16-byte aligned at this point
 	 */
-#else /* WIN32 */
+#else /* defined(WIN32) */
 	/* Linux x86-64
 	 *
 	 * Stack must be 16-byte aligned.
@@ -6553,8 +6912,8 @@ typedef struct J9CInterpreterStackFrame {
 	/* r15,r14,r13,r12,rbx,rbp,return address
 	 * RSP is 16-byte aligned at this point
 	 */
-#endif /* WIN32 */
-#else /* J9VM_ENV_DATA64 */
+#endif /* defined(WIN32) */
+#else /* defined(J9VM_ENV_DATA64) */
 	/* Windows x86-32 and Linux x86-32
 	 *
 	 * Stack is forcibly aligned to 16 after pushing EBP
@@ -6568,12 +6927,29 @@ typedef struct J9CInterpreterStackFrame {
 	 * possible alignment
 	 * ebp,return address
 	 */
-#endif /* J9VM_ENV_DATA64 */
-#else /* J9VM_ARCH_X86 */
+#endif /* defined(J9VM_ENV_DATA64) */
+#else /* defined(J9VM_ARCH_X86) */
 #error Unknown architecture
-#endif /* J9VM_ARCH_X86 */
+#endif /* defined(J9VM_ARCH_X86) */
 } J9CInterpreterStackFrame;
 
+/* Snapshot utility macros. */
+#if defined(J9VM_OPT_SNAPSHOTS)
+#define IS_RESTORE_RUN(javaVM) J9_ARE_ALL_BITS_SET(javaVM->extendedRuntimeFlags2, J9_EXTENDED_RUNTIME2_RAMSTATE_RESTORE_RUN)
+#define IS_SNAPSHOT_RUN(javaVM) J9_ARE_ALL_BITS_SET(javaVM->extendedRuntimeFlags2, J9_EXTENDED_RUNTIME2_RAMSTATE_SNAPSHOT_RUN)
+/* IS_SNAPSHOTTING_ENABLED is required because the same port library that allocated a piece of memory must be used to deallocate it.
+ * This macro identifies cases where the VMSnapshotImplPortLibrary is used for both snapshot and restore runs. This limitation
+ * may be removed once https://github.ibm.com/runtimes/openj9-stratum/issues/3 is completed.
+ */
+#define IS_SNAPSHOTTING_ENABLED(javaVM) J9_ARE_ANY_BITS_SET(javaVM->extendedRuntimeFlags2, J9_EXTENDED_RUNTIME2_RAMSTATE_SNAPSHOT_RUN | J9_EXTENDED_RUNTIME2_RAMSTATE_RESTORE_RUN)
+#else /* defined(J9VM_OPT_SNAPSHOTS) */
+#define IS_RESTORE_RUN(javaVM) FALSE
+#define IS_SNAPSHOT_RUN(javaVM) FALSE
+#define IS_SNAPSHOTTING_ENABLED(javaVM) FALSE
+#endif /* defined(J9VM_OPT_SNAPSHOTS) */
+
+#define PERSISTED_MEMORY_SEGMENT_TYPES MEMORY_TYPE_RAM_CLASS | MEMORY_TYPE_UNDEAD_CLASS | MEMORY_TYPE_ROM_CLASS
+#define IS_SEGMENT_PERSISTED(segment) J9_ARE_ANY_BITS_SET(segment->type, PERSISTED_MEMORY_SEGMENT_TYPES)
 #include "objectreferencesmacros_define.inc"
 
 #endif /* J9NONBUILDER_H */

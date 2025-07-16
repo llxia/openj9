@@ -329,7 +329,15 @@ packCallback(const J9ROMClass *romClass, const J9SRP *origSrp, const char *slotN
    if (dst == ctx._cursor)
       ctx._cursor += copyUTF8((J9UTF8 *)dst, str, it->second.second/*truncate*/ ? ctx._generatedPrefixLength : 0);
    else
-      TR_ASSERT((dst < ctx._cursor) && (memcmp(dst, str, J9UTF8_TOTAL_SIZE(str)) == 0), "Must be already copied");
+      TR_ASSERT(
+         (dst < ctx._cursor) && (
+            (it->second.second && (memcmp(utf8Data((J9UTF8 *) dst),
+                                          utf8Data((J9UTF8 *) str),
+                                          ctx._generatedPrefixLength) == 0)) ||
+            (!it->second.second && (memcmp(dst, str, J9UTF8_TOTAL_SIZE(str)) == 0))
+         ),
+         "Must be already copied"
+      );
    }
 
 static void
@@ -938,6 +946,7 @@ JITServerHelpers::cacheRemoteROMClass(ClientSessionData *clientSessionData, J9Cl
    {
    ClientSessionData::ClassInfo classInfoStruct(clientSessionData->persistentMemory());
 
+   classInfoStruct._ramClass = clazz;
    classInfoStruct._romClass = romClass;
    J9Method *methods = std::get<1>(classInfoTuple);
    classInfoStruct._methodsOfClass = methods;
@@ -965,10 +974,11 @@ JITServerHelpers::cacheRemoteROMClass(ClientSessionData *clientSessionData, J9Cl
    classInfoStruct._constantPool = (J9ConstantPool *)std::get<18>(classInfoTuple);
    classInfoStruct._classFlags = std::get<19>(classInfoTuple);
    classInfoStruct._classChainOffsetIdentifyingLoader = std::get<20>(classInfoTuple);
-   auto &origROMMethods = std::get<21>(classInfoTuple);
+   auto &origROMMethods = std::get<21>(classInfoTuple); // vector of ROMMethod pointers valid at the client
    classInfoStruct._classNameIdentifyingLoader = std::get<22>(classInfoTuple);
    classInfoStruct._arrayElementSize = std::get<23>(classInfoTuple);
    classInfoStruct._defaultValueSlotAddress = std::get<24>(classInfoTuple);
+   classInfoStruct._nullRestrictedArrayClass = std::get<26>(classInfoTuple);
 
    auto result = clientSessionData->getROMClassMap().insert({ clazz, classInfoStruct });
 
@@ -977,7 +987,7 @@ JITServerHelpers::cacheRemoteROMClass(ClientSessionData *clientSessionData, J9Cl
    J9ROMMethod *romMethod = J9ROMCLASS_ROMMETHODS(romClass);
    for (uint32_t i = 0; i < numMethods; i++)
       {
-      ClientSessionData::J9MethodInfo m(romMethod, origROMMethods[i], (TR_OpaqueClassBlock *)clazz,
+      ClientSessionData::J9MethodInfo m(romMethod, origROMMethods[i], result.first->second, /* classInfoStruct */
                                         i, static_cast<bool>(methodTracingInfo[i]));
       methodMap.insert({ &methods[i], m });
       romMethod = nextROMMethod(romMethod);
@@ -1031,6 +1041,7 @@ JITServerHelpers::packRemoteROMClassInfo(J9Class *clazz, J9VMThread *vmThread, T
    TR_OpaqueClassBlock *hostClass = fe->convertClassPtrToClassOffset(clazz->hostClass);
    TR_OpaqueClassBlock *componentClass = fe->getComponentClassFromArrayClass((TR_OpaqueClassBlock *)clazz);
    TR_OpaqueClassBlock *arrayClass = fe->getArrayClassFromComponentClass((TR_OpaqueClassBlock *)clazz);
+   TR_OpaqueClassBlock *nullRestrictedArrayClass = fe->getNullRestrictedArrayClassFromComponentClass((TR_OpaqueClassBlock *)clazz);
    uintptr_t totalInstanceSize = clazz->totalInstanceSize;
    uintptr_t cp = fe->getConstantPoolFromClass((TR_OpaqueClassBlock *)clazz);
    uintptr_t classFlags = fe->getClassFlagsValue((TR_OpaqueClassBlock *)clazz);
@@ -1082,7 +1093,7 @@ JITServerHelpers::packRemoteROMClassInfo(J9Class *clazz, J9VMThread *vmThread, T
       classHasFinalFields, classDepthAndFlags, classInitialized, byteOffsetToLockword, leafComponentClass,
       classLoader, hostClass, componentClass, arrayClass, totalInstanceSize, clazz->romClass,
       cp, classFlags, classChainOffsetIdentifyingLoader, origROMMethods, classNameIdentifyingLoader, arrayElementSize,
-      defaultValueSlotAddress, romClassHash
+      defaultValueSlotAddress, romClassHash, nullRestrictedArrayClass
    );
    }
 
@@ -1261,10 +1272,25 @@ JITServerHelpers::getROMClassData(const ClientSessionData::ClassInfo &classInfo,
       case CLASSINFO_DEFAULT_VALUE_SLOT_ADDRESS:
          *(j9object_t **)data = classInfo._defaultValueSlotAddress;
          break;
+      case CLASSINFO_NULLRESTRICTED_ARRAY_CLASS :
+         *(TR_OpaqueClassBlock **)data = classInfo._nullRestrictedArrayClass;
+         break;
       default:
          TR_ASSERT(false, "Class Info not supported %u\n", dataType);
          break;
       }
+   }
+
+ClientSessionData::ClassInfo &
+JITServerHelpers::getJ9ClassInfo(TR::CompilationInfoPerThread *threadCompInfo, J9Class *clazz)
+   {
+   // This function assumes that you are inside of _romMapMonitor
+   // Do not use it otherwise
+   auto &classMap = threadCompInfo->getClientData()->getROMClassMap();
+   auto it = classMap.find(clazz);
+   TR_ASSERT_FATAL(it != classMap.end(),"compThreadID %d, ClientData %p, clazz %p: ClassInfo is not in the class map %p!!\n",
+      threadCompInfo->getCompThreadId(), threadCompInfo->getClientData(), clazz, &classMap);
+   return it->second;
    }
 
 J9ROMMethod *

@@ -69,17 +69,12 @@ class TR_MultipleCallTargetInliner : public TR_InlinerBase
    {
    public:
 
-      template <typename FunctObj>
-      void recursivelyWalkCallTargetAndPerformAction(TR_CallTarget *ct, FunctObj &action);
-
-      //void generateNodeEstimate(TR_CallTarget *ct, TR::Compilation *comp);
-
-      class generateNodeEstimate
+      struct NodeEstimate
          {
-         public:
-            generateNodeEstimate() : _nodeEstimate(0){ }
-            void operator()(TR_CallTarget *ct, TR::Compilation *comp);
-            int32_t getNodeEstimate() { return _nodeEstimate; }
+         NodeEstimate() : _nodeEstimate(0){ }
+         void operator()(TR_CallTarget *ct, TR::Compilation *comp);
+         int32_t getNodeEstimate() { return _nodeEstimate; }
+
          private:
             int32_t _nodeEstimate;
          };
@@ -90,6 +85,16 @@ class TR_MultipleCallTargetInliner : public TR_InlinerBase
       virtual bool exceedsSizeThreshold(TR_CallSite *callSite, int bytecodeSize, TR::Block * callNodeBlock, TR_ByteCodeInfo & bcInfo, int32_t numLocals=0, TR_ResolvedMethod * caller = 0, TR_ResolvedMethod * calleeResolvedMethod = 0, TR::Node * callNode = 0, bool allConsts = false);
 
       TR_LinkHead<TR_CallTarget> _callTargets; // This list only contains the call targets from top most level
+
+      /*
+       * \brief Recursively walks call target and estimates the number of nodes of a call graph.
+       *
+       * \param ct
+       *    the TR_CallTarget to evaluate
+       * \param estimate
+       *    the NodeEstimate to keep track of the number of nodes
+       */
+      void recursivelyWalkCallTargetAndGenerateNodeEstimate(TR_CallTarget *ct, NodeEstimate &estimate);
 
    protected:
       virtual int32_t scaleSizeBasedOnBlockFrequency(int32_t bytecodeSize, int32_t frequency, int32_t borderFrequency, TR_ResolvedMethod * calleeResolvedMethod, TR::Node *callNode, int32_t coldBorderFrequency = 0);
@@ -103,7 +108,7 @@ class TR_MultipleCallTargetInliner : public TR_InlinerBase
       int32_t applyArgumentHeuristics(TR_LinkHead<TR_ParameterMapping> &map, int32_t originalWeight, TR_CallTarget *target);
       bool eliminateTailRecursion(TR::ResolvedMethodSymbol *, TR_CallStack *, TR::TreeTop *, TR::Node *, TR::Node *, TR_VirtualGuardSelection *);
       void assignArgumentsToParameters(TR::ResolvedMethodSymbol *, TR::TreeTop *, TR::Node *);
-      bool isLargeCompiledMethod(TR_ResolvedMethod *calleeResolvedMethod, int32_t bytecodeSize, int32_t freq);
+      bool isLargeCompiledMethod(TR_ResolvedMethod *calleeResolvedMethod, int32_t bytecodeSize, int32_t freq, int32_t exemptionFreqCutoff, int32_t veryLargeCompiledMethodThreshold, int32_t veryLargeCompiledMethodFaninThreshold);
       /* \brief
        *    This API processes the call targets got chopped off from \ref _calltargets
        *
@@ -128,6 +133,20 @@ class TR_MultipleCallTargetInliner : public TR_InlinerBase
        *    True if the given calltarget should be inlined
        */
       bool inlineSubCallGraph(TR_CallTarget* calltarget);
+
+      /*
+       * \brief
+       *   For some call targets and their sub call graphs, it may be possible to simplify them into simple operations in
+       *   certain situations, such as when known object info is being passed as arg. In such cases, the node count
+       *   obtained via NodeEstimate would not truly reflect the number of nodes that are actually introduced. This
+       *   function provides a mechanism for examining call targets and evaluating whether it is safe to skip counting nodes.
+       *
+       * \param callTarget
+       *    the call target to examine
+       * \return
+       *    true if node counting can be skipped for callTarget, false otherwise
+       */
+      bool canSkipCountingNodes(TR_CallTarget* callTarget);
    };
 
 class TR_J9InlinerUtil: public OMR_InlinerUtil
@@ -157,7 +176,6 @@ class TR_J9InlinerUtil: public OMR_InlinerUtil
    protected:
       virtual void refineColdness (TR::Node* node, bool& isCold);
       virtual void computeMethodBranchProfileInfo (TR::Block * cfgBlock, TR_CallTarget* calltarget, TR::ResolvedMethodSymbol* callerSymbol);
-      virtual int32_t getCallCount(TR::Node *callNode);
       virtual TR_InnerPreexistenceInfo *createInnerPrexInfo(TR::Compilation * c, TR::ResolvedMethodSymbol *methodSymbol, TR_CallStack *callStack, TR::TreeTop *callTree, TR::Node *callNode, TR_VirtualGuardKind guardKind);
       virtual void estimateAndRefineBytecodeSize(TR_CallSite* callsite, TR_CallTarget* target, TR_CallStack *callStack, int32_t &bytecodeSize);
       virtual TR_TransformInlinedFunction *getTransformInlinedFunction(TR::ResolvedMethodSymbol *, TR::ResolvedMethodSymbol *, TR::Block *, TR::TreeTop *,
@@ -175,6 +193,7 @@ class TR_J9InlinerPolicy : public OMR_InlinerPolicy
       TR_J9InlinerPolicy(TR::Compilation *comp);
       virtual bool inlineRecognizedMethod(TR::RecognizedMethod method);
       virtual bool tryToInlineTrivialMethod (TR_CallStack* callStack, TR_CallTarget* calltarget);
+      virtual bool trivialInliningOnly(TR_CallStack *callStack, TR_CallTarget *callTarget);
       bool isInlineableJNI(TR_ResolvedMethod *method,TR::Node *callNode);
       virtual bool alwaysWorthInlining(TR_ResolvedMethod * calleeMethod, TR::Node *callNode);
       bool adjustFanInSizeInExceedsSizeThreshold(int bytecodeSize,
@@ -230,13 +249,13 @@ class TR_J9InlinerPolicy : public OMR_InlinerPolicy
        *         after executing either \c branchTargetTree or \c fallThroughTree
        */
       TR::Block * createUnsafeGetPutCallDiamond(TR::TreeTop* callNodeTreeTop, TR::TreeTop* comparisonTree, TR::TreeTop* branchTargetTree, TR::TreeTop* fallThroughTree);
-      bool createUnsafePutWithOffset(TR::ResolvedMethodSymbol *, TR::ResolvedMethodSymbol *, TR::TreeTop *, TR::Node *, TR::DataType, bool, bool needNullCheck = false, bool isOrdered = false);
+      bool createUnsafePutWithOffset(TR::ResolvedMethodSymbol *, TR::ResolvedMethodSymbol *, TR::TreeTop *, TR::Node *, TR::DataType, TR::Symbol::MemoryOrdering ordering = TR::Symbol::MemoryOrdering::Transparent, bool needNullCheck = false, bool isUnaligned = false);
       TR::TreeTop* genDirectAccessCodeForUnsafeGetPut(TR::Node* callNode, bool conversionNeeded, bool isUnsafeGet);
       void createTempsForUnsafePutGet(TR::Node*& unsafeAddress, TR::Node* unsafeCall, TR::TreeTop* callNodeTreeTop, TR::Node*& offset, TR::SymbolReference*& newSymbolReferenceForAddress, bool isUnsafeGet);
       bool         createUnsafeGet(TR::ResolvedMethodSymbol *, TR::ResolvedMethodSymbol *, TR::TreeTop *, TR::Node *, TR::DataType, bool compress = true);
       bool         createUnsafePut(TR::ResolvedMethodSymbol *, TR::ResolvedMethodSymbol *, TR::TreeTop *, TR::Node *, TR::DataType, bool compress = true);
       TR::Node *    createUnsafeAddress(TR::Node *);
-      bool         createUnsafeGetWithOffset(TR::ResolvedMethodSymbol *, TR::ResolvedMethodSymbol *, TR::TreeTop *, TR::Node *, TR::DataType, bool, bool needNullCheck = false);
+      bool         createUnsafeGetWithOffset(TR::ResolvedMethodSymbol *, TR::ResolvedMethodSymbol *, TR::TreeTop *, TR::Node *, TR::DataType, TR::Symbol::MemoryOrdering ordering = TR::Symbol::MemoryOrdering::Transparent, bool needNullCheck = false, bool isUnaligned = false);
       TR::Node *    createUnsafeAddressWithOffset(TR::Node *);
       bool         createUnsafeFence(TR::TreeTop *, TR::Node *, TR::ILOpCodes);
 
@@ -336,7 +355,7 @@ class TR_J9InlinerPolicy : public OMR_InlinerPolicy
       bool _tryToGenerateILForMethod (TR::ResolvedMethodSymbol* calleeSymbol, TR::ResolvedMethodSymbol* callerSymbol, TR_CallTarget* calltarget);
       bool doCorrectnessAndSizeChecksForInlineCallTarget(TR_CallStack *callStack, TR_CallTarget *calltarget, bool inlinefromgraph, TR_PrexArgInfo *argInfo);
       bool validateArguments(TR_CallTarget *calltarget, TR_LinkHead<TR_ParameterMapping> &map);
-      virtual bool supressInliningRecognizedInitialCallee(TR_CallSite* callsite, TR::Compilation* comp);
+      virtual bool suppressInliningRecognizedInitialCallee(TR_CallSite* callsite, TR::Compilation* comp);
       virtual TR_InlinerFailureReason checkIfTargetInlineable(TR_CallTarget* target, TR_CallSite* callsite, TR::Compilation* comp);
       /** \brief
        *     This query decides whether the given method is JSR292 related
@@ -357,6 +376,22 @@ class TR_J9InlinerPolicy : public OMR_InlinerPolicy
        *     This query defines a group of methods that are small helpers in the java/lang/invoke package
        */
       static bool isJSR292SmallHelperMethod(TR_ResolvedMethod *resolvedMethod);
+
+      /**
+       * \brief
+       *    This query answers whether the method is a simple non-native Unsafe method that contain a call to
+       *    a native Unsafe method that would normally be handled in TR_J9InlinerPolicy::inlineUnsafeCall. If
+       *    we can determine that the runtime checks in the wrapper method can be determined at compile time,
+       *    it may be possible to treat the wrapper method as its underlying native Unsafe method and have it
+       *    inlined in TR_J9InlinerPolicy::inlineUnsafeCall.
+       *
+       * \param
+       *    resolvedMethod the TR_ResolvedMethod
+       * \return
+       *    true if the method is a simple wrapper method for a native unsafe method, false otherwise
+       */
+      static bool isSimpleWrapperForInlineableUnsafeNativeMethod(TR_ResolvedMethod *resolvedMethod);
+
    };
 
 class TR_J9JSR292InlinerPolicy : public TR_J9InlinerPolicy

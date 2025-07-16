@@ -47,6 +47,9 @@
 extern "C" {
 #endif
 
+/* Forward declaration. */
+struct jvmtiClassDefinition;
+
 typedef enum
 {
 	ONLY_SPEC_MODIFIERS,
@@ -136,7 +139,7 @@ IDATA dumpBytecodes(J9PortLibrary * portLib, J9ROMClass * romClass, J9ROMMethod 
 */
 IDATA j9bcutil_dumpBytecodes(J9PortLibrary * portLib, J9ROMClass * romClass,
 							 U_8 * bytecodes, UDATA walkStartPC, UDATA walkEndPC,
-							 UDATA flags, void *printFunction, void *userData, char *indent);
+							 UDATA flags, void *printFunction, void *userData, UDATA indentLen);
 
 
 /* ---------------- binarysup.c ---------------- */
@@ -1353,26 +1356,28 @@ U_32
 getNumberOfInjectedInterfaces(J9ROMClass *romClass);
 
 /**
- * Retrieves number of preload classes in this class. Assumes that
- * ROM class parameter references a class with preloaded classes.
+ * Retrieves number of loadable descriptors in this class. This method
+ * assumes that the ROM class parameter references a class with a
+ * LoadableDescriptors attribute.
  *
  * @param J9ROMClass class
- * @return U_32* the first U_32 is the number of classes, followed by that number
- * of constant pool indices.
+ * @return U_32 * the first U_32 is the number of classes, followed by that
+ * number of constant pool indices
  */
-U_32*
-getPreloadInfoPtr(J9ROMClass *romClass);
+U_32 *
+getLoadableDescriptorsInfoPtr(J9ROMClass *romClass);
 
 /**
- * Find the preload class name constant pool entry at index in the optional data of the ROM class parameter.
- * This method assumes there is at least one preloaded class in the ROM class.
+ * Find the loadable descriptor constant pool entry at index in the optional
+ * data of the ROM class parameter. This method assumes there is at least one
+ * loadable descriptor in the ROM class.
  *
- * @param U_32* the pointer returned by getPreloadInfoPtr
+ * @param U_32 * the pointer returned by getLoadableDescriptorsInfoPtr
  * @param U_32 class index
- * @return the preload class name at index from ROM class
+ * @return the loadable descriptor at index from ROM class
  */
 J9UTF8*
-preloadClassNameAtIndex(U_32* permittedSubclassesCountPtr, U_32 index);
+loadableDescriptorAtIndex(U_32 *permittedSubclassesCountPtr, U_32 index);
 #endif /* J9VM_OPT_VALHALLA_VALUE_TYPES */
 
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
@@ -2660,6 +2665,12 @@ j9util_open_system_library(char *name, UDATA *descriptor, UDATA flags);
 
 #endif /*if defined(WIN32)*/
 
+/* ---------------- filehelp.c ---------------- */
+/**
+ * Try to find the 'correct' unix temp directory, as taken from the man page for tmpnam.
+ * As a last resort, '.' representing the current directory is returned.
+ */
+char * getTmpDir(JNIEnv *env, char **envSpace);
 
 #if defined(J9VM_JIT_FREE_SYSTEM_STACK_POINTER)
 /* ---------------- freessp.c ---------------- */
@@ -2910,6 +2921,31 @@ getPackageDefinition(J9VMThread * currentThread, J9Module * fromModule, const ch
  */
 J9Package*
 hashPackageTableAt(J9VMThread * currentThread, J9ClassLoader * classLoader, const char *packageName);
+
+/**
+ * Look up a J9Package in a classloader's package hashtable based on the package name
+ *
+ * @param[in] currentThread the current J9VMThread
+ * @param[in] classLoader the classloader with the target package hashtable
+ * @param[in] packageName the package name for the query
+ *
+ * @return a pointer to the J9Package if found or NULL
+ */
+J9Package *
+hashPackageTableAtWithUTF8Name(J9VMThread *currentThread, J9ClassLoader *classLoader, J9UTF8 *packageName);
+
+/**
+ * Look up a J9Module in a classloader's module hashtable based on the module name
+ *
+ * @param[in] currentThread the current J9VMThread
+ * @param[in] classLoader the classloader with the target module hashtable
+ * @param[in] moduleName the module name for the query
+ *
+ * @return a pointer to the J9Module if found or NULL
+ */
+J9Module *
+hashModuleTableAtWithUTF8Name(J9VMThread *currentThread, J9ClassLoader *classLoader, J9UTF8 *moduleName);
+
 /**
  * Add UTF package name to construct a J9Package for hashtable query
  *

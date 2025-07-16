@@ -54,6 +54,7 @@
 #include "PhysicalSubArenaRegionBased.hpp"
 #include "SweepPoolManagerAddressOrderedList.hpp"
 #include "SweepPoolManagerVLHGC.hpp"
+#include  "SparseVirtualMemory.hpp"
 
 #define TAROK_MINIMUM_REGION_SIZE_BYTES (512 * 1024)
 
@@ -97,6 +98,16 @@ MM_ConfigurationIncrementalGenerational::createHeapWithManager(MM_EnvironmentBas
 	if (NULL == heap) {
 		return NULL;
 	}
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+#if !defined(J9ZTPF)
+	/* Set off-heap enabled as default for balanced GC */
+	extensions->isVirtualLargeObjectHeapEnabled = true;
+#endif /* !defined(J9ZTPF) */
+
+	if (extensions->virtualLargeObjectHeap._wasSpecified) {
+		extensions->isVirtualLargeObjectHeapEnabled = extensions->virtualLargeObjectHeap._valueSpecified;
+	}
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
 
 #if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
 	/* Enable double mapping if glibc version 2.27 or newer is found. For double map to
@@ -112,7 +123,7 @@ MM_ConfigurationIncrementalGenerational::createHeapWithManager(MM_EnvironmentBas
 	 * also need to check if region size is a bigger or equal to multiple of page size.
 	 *
 	 */
-	if (extensions->isArrayletDoubleMapRequested && extensions->isArrayletDoubleMapAvailable) {
+	if (!extensions->isVirtualLargeObjectHeapEnabled && extensions->isArrayletDoubleMapRequested && extensions->isArrayletDoubleMapAvailable) {
 		uintptr_t pagesize = heap->getPageSize();
 		if (!extensions->memoryManager->isLargePage(env, pagesize) || (pagesize <= extensions->getOmrVM()->_arrayletLeafSize)) {
 			extensions->indexableObjectModel.setEnableDoubleMapping(true);
@@ -154,6 +165,32 @@ MM_ConfigurationIncrementalGenerational::createHeapWithManager(MM_EnvironmentBas
 		}
 	}
 #endif /* defined(OMR_GC_VLHGC_CONCURRENT_COPY_FORWARD) */
+
+#if defined(J9VM_ENV_DATA64)
+	extensions->indexableObjectModel.setIsDataAddressPresent(true);
+	J9JavaVM *vm = (J9JavaVM *)extensions->getOmrVM()->_language_vm;
+	/* Let VM know that indexable objects in Balanced always have dataAddr, and
+	   let's assume initially it has arraylets, which can be later overridden if Offheap is Enabled.
+	 */
+	vm->indexableObjectLayout = J9IndexableObjectLayout_DataAddr_Arraylet;
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+	if (extensions->isVirtualLargeObjectHeapEnabled) {
+		/* Create off-heap */
+		MM_SparseVirtualMemory *largeObjectVirtualMemory = MM_SparseVirtualMemory::newInstance(env, OMRMEM_CATEGORY_MM_RUNTIME_HEAP, heap);
+		if (NULL != largeObjectVirtualMemory) {
+			extensions->largeObjectVirtualMemory = largeObjectVirtualMemory;
+			extensions->indexableObjectModel.setEnableVirtualLargeObjectHeap(true);
+			/* Overriding the original assumption that Balanced has arraylets. */
+			vm->indexableObjectLayout = J9IndexableObjectLayout_DataAddr_NoArraylet;
+			/* reset vm->unsafeIndexableHeaderSize for off-heap case */
+			vm->unsafeIndexableHeaderSize = 0;
+		} else {
+			tearDown(env);
+			return NULL;
+		}
+	}
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+#endif /* defined(J9VM_ENV_DATA64) */
 
 	return heap;
 }
@@ -361,6 +398,13 @@ MM_ConfigurationIncrementalGenerational::tearDown(MM_EnvironmentBase *env)
 	}
 #endif /* defined(OMR_GC_VLHGC_CONCURRENT_COPY_FORWARD) */
 
+#if defined(J9VM_GC_SPARSE_HEAP_ALLOCATION)
+	if (NULL != extensions->largeObjectVirtualMemory) {
+		extensions->largeObjectVirtualMemory->kill(env);
+		extensions->largeObjectVirtualMemory = NULL;
+	}
+#endif /* defined(J9VM_GC_SPARSE_HEAP_ALLOCATION) */
+
 	MM_Configuration::tearDown(env);
 
 	// cleanup after extensions->heapRegionManager
@@ -412,7 +456,8 @@ MM_ConfigurationIncrementalGenerational::prepareParameters(OMR_VM *omrVM, UDATA 
 bool
 MM_ConfigurationIncrementalGenerational::verifyRegionSize(MM_EnvironmentBase *env, UDATA regionSize)
 {
-	return regionSize >= TAROK_MINIMUM_REGION_SIZE_BYTES;
+	MM_GCExtensions *extensions = MM_GCExtensions::getExtensions(env);
+	return extensions->isRegionSizeWithOverrideSpecified || (regionSize >= TAROK_MINIMUM_REGION_SIZE_BYTES);
 }
 
 bool

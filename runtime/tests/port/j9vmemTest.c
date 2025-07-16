@@ -73,6 +73,7 @@ static BOOLEAN memoryIsAvailable(struct J9PortLibrary *, BOOLEAN);
 
 #define CYCLES 10000
 #define FREE_PROB 0.5
+#define OVERWRITE_EXISTING 1 /* for use with setenv() */
 
 int myFunction1();
 void myFunction2();
@@ -271,6 +272,7 @@ isNewPageSize(UDATA pageSize, UDATA pageFlags)
  * On z/OS, 1M fixed and 2G fixed pages can be used only to allocate above 2G bar.
  * Only 4K and 1M pageable pages can be used to allocate memory below the bar.
  */
+BOOLEAN
 isPageSizeSupportedBelowBar(UDATA pageSize, UDATA pageFlags)
 {
 	if ((FOUR_KB == pageSize) ||
@@ -361,7 +363,7 @@ j9vmem_test1(struct J9PortLibrary *portLibrary)
 		}
 		
 		/* can we read and write to the memory? */
-		(void) j9str_printf(PORTLIB, allocName, allocNameSize, "j9vmem_reserve_memory(%d)", pageSizes[i]);
+		(void) j9str_printf(allocName, allocNameSize, "j9vmem_reserve_memory(%d)", pageSizes[i]);
 		verifyMemory(portLibrary, testName, memPtr, pageSizes[i], allocName);
 		
 		/* free the memory (reuse the vmemID) */
@@ -847,7 +849,7 @@ j9vmem_decommit_memory_test(struct J9PortLibrary *portLibrary)
 		}
 		
 		/* can we read and write to the memory? */
-		(void) j9str_printf(PORTLIB, allocName, allocNameSize, "j9vmem_reserve_memory(%d)", pageSizes[i]);
+		(void) j9str_printf(allocName, allocNameSize, "j9vmem_reserve_memory(%d)", pageSizes[i]);
 		verifyMemory(portLibrary, testName, memPtr, pageSizes[i], allocName);
 		
 		/* decommit the memory */
@@ -1125,7 +1127,7 @@ j9vmem_testReserveMemoryEx_impl(struct J9PortLibrary *portLibrary, const char* t
 				}
 
 				/* can we read and write to the memory? */
-				j9str_printf(PORTLIB, allocName, allocNameSize, "j9vmem_reserve_memory(%d)", pageSizes[i]);
+				j9str_printf(allocName, allocNameSize, "j9vmem_reserve_memory(%d)", pageSizes[i]);
 				verifyMemory(portLibrary, testName, memPtr[j], pageSizes[i], allocName);
 
 				/* Have the memory categories been updated properly */
@@ -1316,7 +1318,7 @@ j9vmem_testReserveMemoryEx_zOSLargePageBelowBar(struct J9PortLibrary *portLibrar
 		}
 	
 		/* can we read and write to the memory? */
-		j9str_printf(PORTLIB, allocName, allocNameSize, "j9vmem_reserve_memory(%d)", params.byteAmount);
+		j9str_printf(allocName, allocNameSize, "j9vmem_reserve_memory(%d)", params.byteAmount);
 		verifyMemory(portLibrary, testName, memPtr, params.byteAmount, allocName);
 	
 		/* free the memory */
@@ -1420,7 +1422,7 @@ j9vmem_testReserveMemoryExStrictAddress_zOSLargePageBelowBar(struct J9PortLibrar
 		}
 
 		/* can we read and write to the memory? */
-		j9str_printf(PORTLIB, allocName, allocNameSize, "j9vmem_reserve_memory(%d)", params.byteAmount);
+		j9str_printf(allocName, allocNameSize, "j9vmem_reserve_memory(%d)", params.byteAmount);
 		verifyMemory(portLibrary, testName, memPtr, params.byteAmount, allocName);
 
 		/* free the memory */
@@ -1511,7 +1513,7 @@ j9vmem_testReserveMemoryEx_zOS_useExtendedPrivateAreaMemoryLargePage(struct J9Po
 		}
 
 		/* can we read and write to the memory? */
-		j9str_printf(PORTLIB, allocName, allocNameSize, "j9vmem_reserve_memory(%d)", params.byteAmount);
+		j9str_printf(allocName, allocNameSize, "j9vmem_reserve_memory(%d)", params.byteAmount);
 		verifyMemory(portLibrary, testName, memPtr, params.byteAmount, allocName);
 
 		/* free the memory */
@@ -1866,7 +1868,7 @@ j9vmem_test_numa(struct J9PortLibrary *portLibrary)
 				/* ideally we'd test that the memory actually has some NUMA characteristics, but that's difficult to prove */
 
 				/* can we read and write to the memory? */
-				j9str_printf(PORTLIB, allocName, allocNameSize, "j9vmem_reserve_memory(%d)", pageSize);
+				j9str_printf(allocName, allocNameSize, "j9vmem_reserve_memory(%d)", pageSize);
 				verifyMemory(portLibrary, testName, memPtr, reserveSizeInBytes, allocName);
 				
 				/* free the memory (reuse the vmemID) */
@@ -2116,6 +2118,9 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	UDATA expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 	BOOLEAN expectedIsSizeSupported = FALSE;
 
+	UDATA defaultPageSize = 0;
+	UDATA defaultPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+
 	UDATA defaultLargePageSize = 0;
 	UDATA defaultLargePageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 
@@ -2127,7 +2132,9 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	BOOLEAN sixteenGBPageSize = FALSE;
 #endif /* defined(J9VM_ENV_DATA64) */
 	BOOLEAN sixteenMBPageSize = FALSE;
+	BOOLEAN twoMBPageSize = FALSE;
 	BOOLEAN sixtyFourKBPageSize = FALSE;
+	BOOLEAN fourKBPageSize = FALSE;
 
 	void *address = NULL;
 	UDATA dataSegmentPageSize = 0;
@@ -2141,7 +2148,7 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	outputComment(PORTLIB, "\n");
 	reportTestEntry(portLibrary, testName);
 
-	/* First get all the supported page sizes */
+	/* First get all the supported page sizes. */
 	pageSizes = j9vmem_supported_page_sizes();
 	pageFlags = j9vmem_supported_page_flags();
 
@@ -2150,24 +2157,39 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 		goto _exit;
 	}
 
+	defaultPageSize = pageSizes[0];
+	outputComment(PORTLIB, "Page size of default page: 0x%zx\n", defaultPageSize);
+
 	for (i =0 ; pageSizes[i] != 0 ; i++) {
 #if defined(J9VM_ENV_DATA64)
-		if ((8*TWO_GB == pageSizes[i]) &&
-			(0 != (J9PORT_VMEM_PAGE_FLAG_NOT_USED & pageFlags[i]))
+		if (((8 * TWO_GB) == pageSizes[i])
+			&& J9_ARE_ANY_BITS_SET(pageFlags[i], J9PORT_VMEM_PAGE_FLAG_NOT_USED)
 		) {
 			sixteenGBPageSize = TRUE;
 		}
 #endif /* defined(J9VM_ENV_DATA64) */
-		if ((16*ONE_MB == pageSizes[i]) &&
-			(0 != (J9PORT_VMEM_PAGE_FLAG_NOT_USED & pageFlags[i]))
+		if (((16 * ONE_MB) == pageSizes[i])
+			&& J9_ARE_ANY_BITS_SET(pageFlags[i], J9PORT_VMEM_PAGE_FLAG_NOT_USED)
 		) {
 			sixteenMBPageSize = TRUE;
 		}
 
-		if ((16*FOUR_KB == pageSizes[i]) &&
-			(0 != (J9PORT_VMEM_PAGE_FLAG_NOT_USED & pageFlags[i]))
+		if (((2 * ONE_MB) == pageSizes[i])
+			&& J9_ARE_ANY_BITS_SET(pageFlags[i], J9PORT_VMEM_PAGE_FLAG_NOT_USED)
+		) {
+			twoMBPageSize = TRUE;
+		}
+
+		if (((16 * FOUR_KB) == pageSizes[i])
+			&& J9_ARE_ANY_BITS_SET(pageFlags[i], J9PORT_VMEM_PAGE_FLAG_NOT_USED)
 		) {
 			sixtyFourKBPageSize = TRUE;
+		}
+
+		if ((FOUR_KB == pageSizes[i])
+			&& J9_ARE_ANY_BITS_SET(pageFlags[i], J9PORT_VMEM_PAGE_FLAG_NOT_USED)
+		) {
+			fourKBPageSize = TRUE;
 		}
 	}
 
@@ -2175,10 +2197,12 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	outputComment(PORTLIB, "16G page size supported: %s\n", (sixteenGBPageSize) ? "yes" : "no");
 #endif /* defined(J9VM_ENV_DATA64) */
 	outputComment(PORTLIB, "16M page size supported: %s\n", (sixteenMBPageSize) ? "yes" : "no");
+	outputComment(PORTLIB, "2M  page size supported: %s\n", (twoMBPageSize) ? "yes" : "no");
 	outputComment(PORTLIB, "64K page size supported: %s\n", (sixtyFourKBPageSize) ? "yes" : "no");
+	outputComment(PORTLIB, "4K  page size supported: %s\n", (fourKBPageSize) ? "yes" : "no");
 
 	/* On AIX default large page size should always be available.
-	 * It is 16M, if available, 64K otherwise
+	 * It is 16M, if available, 64K otherwise.
 	 */
 	j9vmem_default_large_page_size_ex(0, &defaultLargePageSize, &defaultLargePageFlags);
 	if (0 != defaultLargePageSize) {
@@ -2201,7 +2225,7 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 
 	j9vmem_find_valid_page_size(MODE_NOT_USED, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
 
-	if (TRUE == sixteenGBPageSize) {
+	if (sixteenGBPageSize) {
 		expectedPageSize = 8 * TWO_GB;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = TRUE;
@@ -2210,14 +2234,15 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 		expectedPageFlags = defaultLargePageFlags;
 		expectedIsSizeSupported = FALSE;
 	} else {
-		expectedPageSize = FOUR_KB;
+		expectedPageSize = defaultPageSize;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = FALSE;
 	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 #endif /* defined(J9VM_ENV_DATA64) */
 
 	outputComment(PORTLIB, "\nCase %d: -Xlp:objectheap:pagesize=16M\n", caseIndex++);
@@ -2228,7 +2253,7 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 
 	j9vmem_find_valid_page_size(MODE_NOT_USED, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
 
-	if (TRUE == sixteenMBPageSize) {
+	if (sixteenMBPageSize) {
 		expectedPageSize = 16 * ONE_MB;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = TRUE;
@@ -2237,14 +2262,45 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 		expectedPageFlags = defaultLargePageFlags;
 		expectedIsSizeSupported = FALSE;
 	} else {
-		expectedPageSize = FOUR_KB;
+		expectedPageSize = defaultPageSize;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = FALSE;
 	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
+
+	/* 2M is only possible for LINUXPPC. */
+#if defined(LINUXPPC)
+	outputComment(PORTLIB, "\nCase %d: -Xlp:objectheap:pagesize=2M\n", caseIndex++);
+
+	requestedPageSize = 2 * ONE_MB;
+	requestedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+	PRINT_FIND_VALID_PAGE_SIZE_INPUT(MODE_NOT_USED, requestedPageSize, requestedPageFlags);
+
+	j9vmem_find_valid_page_size(MODE_NOT_USED, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
+
+	if (twoMBPageSize) {
+		expectedPageSize = 2 * ONE_MB;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = TRUE;
+	} else if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = FALSE;
+	} else {
+		expectedPageSize = defaultPageSize;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = FALSE;
+	}
+
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
+#endif /* defined(LINUXPPC) */
 
 	outputComment(PORTLIB, "\nCase %d: -Xlp:objectheap:pagesize=64K\n", caseIndex++);
 
@@ -2258,15 +2314,20 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 		expectedPageSize = 16 * FOUR_KB;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = TRUE;
+	} else if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = FALSE;
 	} else {
-		expectedPageSize = FOUR_KB;
+		expectedPageSize = defaultPageSize;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = FALSE;
 	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 
 	outputComment(PORTLIB, "\nCase %d: -Xlp:objectheap:pagesize=4K\n", caseIndex++);
 
@@ -2276,17 +2337,28 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 
 	j9vmem_find_valid_page_size(MODE_NOT_USED, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
 
-	expectedPageSize = FOUR_KB;
-	expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
-	expectedIsSizeSupported = TRUE;
+	if (0 != fourKBPageSize) {
+		expectedPageSize = FOUR_KB;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = TRUE;
+	} else if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = FALSE;
+	} else {
+		expectedPageSize = defaultPageSize;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = FALSE;
+	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 
 	outputComment(PORTLIB, "\nCase %d: -Xlp:objectheap:pagesize=<not in 4K, 64K, 16M, 16G>\n", caseIndex++);
 
-	requestedPageSize = 8 * ONE_MB;
+	requestedPageSize = 8 * ONE_MB; /* An invalid value. */
 	requestedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 	PRINT_FIND_VALID_PAGE_SIZE_INPUT(MODE_NOT_USED, requestedPageSize, requestedPageFlags);
 
@@ -2297,22 +2369,35 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 		expectedPageFlags = defaultLargePageFlags;
 		expectedIsSizeSupported = FALSE;
 	} else {
-		expectedPageSize = FOUR_KB;
+		expectedPageSize = defaultPageSize;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = FALSE;
 	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 
 
-	/* Test -Xlp:codecache options */
+	/* Test -Xlp:codecache options. */
 
-	/* First get the page size of the data segment. This is the page size used by the JIT code cache if 16M Code Pages are not being used */
+	/* For 32-bit executable pages, honour the request if
+	 * - the request is for 64K pages, or
+	 * - the request is for 16M pages and CodeCacheConsolidation is enabled;
+	 * otherwise, fallback to default (as determined below).
+	 *
+	 * For 64-bit, accept any request supported by the OS.
+	 */
+
+	/* First get the page size of the data segment.
+	 * This is the page size used by the JIT code cache if the requested size is not supported.
+	 */
 #if defined(AIXPPC)
 #define SAMPLE_BLOCK_SIZE 4
-	/* Allocate a memory block using j9mem_allocate_memory, and use the address to get the page size of data segment */
+	/* Allocate a memory block using j9mem_allocate_memory,
+	 * and use the address to get the page size of data segment.
+	 */
 	address = j9mem_allocate_memory(SAMPLE_BLOCK_SIZE, OMRMEM_CATEGORY_PORT_LIBRARY);
 	if (NULL == address) {
 		outputErrorMessage(PORTTEST_ERROR_ARGS, "Failed to allocate block of memory to determine page size of data segment");
@@ -2332,6 +2417,13 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	dataSegmentPageSize = getpagesize();
 #endif /* defined(AIXPPC) */
 
+	j9vmem_default_large_page_size_ex(
+			OMRPORT_VMEM_MEMORY_MODE_EXECUTE,
+			&defaultLargePageSize, &defaultLargePageFlags);
+	if (0 != defaultLargePageSize) {
+		outputComment(PORTLIB, "defaultLargePageSize: 0x%zx, defaultLargePageFlags: 0x%zx\n", defaultLargePageSize, defaultLargePageFlags);
+	}
+
 	outputComment(PORTLIB, "Page size of data segment: 0x%zx\n", dataSegmentPageSize);
 
 #if defined(J9VM_ENV_DATA64)
@@ -2343,13 +2435,24 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 
 	j9vmem_find_valid_page_size(mode, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
 
-	expectedPageSize = dataSegmentPageSize;
-	expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
-	expectedIsSizeSupported = (8 * TWO_GB == dataSegmentPageSize) ? TRUE : FALSE;
+	if (sixteenGBPageSize) {
+		expectedPageSize = 8 * TWO_GB;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = TRUE;
+	} else if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = FALSE;
+	} else {
+		expectedPageSize = dataSegmentPageSize;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = FALSE;
+	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 
 #endif /* defined(J9VM_ENV_DATA64) */
 
@@ -2362,26 +2465,31 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	j9vmem_find_valid_page_size(mode, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
 
 #if defined(J9VM_ENV_DATA64)
-	if (TRUE == sixteenMBPageSize) {
+	if (sixteenMBPageSize) {
 		expectedPageSize = 16 * ONE_MB;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = TRUE;
 	} else
 #endif /* defined(J9VM_ENV_DATA64) */
-	{
+	if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = (16 * ONE_MB == defaultLargePageSize) ? TRUE : FALSE;
+	} else {
 		expectedPageSize = dataSegmentPageSize;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = (16 * ONE_MB == dataSegmentPageSize) ? TRUE : FALSE;
 	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 
 #if !defined(J9VM_ENV_DATA64)
 	outputComment(PORTLIB, "\nCase %d: -Xlp:codecache:pagesize=16M with TR_ppcCodeCacheConsolidationEnabled set\n", caseIndex++);
-	/* No port library API to set the environment variable. Use setenv() */
-	rc = setenv("TR_ppcCodeCacheConsolidationEnabled", "true", 1 /*overwrite any existing value */);
+	/* No port library API to set the environment variable. Use setenv(). */
+	rc = setenv("TR_ppcCodeCacheConsolidationEnabled", "true", OVERWRITE_EXISTING);
 	if (-1 == rc) {
 		outputErrorMessage(PORTTEST_ERROR_ARGS, "Failed to set environment variable TR_ppcCodeCacheConsolidationEnabled");
 		goto _exit;
@@ -2396,20 +2504,58 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	/* unset the environment variable TR_ppcCodeCacheConsolidationEnabled */
 	unsetenv("TR_ppcCodeCacheConsolidationEnabled");
 
-	if (TRUE == sixteenMBPageSize) {
+	if (sixteenMBPageSize) {
 		expectedPageSize = 16 * ONE_MB;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = TRUE;
+	} else if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = (16 * ONE_MB == defaultLargePageSize) ? TRUE : FALSE;
 	} else {
 		expectedPageSize = dataSegmentPageSize;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = (16 * ONE_MB == dataSegmentPageSize) ? TRUE : FALSE;
 	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 #endif /* !defined(J9VM_ENV_DATA64) */
+
+	/* 2M is only possible for LINUXPPC. */
+#if defined(LINUXPPC)
+	outputComment(PORTLIB, "\nCase %d: -Xlp:codecache:pagesize=2M\n", caseIndex++);
+	mode = J9PORT_VMEM_MEMORY_MODE_EXECUTE;
+	requestedPageSize = 2 * ONE_MB;
+	requestedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+	PRINT_FIND_VALID_PAGE_SIZE_INPUT(mode, requestedPageSize, requestedPageFlags);
+
+	j9vmem_find_valid_page_size(mode, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
+
+#if defined(J9VM_ENV_DATA64)
+	if (twoMBPageSize) {
+		expectedPageSize = 2 * ONE_MB;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = TRUE;
+	} else
+#endif /* defined(J9VM_ENV_DATA64) */
+	if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = (2 * ONE_MB == defaultLargePageSize) ? TRUE : FALSE;
+	} else {
+		expectedPageSize = dataSegmentPageSize;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = (2 * ONE_MB == dataSegmentPageSize) ? TRUE : FALSE;
+	}
+
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
+#endif /* defined(LINUXPPC) */
 
 	outputComment(PORTLIB, "\nCase %d: -Xlp:codecache:pagesize=64K\n", caseIndex++);
 	mode = J9PORT_VMEM_MEMORY_MODE_EXECUTE;
@@ -2419,24 +2565,29 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 
 	j9vmem_find_valid_page_size(mode, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
 
-	if (TRUE == sixtyFourKBPageSize) {
+	if (sixtyFourKBPageSize) {
 		expectedPageSize = 16 * FOUR_KB;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = TRUE;
+	} else if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = (16 * FOUR_KB == defaultLargePageSize) ? TRUE : FALSE;
 	} else {
 		expectedPageSize = dataSegmentPageSize;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = (16 * FOUR_KB == dataSegmentPageSize) ? TRUE : FALSE;
 	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 
 #if !defined(J9VM_ENV_DATA64)
 	outputComment(PORTLIB, "\nCase %d: -Xlp:codecache:pagesize=64K with TR_ppcCodeCacheConsolidationEnabled set\n", caseIndex++);
-	/* No port library API to set the environment variable. Use setenv() */
-	rc = setenv("TR_ppcCodeCacheConsolidationEnabled", "true", 1 /*overwrite any existing value */);
+	/* No port library API to set the environment variable. Use setenv(). */
+	rc = setenv("TR_ppcCodeCacheConsolidationEnabled", "true", OVERWRITE_EXISTING);
 	if (-1 == rc) {
 		outputErrorMessage(PORTTEST_ERROR_ARGS, "Failed to set environment variable TR_ppcCodeCacheConsolidationEnabled");
 		goto _exit;
@@ -2451,19 +2602,24 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	/* unset the environment variable TR_ppcCodeCacheConsolidationEnabled */
 	unsetenv("TR_ppcCodeCacheConsolidationEnabled");
 
-	if (TRUE == sixtyFourKBPageSize) {
+	if (sixtyFourKBPageSize) {
 		expectedPageSize = 16 * FOUR_KB;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = TRUE;
+	} else if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = (16 * FOUR_KB == defaultLargePageSize) ? TRUE : FALSE;
 	} else {
 		expectedPageSize = dataSegmentPageSize;
 		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 		expectedIsSizeSupported = (16 * FOUR_KB == dataSegmentPageSize) ? TRUE : FALSE;
 	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 #endif /* !defined(J9VM_ENV_DATA64) */
 
 	outputComment(PORTLIB, "\nCase %d: -Xlp:codecache:pagesize=4K\n", caseIndex++);
@@ -2474,18 +2630,29 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 
 	j9vmem_find_valid_page_size(mode, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
 
-	expectedPageSize = dataSegmentPageSize;
-	expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
-	expectedIsSizeSupported = (FOUR_KB == dataSegmentPageSize) ? TRUE : FALSE;
+	if (fourKBPageSize) {
+		expectedPageSize = FOUR_KB;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = TRUE;
+	} else if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = (FOUR_KB == defaultLargePageSize) ? TRUE : FALSE;
+	} else {
+		expectedPageSize = dataSegmentPageSize;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = (FOUR_KB == dataSegmentPageSize) ? TRUE : FALSE;
+	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 
 #if !defined(J9VM_ENV_DATA64)
 	outputComment(PORTLIB, "\nCase %d: -Xlp:codecache:pagesize=4K with TR_ppcCodeCacheConsolidationEnabled set\n", caseIndex++);
-	/* No port library API to set the environment variable. Use setenv() */
-	rc = setenv("TR_ppcCodeCacheConsolidationEnabled", "true", 1 /*overwrite any existing value */);
+	/* No port library API to set the environment variable. Use setenv(). */
+	rc = setenv("TR_ppcCodeCacheConsolidationEnabled", "true", OVERWRITE_EXISTING);
 	if (-1 == rc) {
 		outputErrorMessage(PORTTEST_ERROR_ARGS, "Failed to set environment variable TR_ppcCodeCacheConsolidationEnabled");
 		goto _exit;
@@ -2500,13 +2667,24 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	/* unset the environment variable TR_ppcCodeCacheConsolidationEnabled */
 	unsetenv("TR_ppcCodeCacheConsolidationEnabled");
 
-	expectedPageSize = dataSegmentPageSize;
-	expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
-	expectedIsSizeSupported = (FOUR_KB == dataSegmentPageSize) ? TRUE : FALSE;
+	if (fourKBPageSize) {
+		expectedPageSize = FOUR_KB;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = TRUE;
+	} else if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = (FOUR_KB == defaultLargePageSize) ? TRUE : FALSE;
+	} else {
+		expectedPageSize = dataSegmentPageSize;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = (FOUR_KB == dataSegmentPageSize) ? TRUE : FALSE;
+	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 #endif /* !defined(J9VM_ENV_DATA64) */
 
 	outputComment(PORTLIB, "\nCase %d: -Xlp:codecache:pagesize=<not in 16G, 16M, 64K, 4K>\n", caseIndex++);
@@ -2517,18 +2695,25 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 
 	j9vmem_find_valid_page_size(mode, &requestedPageSize, &requestedPageFlags, &isSizeSupported);
 
-	expectedPageSize = dataSegmentPageSize;
-	expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
-	expectedIsSizeSupported = FALSE;
+	if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = FALSE;
+	} else {
+		expectedPageSize = dataSegmentPageSize;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = FALSE;
+	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 
 #if !defined(J9VM_ENV_DATA64)
 	outputComment(PORTLIB, "\nCase %d: -Xlp:codecache:pagesize=<not in 16G, 16M, 64K, 4K> with TR_ppcCodeCacheConsolidationEnabled set\n", caseIndex++);
-	/* No port library API to set the environment variable. Use setenv() */
-	rc = setenv("TR_ppcCodeCacheConsolidationEnabled", "true", 1 /*overwrite any existing value */);
+	/* No port library API to set the environment variable. Use setenv(). */
+	rc = setenv("TR_ppcCodeCacheConsolidationEnabled", "true", OVERWRITE_EXISTING);
 	if (-1 == rc) {
 		outputErrorMessage(PORTTEST_ERROR_ARGS, "Failed to set environment variable TR_ppcCodeCacheConsolidationEnabled");
 		goto _exit;
@@ -2543,13 +2728,20 @@ j9vmem_testFindValidPageSize_impl(struct J9PortLibrary *portLibrary, char *testN
 	/* unset the environment variable TR_ppcCodeCacheConsolidationEnabled */
 	unsetenv("TR_ppcCodeCacheConsolidationEnabled");
 
-	expectedPageSize = dataSegmentPageSize;
-	expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
-	expectedIsSizeSupported = FALSE;
+	if (0 != defaultLargePageSize) {
+		expectedPageSize = defaultLargePageSize;
+		expectedPageFlags = defaultLargePageFlags;
+		expectedIsSizeSupported = FALSE;
+	} else {
+		expectedPageSize = dataSegmentPageSize;
+		expectedPageFlags = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+		expectedIsSizeSupported = FALSE;
+	}
 
-	verifyFindValidPageSizeOutput(portLibrary, testName,
-								expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
-								requestedPageSize, requestedPageFlags, isSizeSupported);
+	verifyFindValidPageSizeOutput(
+			portLibrary, testName,
+			expectedPageSize, expectedPageFlags, expectedIsSizeSupported,
+			requestedPageSize, requestedPageFlags, isSizeSupported);
 #endif /* !defined(J9VM_ENV_DATA64) */
 
 _exit:
@@ -2577,13 +2769,15 @@ j9vmem_testFindValidPageSize(struct J9PortLibrary *portLibrary)
 		goto _exit;
 	}
 
-	/* Create copy of existing PPG_vmem_pageSize and PPG_vmem_pageFlags as they would be modified in this test */
+	/* Create copy of existing PPG_vmem_pageSize and PPG_vmem_pageFlags as they would be modified in this test. */
 	memcpy(old_vmem_pageSize, pageSizes, J9PORT_VMEM_PAGESIZE_COUNT * sizeof(UDATA));
 	memcpy(old_vmem_pageFlags, pageFlags, J9PORT_VMEM_PAGESIZE_COUNT * sizeof(UDATA));
 
+	/* On AIX, the default size is 4K, the possible large page sizes are 4K, 64K, 16M, 16G. */
+#if defined(AIXPPC)
 	testName = "j9vmem_testFindValidPageSize(no default large page size)";
 
-	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags without any large page size */
+	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags without any large page size. */
 	pageSizes[0] = FOUR_KB;
 	pageFlags[0] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 
@@ -2592,10 +2786,9 @@ j9vmem_testFindValidPageSize(struct J9PortLibrary *portLibrary)
 
 	rc |= j9vmem_testFindValidPageSize_impl(portLibrary, testName);
 
-
 	testName = "j9vmem_testFindValidPageSize(64K large page size)";
 
-	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags only 64K large page size  */
+	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags only 64K large page size. */
 	pageSizes[0] = FOUR_KB;
 	pageFlags[0] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 
@@ -2607,10 +2800,9 @@ j9vmem_testFindValidPageSize(struct J9PortLibrary *portLibrary)
 
 	rc |= j9vmem_testFindValidPageSize_impl(portLibrary, testName);
 
-
 	testName = "j9vmem_testFindValidPageSize(64K and 16M large page size)";
 
-	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags with 64K and 16M large page size */
+	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags with 64K and 16M large page size. */
 	pageSizes[0] = FOUR_KB;
 	pageFlags[0] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
 
@@ -2629,7 +2821,7 @@ j9vmem_testFindValidPageSize(struct J9PortLibrary *portLibrary)
 	testName = "j9vmem_testFindValidPageSize(all possible page sizes)";
 
 	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags with all possible large pages
-	 * (16G, 16M, 64K)
+	 * (16G, 16M, 64K).
 	 */
 	pageSizes[0] = FOUR_KB;
 	pageFlags[0] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
@@ -2649,7 +2841,65 @@ j9vmem_testFindValidPageSize(struct J9PortLibrary *portLibrary)
 	rc |= j9vmem_testFindValidPageSize_impl(portLibrary, testName);
 #endif /* defined(J9VM_ENV_DATA64) */
 
-	/* Restore PPG_vmem_pageSize and PPG_vmem_pageFlags to their actual values */
+	/* On Linux, the default size is 64K, the possible large page sizes are 2M, 16M, 16G. */
+#elif defined(LINUXPPC)
+	testName = "j9vmem_testFindValidPageSize(no default large page size)";
+
+	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags without any large page size. */
+	pageSizes[0] = 16 * FOUR_KB;
+	pageFlags[0] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+
+	pageSizes[1] = 0;
+	pageFlags[1] = 0;
+
+	rc |= j9vmem_testFindValidPageSize_impl(portLibrary, testName);
+
+	testName = "j9vmem_testFindValidPageSize(2M large page size)";
+
+	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags only 64K large page size. */
+	pageSizes[0] = 16 * FOUR_KB;
+	pageFlags[0] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+
+	pageSizes[1] = 2 * ONE_MB;
+	pageFlags[1] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+
+	pageSizes[2] = 0;
+	pageFlags[2] = 0;
+
+	rc |= j9vmem_testFindValidPageSize_impl(portLibrary, testName);
+
+	testName = "j9vmem_testFindValidPageSize(16M large page size)";
+
+	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags only 64K large page size. */
+	pageSizes[0] = 16 * FOUR_KB;
+	pageFlags[0] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+
+	pageSizes[1] = 16 * ONE_MB;
+	pageFlags[1] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+
+	pageSizes[2] = 0;
+	pageFlags[2] = 0;
+
+	rc |= j9vmem_testFindValidPageSize_impl(portLibrary, testName);
+
+#if defined(J9VM_ENV_DATA64)
+	testName = "j9vmem_testFindValidPageSize(16G large page size)";
+
+	/* Create new PPG_vmem_pageSize and PPG_vmem_pageFlags only 64K large page size. */
+	pageSizes[0] = 16 * FOUR_KB;
+	pageFlags[0] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+
+	pageSizes[1] = 8 * TWO_GB;
+	pageFlags[1] = J9PORT_VMEM_PAGE_FLAG_NOT_USED;
+
+	pageSizes[2] = 0;
+	pageFlags[2] = 0;
+
+	rc |= j9vmem_testFindValidPageSize_impl(portLibrary, testName);
+#endif /* defined(J9VM_ENV_DATA64) */
+#endif /* defined(LINUXPPC) */
+
+	/* Restore PPG_vmem_pageSize and PPG_vmem_pageFlags to their actual values. */
 	memcpy(pageSizes, old_vmem_pageSize, J9PORT_VMEM_PAGESIZE_COUNT * sizeof(UDATA));
 	memcpy(pageFlags, old_vmem_pageFlags, J9PORT_VMEM_PAGESIZE_COUNT * sizeof(UDATA));
 
@@ -3392,6 +3642,7 @@ j9vmem_testOverlappingSegments(struct J9PortLibrary *portLibrary)
 	struct J9PortVmemIdentifier *vmemID;
 	int *keepCycles;
 	int freed = 0;
+	int cycleCleanupBound = 0;
 	int i = 0;
 	int j = 0;
 	const char* testName = "j9vmem__testOverlappingSegments";
@@ -3415,6 +3666,9 @@ j9vmem_testOverlappingSegments(struct J9PortLibrary *portLibrary)
 		if (NULL == memPtr) {
 			outputComment(PORTLIB, "Failed to get memory. Error: %s.\n", strerror(errno));
 			outputComment(PORTLIB, "Ignoring memory allocation failure(%d of %d loops finished).\n", i, CYCLES);
+			if (0 == i) {
+				keepCycles[0] = -1; /* This segment would otherwise look like it needed to be freed during cleanup */
+			}
 			goto exit;
 		}
 		/* Determine how long to keep the segment */
@@ -3457,7 +3711,8 @@ exit:
 
 	/* Free remaining segments */
 	freed = 0;
-	for (j = 0; j < CYCLES; j++) {
+	cycleCleanupBound = (CYCLES == i) ? i : i + 1;
+	for (j = 0; j < cycleCleanupBound; j++) {
 		if (keepCycles[j] >= i) {
 			I_32 rc = j9vmem_free_memory(vmemID[j].address, vmemParams[j].byteAmount, &vmemID[j]);
 			if (0 == rc) {

@@ -70,7 +70,7 @@ initializeComponentData(UtComponentData **componentDataPtr, UtModuleInfo *module
 	 */
 	if (moduleInfo->traceVersionInfo->traceVersion >= 7 && moduleInfo->containerModule != NULL) {
 		char qualifiedName[MAX_QUALIFIED_NAME_LENGTH];
-		j9str_printf(PORTLIB, qualifiedName, MAX_QUALIFIED_NAME_LENGTH, "%s(%s)", moduleInfo->name, moduleInfo->containerModule->name);
+		j9str_printf(qualifiedName, MAX_QUALIFIED_NAME_LENGTH, "%s(%s)", moduleInfo->name, moduleInfo->containerModule->name);
 		componentData->qualifiedComponentName = (char *)j9mem_allocate_memory(strlen(qualifiedName) + 1, OMRMEM_CATEGORY_TRACE);
 		if (componentData->qualifiedComponentName == NULL) {
 			UT_DBGOUT(1, ("<UT> Unable to allocate componentData's name field for %s\n", componentName));
@@ -734,7 +734,7 @@ parseAndSetTracePointsInRange(const char *componentName,
 
 		ret = 0;
 		temp = p;
-		while (isdigit((int)*temp)) {
+		while (OMR_ISDIGIT((int)*temp)) {
 			ret++;
 			temp++;
 		}
@@ -747,11 +747,11 @@ parseAndSetTracePointsInRange(const char *componentName,
 			p += ret + 1;
 			length++; /* plus one for the dash */
 			ret = 0;
-			if (!isdigit(*temp)) {
+			if (!OMR_ISDIGIT(*temp)) {
 				reportCommandLineError(suppressMessages, "Expecting tracepoint range specified as tpnid{componentName.offset1-offset2} e.g. tpnid{j9trc.2-6}");
 				return OMR_ERROR_ILLEGAL_ARGUMENT;
 			}
-			while (isdigit(*temp)) {
+			while (OMR_ISDIGIT(*temp)) {
 				ret++;
 				temp++;
 			}
@@ -913,7 +913,7 @@ setTracePointsToParsed(const char *componentName, UtComponentList *componentList
 
 		if (0 == j9_cmdla_strnicmp(tempstr, UT_LEVEL_KEYWORD, strlen(UT_LEVEL_KEYWORD)) ||
 			  *tempstr == 'l' || *tempstr == 'L') {
-			while (!isdigit(*tempstr)) {
+			while (!OMR_ISDIGIT(*tempstr)) {
 				if (*tempstr == ',' || *tempstr == '}' || *tempstr == '\0') {
 					reportCommandLineError(suppressMessages, "Trace level required without an integer level specifier");
 					return OMR_ERROR_ILLEGAL_ARGUMENT;

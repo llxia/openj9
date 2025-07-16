@@ -282,7 +282,7 @@ buildStackFromMethodSignature( J9BytecodeVerificationData *verifyData, UDATA **s
 			arity++;
 		}
 
-		if (IS_REF_OR_VAL_SIGNATURE(args[i])) {
+		if (IS_CLASS_SIGNATURE(args[i])) {
 			U_8 *string;
 			U_16 length = 0;
 
@@ -684,7 +684,7 @@ static UDATA *
 pushType(J9BytecodeVerificationData *verifyData, U_8 * signature, UDATA * stackTop)
 {
 	if (*signature != 'V') {
-		if ((*signature == '[') || IS_REF_OR_VAL_SIGNATURE(*signature)) {
+		if ((*signature == '[') || IS_CLASS_SIGNATURE(*signature)) {
 			PUSH(parseObjectOrArrayName(verifyData, signature));
 		} else {
 			UDATA baseType = (UDATA) argTypeCharConversion[*signature - 'A'];
@@ -850,14 +850,14 @@ j9bcv_createVerifyErrorString(J9PortLibrary * portLib, J9BytecodeVerificationDat
 		J9UTF8 * romMethodSignatureString = J9ROMMETHOD_SIGNATURE(error->romMethod);
 
 		if (NULL == error->errorSignatureString) {
-			errStrLength = j9str_printf(PORTLIB, (char*) verifyError, stringLength, formatString, errorString,
+			errStrLength = j9str_printf((char *)verifyError, stringLength, formatString, errorString,
 					(U_32) J9UTF8_LENGTH(romClassName), J9UTF8_DATA(romClassName),
 					(U_32) J9UTF8_LENGTH(romMethodName), J9UTF8_DATA(romMethodName),
 					(U_32) J9UTF8_LENGTH(romMethodSignatureString), J9UTF8_DATA(romMethodSignatureString),
 					error->errorPC);
 		} else {
 			/* Jazz 82615: Print the corresponding NLS message to buffer for type mismatch error */
-			errStrLength = j9str_printf(PORTLIB, (char*) verifyError, stringLength, formatString, errorString,
+			errStrLength = j9str_printf((char *)verifyError, stringLength, formatString, errorString,
 					(U_32) J9UTF8_LENGTH(romClassName), J9UTF8_DATA(romClassName),
 					(U_32) J9UTF8_LENGTH(romMethodName), J9UTF8_DATA(romMethodName),
 					(U_32) J9UTF8_LENGTH(romMethodSignatureString), J9UTF8_DATA(romMethodSignatureString),
@@ -870,7 +870,7 @@ j9bcv_createVerifyErrorString(J9PortLibrary * portLib, J9BytecodeVerificationDat
 
 		/* Jazz 82615: Print the error message framework to the existing error buffer */
 		if (detailedErrMsgLength > 0) {
-			j9str_printf(PORTLIB, (char*)&verifyError[errStrLength], stringLength - errStrLength, "%.*s", detailedErrMsgLength, detailedErrMsg);
+			j9str_printf((char *)&verifyError[errStrLength], stringLength - errStrLength, "%.*s", detailedErrMsgLength, detailedErrMsg);
 		}
 	}
 
@@ -906,7 +906,7 @@ isFieldAccessCompatible(J9BytecodeVerificationData *verifyData, J9ROMFieldRef *f
 		J9BranchTargetStack *liveStack = (J9BranchTargetStack *)verifyData->liveStack;
 		J9ROMFieldShape *field = findFieldFromCurrentRomClass(romClass, fieldRef);
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
-		IDATA isStrictField = (NULL != field) && J9_ARE_ALL_BITS_SET(field->modifiers, J9AccStrict);
+		IDATA isStrictField = (NULL != field) && J9ROMFIELD_IS_STRICT(romClass, field->modifiers);
 #endif /* defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES) */
 		if (J9_ARE_ALL_BITS_SET(receiver, BCV_SPECIAL_INIT)) {
 #if defined(J9VM_OPT_VALHALLA_FLATTENABLE_VALUE_TYPES)
@@ -1095,15 +1095,13 @@ static UDATA compareTwoUTF8s(J9UTF8 * first, J9UTF8 * second)
 
 static void getNameAndLengthFromClassNameList (J9BytecodeVerificationData *verifyData, UDATA listIndex, U_8 ** name, UDATA * length)
 {
-	U_32 * offset;
-
-	offset = (U_32 *) verifyData->classNameList[listIndex];
-	*length = (U_32) J9UTF8_LENGTH(offset + 1);
-	if (offset[0] == 0) {
-		*name = J9UTF8_DATA(offset + 1);
+	U_32 *offset = (U_32 *)verifyData->classNameList[listIndex];
+	*length = J9UTF8_LENGTH((J9UTF8 *)(offset + 1));
+	if (0 == offset[0]) {
+		*name = J9UTF8_DATA((J9UTF8 *)(offset + 1));
 	} else {
-		J9ROMClass * romClass = verifyData->romClass;
-		*name = (U_8 *) ((UDATA) offset[0] + (UDATA) romClass);
+		J9ROMClass *romClass = verifyData->romClass;
+		*name = (U_8 *)((UDATA)offset[0] + (UDATA)romClass);
 	}
 }
 
@@ -1197,7 +1195,7 @@ parseObjectOrArrayName(J9BytecodeVerificationData *verifyData, U_8 *signature)
 		signature++;
 	}
 	arity = (UDATA) (signature - string);
-	if (IS_REF_OR_VAL_SIGNATURE(*signature)) {
+	if (IS_CLASS_SIGNATURE(*signature)) {
 		U_16 length = 0;
 		UDATA classIndex = 0;
 

@@ -57,6 +57,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create and Restore Criu Checkpoint Image twice">
@@ -75,6 +76,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
 <!--
@@ -88,6 +90,7 @@
     <output type="failure" caseSensitive="yes" regex="no">FAILED: System.nanoTime() after CRIU restore:</output>
     <output type="required" caseSensitive="yes" regex="no">Error</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
  -->
 
@@ -106,6 +109,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create CRIU checkpoint image and restore three times - testSystemNanoTimeJitPostCheckpointCompile">
@@ -123,6 +127,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create CRIU checkpoint image and restore three times - testMillisDelayBeforeCheckpointDone">
@@ -140,6 +145,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create CRIU checkpoint image and restore three times - testMillisDelayAfterCheckpointDone">
@@ -157,6 +163,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create CRIU checkpoint image and restore three times - testDateScheduledBeforeCheckpointDone">
@@ -174,6 +181,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create CRIU checkpoint image and restore three times - testDateScheduledAfterCheckpointDone">
@@ -191,6 +199,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create CRIU checkpoint image and restore once - testGetLastRestoreTime">
@@ -207,22 +216,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
-  </test>
-
-  <test id="Create CRIU checkpoint image and restore once - testGetProcessRestoreStartTime">
-    <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ $XTRACE_CRIU$ $STD_CMD_OPTS$" $MAINCLASS_TIMECHANGE$ testGetProcessRestoreStartTime 1 false false</command>
-    <output type="success" caseSensitive="no" regex="no">Killed</output>
-    <output type="success" caseSensitive="yes" regex="no">PASSED: InternalCRIUSupport.getProcessRestoreStartTime()</output>
-    <output type="failure" caseSensitive="yes" regex="no">CRIU is not enabled</output>
-    <output type="failure" caseSensitive="yes" regex="no">Operation not permitted</output>
-    <output type="failure" caseSensitive="yes" regex="no">FAILED: InternalCRIUSupport.getProcessRestoreStartTime()</output>
-    <!-- If CRIU can't acquire the original thread IDs, this test will fail. Nothing can be done about this failure. -->
-    <output type="success" caseSensitive="yes" regex="no">Thread pid mismatch</output>
-    <output type="success" caseSensitive="yes" regex="no">do not match expected</output>
-    <output type="success" caseSensitive="yes" regex="no">Unable to create a thread:</output>
-    <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
-    <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
-    <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create CRIU checkpoint image and restore once - testMXBeanUpTime">
@@ -239,6 +233,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create Criu Checkpoint Image once and no restore - TestSingleThreadModeCheckpointException">
@@ -278,8 +273,9 @@
   </test>
 
   <test id="Create and Restore Criu Checkpoint Image once - CheckpointDeadlock">
-    <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  $STD_CMD_OPTS$" $MAINCLASS_DEADLOCK_TEST$ CheckpointDeadlock 1 false false</command>
+    <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xtrace:print={j9jcl.533,j9vm.684-696,j9vm.699,j9vm.717-743} --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  $STD_CMD_OPTS$" $MAINCLASS_DEADLOCK_TEST$ CheckpointDeadlock 1 false false</command>
     <output type="success" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
     <output type="success" caseSensitive="yes" regex="no">TEST PASSED</output>
     <output type="required" caseSensitive="yes" regex="no">Pre-checkpoint</output>
     <output type="failure" caseSensitive="no" regex="no">Killed</output>
@@ -295,8 +291,9 @@
   </test>
 
   <test id="Create and Restore Criu Checkpoint Image once - NotCheckpointSafeDeadlock">
-    <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -XX:+ThrowOnDelayedCheckpointOperation -Xtrace:print=j9vm.731 --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  $STD_CMD_OPTS$" $MAINCLASS_DEADLOCK_TEST$ NotCheckpointSafeDeadlock 1 false false</command>
+    <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -XX:+ThrowOnDelayedCheckpointOperation -Xtrace:print={j9jcl.533,j9vm.684-696,j9vm.699,j9vm.717-743} --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  $STD_CMD_OPTS$" $MAINCLASS_DEADLOCK_TEST$ NotCheckpointSafeDeadlock 1 false false</command>
     <output type="success" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
     <output type="success" caseSensitive="yes" regex="no">TEST PASSED</output>
     <output type="required" caseSensitive="yes" regex="no">Pre-checkpoint</output>
     <output type="required" caseSensitive="yes" regex="no">Checkpoint blocked because thread</output>
@@ -315,6 +312,7 @@
   <test id="Create and Restore Criu Checkpoint Image once - MethodTypeDeadlockTest">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -XX:+ThrowOnDelayedCheckpointOperation -XX:sleepMillisecondsForNotCheckpointSafe=20 -Xtrace:print=j9vm.731 --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  $STD_CMD_OPTS$" $MAINCLASS_DEADLOCK_TEST$ MethodTypeDeadlockTest 1 false false</command>
     <output type="success" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
     <output type="success" caseSensitive="yes" regex="no">TEST PASSED</output>
     <output type="failure" caseSensitive="yes" regex="no">TEST FAILED</output>
     <output type="required" caseSensitive="yes" regex="no">Pre-checkpoint</output>
@@ -334,6 +332,7 @@
   <test id="Create and Restore Criu Checkpoint Image once - clinitTest">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -XX:+ThrowOnDelayedCheckpointOperation -Xdump:system:events=user -Xtrace:print=j9vm.731 --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  $STD_CMD_OPTS$" $MAINCLASS_DEADLOCK_TEST$ ClinitTest 1 false false</command>
     <output type="success" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
     <output type="success" caseSensitive="yes" regex="no">TEST PASSED</output>
     <output type="failure" caseSensitive="yes" regex="no">TEST FAILED</output>
     <output type="required" caseSensitive="yes" regex="no">Pre-checkpoint</output>
@@ -353,6 +352,7 @@
   <test id="Create and Restore Criu Checkpoint Image once - clinitTest2">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -XX:-ThrowOnDelayedCheckpointOperation -Xdump:system:events=user -Xtrace:print=j9vm.731 --add-opens java.base/jdk.internal.misc=ALL-UNNAMED  $STD_CMD_OPTS$" $MAINCLASS_DEADLOCK_TEST$ ClinitTest 1 false false</command>
     <output type="success" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
     <output type="success" caseSensitive="yes" regex="no">TEST PASSED</output>
     <output type="failure" caseSensitive="yes" regex="no">TEST FAILED</output>
     <output type="required" caseSensitive="yes" regex="no">Pre-checkpoint</output>
@@ -385,6 +385,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Properties test1">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_OPTIONSFILE_TEST$ PropertiesTest1 1 false false</command>
@@ -403,6 +404,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Properties test2">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_OPTIONSFILE_TEST$ PropertiesTest2 1 false false</command>
@@ -421,6 +423,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Properties test3">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_OPTIONSFILE_TEST$ PropertiesTest3 1 false false</command>
@@ -439,6 +442,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Properties test4">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_OPTIONSFILE_TEST$ PropertiesTest4 1 false false</command>
@@ -456,9 +460,11 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Test setting SecurityManager via -Djava.security.manager">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $OPTION_SET_SECURITYMANAGER$ $MAINCLASS_TEST_SECURITYMANAGER$ setSMCommandOption 1 false false</command>
+    <output type="success" caseSensitive="no" regex="no">java/lang/Error: A command line option has attempted to allow or enable the Security Manager. Enabling a Security Manager is not supported.</output>
     <output type="success" caseSensitive="no" regex="no">UnsupportedOperationException: Enabling a SecurityManager currently unsupported</output>
     <output type="failure" caseSensitive="yes" regex="no">TEST FAILED</output>
     <output type="failure" caseSensitive="yes" regex="no">CRIU is not enabled</output>
@@ -470,6 +476,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Test setting SecurityManager programmatically">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_TEST_SECURITYMANAGER$ setSMProgrammatically 1 false false</command>
@@ -484,6 +491,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Envvar test1">
@@ -501,6 +509,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test2">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest2 1 false false</command>
@@ -517,6 +526,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test3">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest3 1 false false</command>
@@ -533,6 +543,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test4">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest4 1 false false</command>
@@ -550,6 +561,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test5">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xtrace:print=j9vm.735" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest5 1 false false</command>
@@ -569,6 +581,7 @@
     <output type="success" caseSensitive="yes" regex="no">Restore arg: -Dprop2=val2</output>
     <output type="success" caseSensitive="yes" regex="no">Restore arg: -Dprop3=val3</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test6">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xtrace:print=j9vm.735" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest6 1 false false</command>
@@ -588,6 +601,7 @@
     <output type="failure" caseSensitive="yes" regex="no">Restore arg: -Dprop2=val2</output>
     <output type="failure" caseSensitive="yes" regex="no">Restore arg: -Dprop3=val3</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test7">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xtrace:print=j9vm.735" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest7 1 false false</command>
@@ -607,6 +621,7 @@
     <output type="failure" caseSensitive="yes" regex="no">Restore arg: -Dprop2=val2</output>
     <output type="failure" caseSensitive="yes" regex="no">Restore arg: -Dprop3=val3</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test8">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xtrace:print=j9vm.735" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest8 1 false false</command>
@@ -626,6 +641,7 @@
     <output type="success" caseSensitive="yes" regex="no">Restore arg: -Dprop2=val2</output>
     <output type="success" caseSensitive="yes" regex="no">Restore arg: -Dprop3=val3</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test9">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest9 1 false false</command>
@@ -642,6 +658,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test10">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest10 1 false false</command>
@@ -659,6 +676,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test11">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest11 1 false false</command>
@@ -675,6 +693,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test12">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xtrace:print=j9vm.735" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest12 1 false false</command>
@@ -694,6 +713,7 @@
     <output type="success" caseSensitive="yes" regex="no">Restore arg: -Dprop2=val2</output>
     <output type="success" caseSensitive="yes" regex="no">Restore arg: -Dprop3=val3</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test13">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest13 1 false false</command>
@@ -711,6 +731,7 @@
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="success" caseSensitive="yes" regex="no">org.eclipse.openj9.criu.JVMRestoreException</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test14">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest14 1 false false</command>
@@ -728,6 +749,7 @@
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="success" caseSensitive="yes" regex="no">org.eclipse.openj9.criu.JVMRestoreException</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Envvar test15">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest15 1 false false</command>
@@ -763,10 +785,9 @@
     <output type="failure" caseSensitive="yes" regex="no">org.eclipse.openj9.criu.JVMRestoreException</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
   </test>
-
-  <test id="Test checkTransitionToDebugInterpreter with env var file">
+  <test id="Envvar test17">
     <!-- The transition to the debug interpreter currently only works with -Xint, which will be removed when the jit changes are completed. -->
-    <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -XX:+DebugOnRestore -Xint" $MAINCLASS_ENVVAR_TEST$ testCheckTransitionToDebugInterpreterWithEnvVarFile 1 false false</command>
+    <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xint" $MAINCLASS_ENVVAR_TEST$ EnvVarFileTest17 1 false false</command>
     <output type="success" caseSensitive="no" regex="no">Killed</output>
     <output type="required" caseSensitive="yes" regex="no">Pre-checkpoint</output>
     <output type="success" caseSensitive="yes" regex="no">Post-checkpoint</output>
@@ -779,6 +800,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Restore trace options test with no trace options specified before checkpoint - 1">
@@ -819,6 +841,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Restore trace options test with no trace options specified before checkpoint - 3">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_OPTIONSFILE_TEST$ TraceOptionsTest3 1 false false</command>
@@ -836,6 +859,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Restore dump options test with no dump options specified before checkpoint">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_OPTIONSFILE_TEST$ DumpOptionsTest 1 false false</command>
@@ -853,6 +877,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="criuCheckpoint dump options test with no dump options specified before checkpoint">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xdump:java:events=criuCheckpoint" $MAINCLASS_OPTIONSFILE_TEST$ criuDumpOptionsTest 1 false false</command>
@@ -870,6 +895,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="criuCheckpoint dump options test with no dump options specified before checkpoint">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xdump:java:events=criuRestore" $MAINCLASS_OPTIONSFILE_TEST$ criuDumpOptionsTest 1 false false</command>
@@ -887,6 +913,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="criuRestore dump options test with no dump options specified before checkpoint">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$" $MAINCLASS_OPTIONSFILE_TEST$ criuRestoreDumpOptionsTest 1 false false</command>
@@ -904,6 +931,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Restore dump options test with no dump options specified before checkpoint and -Xdump:dynamic required">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ $XDUMP_DYNAMIC$" $MAINCLASS_OPTIONSFILE_TEST$ dumpOptionsTestRequireDynamic 1 false false</command>
@@ -924,11 +952,12 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
-  <test id="Test checkTransitionToDebugInterpreter with options file">
+  <test id="Test debug interpreter transition request via XX:+DebugInterpreter with options file">
     <!-- The transition to the debug interpreter currently only works with -Xint, which will be removed when the jit changes are completed. -->
-    <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -XX:+DebugOnRestore -Xint" $MAINCLASS_OPTIONSFILE_TEST$ testCheckTransitionToDebugInterpreterWithOptionsFile 1 false false</command>
+    <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ -Xint" $MAINCLASS_OPTIONSFILE_TEST$ testTransitionToDebugInterpreterViaXXDebugInterpreterWithOptionsFile 1 false false</command>
     <output type="success" caseSensitive="no" regex="no">Killed</output>
     <output type="required" caseSensitive="yes" regex="no">Pre-checkpoint</output>
     <output type="success" caseSensitive="yes" regex="no">Post-checkpoint</output>
@@ -941,6 +970,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Username test">
@@ -957,6 +987,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create Criu Checkpoint Image once and no restore - TestConcurrentModePreCheckpointHookThrowException">
@@ -974,6 +1005,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create Criu Checkpoint Image once and no restore - TestConcurrentModePreCheckpointHookThrowExceptionPriority">
@@ -990,6 +1022,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create Criu Checkpoint Image once and no restore - TestConcurrentModePreCheckpointHookRunOnce">
@@ -1005,6 +1038,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create Criu Checkpoint Image once and no restore - TestConcurrentModePreCheckpointHookPriorities">
@@ -1021,6 +1055,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create and Restore Criu Checkpoint Image once - TestConcurrentModePostRestoreHookThrowException">
@@ -1038,6 +1073,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create and Restore Criu Checkpoint Image once - TestConcurrentModePostRestoreHookThrowExceptionPriority">
@@ -1053,6 +1089,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create and Restore Criu Checkpoint Image once - TestConcurrentModePostRestoreHookRunOnce">
@@ -1069,6 +1106,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create and Restore Criu Checkpoint Image once - TestConcurrentModePostRestoreHookPriorities">
@@ -1086,6 +1124,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Create CRIU checkpoint image and restore once - testTimeCompensation">
@@ -1102,6 +1141,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
 
   <test id="Test Ghost File Limit -- negative">
@@ -1119,6 +1159,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Test Ghost File Limit -- atLimit">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ $STD_CMD_OPTS$" $MAINCLASS_GHOSTFILE_TEST$ atLimit 1 false false</command>
@@ -1135,6 +1176,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Test Ghost File Limit -- aboveLimit ">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ $STD_CMD_OPTS$" $MAINCLASS_GHOSTFILE_TEST$ aboveLimit 1 false false</command>
@@ -1151,6 +1193,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Test Ghost File Limit -- belowLimit">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ $STD_CMD_OPTS$" $MAINCLASS_GHOSTFILE_TEST$ belowLimit 1 false false</command>
@@ -1167,6 +1210,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <test id="Test Ghost File Limit -- zero">
     <command>bash $SCRIPPATH$ $TEST_RESROOT$ $JAVA_COMMAND$ "$JVM_OPTIONS$ $STD_CMD_OPTS$" $MAINCLASS_GHOSTFILE_TEST$ zero 1 false false</command>
@@ -1183,6 +1227,7 @@
     <!-- In the past, the failure below was caused by an issue where CRIU can't be found on the PATH. -->
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   <!--
   <test id="Test CRIU failure paths - - bad dir">
@@ -1200,6 +1245,7 @@
      In the past, the failure below was caused by an issue where CRIU can't be found on the PATH.
     <output type="failure" caseSensitive="yes" regex="no">Could not dump the JVM processes, err=-70</output>
     <output type="failure" caseSensitive="yes" regex="no">User requested Java dump using</output>
+    <output type="failure" caseSensitive="yes" regex="no">AOT load and compilation disabled post restore</output>
   </test>
   -->
 </suite>

@@ -35,6 +35,7 @@
 #include "env/j9methodServer.hpp"
 #include "env/JITServerPersistentCHTable.hpp"
 #include "env/JSR292Methods.h"
+#include "env/StackMemoryRegion.hpp"
 #include "env/TypeLayout.hpp"
 #include "env/ut_j9jit.h"
 #include "env/VerboseLog.hpp"
@@ -113,53 +114,69 @@ findField(J9VMThread *vmStruct, J9ConstantPool *constantPool, UDATA index, BOOLE
 static void
 handler_IProfiler_profilingSample(JITServer::ClientStream *client, TR_J9VM *fe, TR::Compilation *comp)
    {
-   auto recv = client->getRecvData<TR_OpaqueMethodBlock*, uint32_t, uintptr_t>();
+   auto recv = client->getRecvData<TR_OpaqueMethodBlock*, uint32_t, bool, bool>();
    auto method = std::get<0>(recv);
    auto bcIndex = std::get<1>(recv);
-   auto data = std::get<2>(recv); // data==1 means 'send info for 1 bytecode'; data==0 means 'send info for entire method if possible'
+   auto wholeMethodInfo = std::get<2>(recv); // 'send info for entire method if possible'
+   auto sharedProfile = std::get<3>(recv);
 
    JITClientIProfiler *iProfiler = (JITClientIProfiler *)fe->getIProfiler();
 
    bool isCompiled = TR::CompilationInfo::isCompiled((J9Method*)method);
+   bool isQueued = TR::CompilationInfo::getJ9MethodVMExtra((J9Method *)method) == J9_JIT_QUEUED_FOR_COMPILATION;
    bool isInProgress = comp->getMethodBeingCompiled()->getPersistentIdentifier() == method;
    bool abort = false;
-   // Used to tell the server if a profiled entry should be stored in persistent or heap memory
-   bool usePersistentCache = isCompiled || isInProgress;
-   bool wholeMethodInfo = data == 0;
+   // Used to tell the server if a profiled entry should be stored in persistent or heap memory.
+   // Note that if the method is queued for compilation, new interpreter samples will not be collected.
+   bool usePersistentCache = isCompiled || isInProgress || isQueued;
 
    if (wholeMethodInfo)
       {
       // Serialize all the information related to this method
-      abort = iProfiler->serializeAndSendIProfileInfoForMethod(method, comp, client, usePersistentCache, isCompiled);
+      abort = iProfiler->serializeAndSendIProfileInfoForMethod(method, comp, client, usePersistentCache, isCompiled, sharedProfile);
+      if (!abort)
+         return;
       }
-   if (!wholeMethodInfo || abort) // Send information just for this entry
+
+   // Send information just for this entry
+   std::vector<J9Class *> uncachedClasses;
+   std::vector<JITServerHelpers::ClassInfoTuple> classInfoTuples;
+   auto entry = iProfiler->profilingSample(method, bcIndex, comp, 0, /*addIt=*/false);
+   if (entry && !entry->isInvalid())
       {
-      auto entry = iProfiler->profilingSample(method, bcIndex, comp, data, false);
-      if (entry && !entry->isInvalid())
+      uint32_t canPersist = entry->canBeSerialized(comp->getPersistentInfo()); // This may lock the entry
+      if (canPersist == IPBC_ENTRY_CAN_PERSIST)
          {
-         uint32_t canPersist = entry->canBeSerialized(comp->getPersistentInfo()); // This may lock the entry
-         if (canPersist == IPBC_ENTRY_CAN_PERSIST)
+         uint32_t bytes = entry->getBytesFootprint();
+         std::string entryBytes(bytes, '\0');
+         auto storage = (TR_IPBCDataStorageHeader*)&entryBytes[0];
+         uintptr_t methodStartAddress = (uintptr_t)TR::Compiler->mtd.bytecodeStart(method);
+         entry->serialize(methodStartAddress, storage, comp->getPersistentInfo());
+
+         // Collect info about the classes the server needs but does not yet have
+         auto cgEntry = entry->asIPBCDataCallGraph();
+         if (cgEntry && sharedProfile)
             {
-            uint32_t bytes = entry->getBytesFootprint();
-            std::string entryBytes(bytes, '\0');
-            auto storage = (TR_IPBCDataStorageHeader*)&entryBytes[0];
-            uintptr_t methodStartAddress = (uintptr_t)TR::Compiler->mtd.bytecodeStart(method);
-            entry->serialize(methodStartAddress, storage, comp->getPersistentInfo());
-            client->write(JITServer::MessageType::IProfiler_profilingSample, entryBytes, false, usePersistentCache, isCompiled);
+            uncachedClasses.reserve(NUM_CS_SLOTS);
+            classInfoTuples.reserve(NUM_CS_SLOTS);
+            iProfiler->gatherUncachedClassesUsedInCGEntry(cgEntry, comp, uncachedClasses, classInfoTuples);
             }
-         else
-            {
-            client->write(JITServer::MessageType::IProfiler_profilingSample, std::string(), false, usePersistentCache, isCompiled);
-            }
-         // Unlock the entry
-         if (auto callGraphEntry = entry->asIPBCDataCallGraph())
-            if (canPersist != IPBC_ENTRY_PERSIST_LOCK && callGraphEntry->isLocked())
-               callGraphEntry->releaseEntry();
+
+         uint64_t totalSamples = entry->getNumSamples();
+         client->write(JITServer::MessageType::IProfiler_profilingSample, entryBytes, totalSamples, (size_t)1, /*wholeMethod=*/false, usePersistentCache, isCompiled, uncachedClasses, classInfoTuples);
          }
-      else // No valid info for specified bytecode index
+      else
          {
-         client->write(JITServer::MessageType::IProfiler_profilingSample, std::string(), false, usePersistentCache, isCompiled);
+         client->write(JITServer::MessageType::IProfiler_profilingSample, std::string(), (uint64_t)0, (size_t)0, /*wholeMethod=*/false, usePersistentCache, isCompiled, uncachedClasses, classInfoTuples);
          }
+      // Unlock the entry
+      if (auto callGraphEntry = entry->asIPBCDataCallGraph())
+         if (canPersist != IPBC_ENTRY_PERSIST_LOCK && callGraphEntry->isLocked())
+            callGraphEntry->releaseEntry();
+      }
+   else // No valid info for specified bytecode index
+      {
+      client->write(JITServer::MessageType::IProfiler_profilingSample, std::string(), (uint64_t)0, (size_t)0, /*wholeMethod=*/false, usePersistentCache, isCompiled, uncachedClasses, classInfoTuples);
       }
    }
 
@@ -246,6 +263,13 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
             compInfo->getclassesCachedAtServer().clear();
             }
 
+         // Add the list of methods that were DLTed
+#if defined(J9VM_JIT_DYNAMIC_LOOP_TRANSFER)
+         std::vector<J9Method*> dltedMethods = compInfo->collectDLTedMethods();
+#else
+         std::vector<J9Method*> dltedMethods; // empty
+#endif /* defined(J9VM_JIT_DYNAMIC_LOOP_TRANSFER) */
+
          // This is a connection to a new server after a previous disconnection
          if (hasEverConnectedToServer && (previousUID != serverUID))
             {
@@ -257,9 +281,13 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
             // Do not forbid AOT cache stores or loads (this server might be able to fulfill them)
             compInfo->getPersistentInfo()->setDoNotRequestJITServerAOTCacheLoad(false);
             compInfo->getPersistentInfo()->setDoNotRequestJITServerAOTCacheStore(false);
+
+            auto loaderTable = compInfo->getPersistentInfo()->getPersistentClassLoaderTable();
+            OMR::CriticalSection lock(compInfo->getSequencingMonitor());
+            loaderTable->resetPermanentLoadersSentToServer(compInfo);
             }
 
-         client->write(response, ranges, unloadedClasses->getMaxRanges(), serializedCHTable);
+         client->write(response, ranges, unloadedClasses->getMaxRanges(), serializedCHTable, dltedMethods);
 
          if ((previousUID != serverUID) && TR::Options::getVerboseOption(TR_VerboseJITServerConns))
             {
@@ -308,15 +336,13 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          {
          // Need to get a non-AOT frontend because the AOT frontend also
          // performs some class validation which we want to do at the server
-         TR_J9VMBase *fej9 = TR_J9VMBase::get(vmThread->javaVM->jitConfig, vmThread);
-         auto recv = client->getRecvData<std::string, TR_OpaqueMethodBlock *, bool>();
+         auto fej9 = (TR_J9VM *)TR_J9VMBase::get(vmThread->javaVM->jitConfig, vmThread);
+         auto recv = client->getRecvData<std::string, J9ConstantPool *>();
          auto &sig = std::get<0>(recv);
-         auto method = std::get<1>(recv);
-         bool isVettedForAOT = std::get<2>(recv);
-         auto clazz = fej9->getClassFromSignature(sig.data(), sig.length(), method, isVettedForAOT);
-         J9ClassLoader *cl = clazz ? reinterpret_cast<J9ClassLoader *>(fej9->getClassLoader(clazz)) : NULL;
-         J9ClassLoader *methodCL = reinterpret_cast<J9ClassLoader *>(fej9->getClassLoader(fej9->getClassOfMethod(method)));
-         client->write(response, clazz, cl, methodCL);
+         auto constantPool = std::get<1>(recv);
+         auto clazz = fej9->getClassFromSignature(sig.data(), sig.length(), constantPool, true);
+         J9ClassLoader *cl = clazz ? reinterpret_cast<J9ClassLoader *>(fej9->getClassLoader((TR_OpaqueClassBlock *)clazz)) : NULL;
+         client->write(response, clazz, cl);
          }
          break;
       case MessageType::VM_jitFieldsOrStaticsAreSame:
@@ -337,12 +363,6 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          f2 = findField(fe->vmThread(), cp2, cpIndex2, isStatic, &declaringClass2);
          client->write(response, declaringClass1, declaringClass2, f1, f2);
          };
-         break;
-      case MessageType::VM_compiledAsDLTBefore:
-         {
-         auto clazz = std::get<0>(client->getRecvData<TR_ResolvedMethod *>());
-         client->write(response, fe->compiledAsDLTBefore(clazz));
-         }
          break;
       case MessageType::VM_classHasBeenExtended:
          {
@@ -447,7 +467,7 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
             {
             vmInfo._arrayTypeClasses[i] = fe->getClassFromNewArrayTypeNonNull(i + 4);
             }
-         vmInfo._byteArrayClass = fe->getByteArrayClass();
+         vmInfo._byteArrayOpaqueClass = fe->getByteArrayClass();
          vmInfo._isIndexableDataAddrPresent = TR::Compiler->om.isIndexableDataAddrPresent();
          vmInfo._contiguousIndexableHeaderSize = TR::Compiler->om.contiguousArrayHeaderSizeInBytes();
          vmInfo._discontiguousIndexableHeaderSize = TR::Compiler->om.discontiguousArrayHeaderSizeInBytes();
@@ -486,6 +506,11 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          // These offsets are initialized later on
          vmInfo._vmtargetOffset = 0;
          vmInfo._vmindexOffset = 0;
+         auto sharedCacheConfig = fe->sharedCache() ? fe->sharedCache()->sharedCacheConfig() : NULL;
+         if (sharedCacheConfig)
+            vmInfo._shareLambdaForm = J9_ARE_ALL_BITS_SET(sharedCacheConfig->runtimeFlags2, J9SHR_RUNTIMEFLAG2_SHARE_LAMBDAFORM);
+         else
+            vmInfo._shareLambdaForm = false;
 #endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
          }
 
@@ -542,6 +567,11 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
                }
             }
          vmInfo._useServerOffsets = comp->getPersistentInfo()->getJITServerAOTCacheIgnoreLocalSCC();
+         int32_t enableProfileCacheArgIndex  = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XXplusJITServerUseProfileCache);
+         int32_t disableProfileCacheArgIndex = J9::Options::getExternalOptionIndex(J9::ExternalOptions::XXminusJITServerUseProfileCache);
+         // The profile cache feature needs to be enabled explicitly by the client. The presence of the AOT cache is a pre-requisite.
+         vmInfo._useSharedProfileCache = compInfo->getPersistentInfo()->getJITServerUseAOTCache() &&
+                                         enableProfileCacheArgIndex > disableProfileCacheArgIndex;
          vmInfo._inSnapshotMode = fe->inSnapshotMode();
          vmInfo._isPortableRestoreMode = fe->isPortableRestoreModeEnabled();
          vmInfo._isSnapshotModeEnabled = fe->isSnapshotModeEnabled();
@@ -550,6 +580,24 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
 #else
          vmInfo._isNonPortableRestoreMode = false;
 #endif /* defined(J9VM_OPT_CRIU_SUPPORT) */
+         vmInfo._voidReflectClassPtr = javaVM->voidReflectClass;
+         vmInfo._booleanReflectClassPtr = javaVM->booleanReflectClass;
+         vmInfo._charReflectClassPtr = javaVM->charReflectClass;
+         vmInfo._floatReflectClassPtr = javaVM->floatReflectClass;
+         vmInfo._doubleReflectClassPtr = javaVM->doubleReflectClass;
+         vmInfo._byteReflectClassPtr = javaVM->byteReflectClass;
+         vmInfo._shortReflectClassPtr = javaVM->shortReflectClass;
+         vmInfo._intReflectClassPtr = javaVM->intReflectClass;
+         vmInfo._longReflectClassPtr = javaVM->longReflectClass;
+         vmInfo._booleanArrayClass = javaVM->booleanArrayClass;
+         vmInfo._charArrayClass = javaVM->charArrayClass;
+         vmInfo._floatArrayClass = javaVM->floatArrayClass;
+         vmInfo._doubleArrayClass = javaVM->doubleArrayClass;
+         vmInfo._byteArrayClass = javaVM->byteArrayClass;
+         vmInfo._shortArrayClass = javaVM->shortArrayClass;
+         vmInfo._intArrayClass = javaVM->intArrayClass;
+         vmInfo._longArrayClass = javaVM->longArrayClass;
+
          client->write(response, vmInfo, listOfCacheDescriptors, comp->getPersistentInfo()->getJITServerAOTCacheName());
          }
          break;
@@ -573,6 +621,25 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          client->write(response, fe->getObjectClassFromKnownObjectIndex(comp, idx));
          }
          break;
+      case MessageType::VM_getObjectClassFromKnownObjectIndexJLClass:
+         {
+         auto recv = client->getRecvData<TR::KnownObjectTable::Index>();
+         auto idx = std::get<0>(recv);
+         bool isJL;
+         TR_OpaqueClassBlock *result = fe->getObjectClassFromKnownObjectIndex(comp, idx, &isJL);
+         client->write(response, result, isJL);
+         }
+         break;
+      case MessageType::VM_getObjectClassInfoFromObjectReferenceLocation:
+         {
+         auto recv = client->getRecvData<uintptr_t>();
+         uintptr_t objectReferenceLocation = std::get<0>(recv);
+         auto ci = fe->getObjectClassInfoFromObjectReferenceLocation(comp, objectReferenceLocation);
+         client->write(response,
+                       ci,
+                       knot->getPointerLocation(ci.knownObjectIndex));
+         }
+         break;
       case MessageType::VM_stackWalkerMaySkipFrames:
          {
          client->getRecvData<JITServer::Void>();
@@ -588,15 +655,6 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          TR_OpaqueMethodBlock *method = std::get<0>(recv);
          TR_OpaqueClassBlock *clazz = std::get<1>(recv);
          client->write(response, fe->stackWalkerMaySkipFrames(method, clazz));
-         }
-         break;
-      case MessageType::VM_getStringUTF8Length:
-         {
-         uintptr_t string = std::get<0>(client->getRecvData<uintptr_t>());
-            {
-            TR::VMAccessCriticalSection getStringUTF8Length(fe);
-            client->write(response, fe->getStringUTF8Length(string));
-            }
          }
          break;
       case MessageType::VM_classInitIsFinished:
@@ -615,6 +673,12 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          {
          auto clazz = std::get<0>(client->getRecvData<TR_OpaqueClassBlock *>());
          client->write(response, fe->getArrayClassFromComponentClass(clazz));
+         }
+         break;
+      case MessageType::VM_getNullRestrictedArrayClassFromComponentClass:
+         {
+         auto clazz = std::get<0>(client->getRecvData<TR_OpaqueClassBlock *>());
+         client->write(response, fe->getNullRestrictedArrayClassFromComponentClass(clazz));
          }
          break;
       case MessageType::VM_matchRAMclassFromROMclass:
@@ -733,7 +797,7 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
             {
             // For non-AOT, copy thunk to code cache and relocate the vm helper address right away.
             // Also do this if we're ignoring the local SCC.
-            uint8_t *thunkStart = TR_JITServerRelocationRuntime::copyDataToCodeCache(serializedThunk.data(), serializedThunk.size(), fe);
+            uint8_t *thunkStart = TR_JITServerRelocationRuntime::copyDataToCodeCache(serializedThunk.data(), serializedThunk.size(), fe, comp->codeCacheKind());
             if (!thunkStart)
                compInfoPT->getCompilation()->failCompilation<TR::CodeCacheError>("Failed to allocate space in the code cache");
 
@@ -769,7 +833,7 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
 
          // Do not need relocation here, because helper address should have been originally
          // fetched from the client.
-         uint8_t *thunkStart = TR_JITServerRelocationRuntime::copyDataToCodeCache(serializedThunk.data(), serializedThunk.size(), fe);
+         uint8_t *thunkStart = TR_JITServerRelocationRuntime::copyDataToCodeCache(serializedThunk.data(), serializedThunk.size(), fe, comp->codeCacheKind());
          if (!thunkStart)
             compInfoPT->getCompilation()->failCompilation<TR::CodeCacheError>("Failed to allocate space in the code cache");
 
@@ -906,12 +970,6 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          {
          TR_OpaqueMethodBlock *method = std::get<0>(client->getRecvData<TR_OpaqueMethodBlock *>());
          client->write(response, fe->getMethodSize(method));
-         }
-         break;
-      case MessageType::VM_addressOfFirstClassStatic:
-         {
-         TR_OpaqueClassBlock *clazz = std::get<0>(client->getRecvData<TR_OpaqueClassBlock *>());
-         client->write(response, fe->addressOfFirstClassStatic(clazz));
          }
          break;
       case MessageType::VM_getStaticFieldAddress:
@@ -1214,12 +1272,29 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          client->write(response, mhIndex, mhObj);
          }
          break;
+      case MessageType::VM_getVarHandleAccessDescriptorMode:
+         {
+         auto recv = client->getRecvData<TR::KnownObjectTable::Index>();
+         int32_t result = fe->getVarHandleAccessDescriptorMode(comp, std::get<0>(recv));
+         client->write(response, result);
+         }
+         break;
+      case MessageType::VM_getLayoutVarHandle:
+         {
+         auto recv = client->getRecvData<TR::KnownObjectTable::Index>();
+         TR::KnownObjectTable::Index vhIndex = fe->getLayoutVarHandle(comp, std::get<0>(recv));
+         uintptr_t* vhObj = NULL;
+         if (vhIndex != TR::KnownObjectTable::UNKNOWN)
+            vhObj = knot->getPointerLocation(vhIndex);
+         client->write(response, vhIndex, vhObj);
+         }
+         break;
 #endif // J9VM_OPT_OPENJDK_METHODHANDLE
       case MessageType::VM_isStable:
          {
          auto recv = client->getRecvData<J9Class *, int>();
          J9Class *fieldClass = std::get<0>(recv);
-         int cpIndex = std::get<1>(recv);
+         int32_t cpIndex = std::get<1>(recv);
 
          bool isStable = fe->isStable(fieldClass, cpIndex);
          client->write(response, isStable);
@@ -1231,7 +1306,20 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          client->write(response, fe->inSnapshotMode());
          }
          break;
+      case MessageType::VM_mutableCallSiteEpoch:
+         {
+         auto recv = client->getRecvData<TR::KnownObjectTable::Index>();
+         TR::KnownObjectTable::Index mcs = std::get<0>(recv);
+         TR::KnownObjectTable::Index result = fe->mutableCallSiteEpoch(comp, mcs);
+         uintptr_t *resultRefLocation = NULL;
+         if (result != TR::KnownObjectTable::UNKNOWN)
+            {
+            resultRefLocation = knot->getPointerLocation(result);
+            }
 
+         client->write(response, result, resultRefLocation);
+         }
+         break;
       case MessageType::mirrorResolvedJ9Method:
          {
          // allocate a new TR_ResolvedJ9Method on the heap, to be used as a mirror for performing actions which are only
@@ -1757,6 +1845,8 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          std::vector<TR_OpaqueMethodBlock *> ramMethods(numMethods);
          std::vector<uint32_t> vTableOffsets(numMethods);
          std::vector<TR_ResolvedJ9JITServerMethodInfo> methodInfos(numMethods);
+         // vector<bool> does not seem to work
+         std::vector<char> unresolvedInCPs(numMethods);
          for (int32_t i = 0; i < numMethods; ++i)
             {
             int32_t cpIndex = cpIndices[i];
@@ -1765,7 +1855,7 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
             TR_OpaqueMethodBlock *ramMethod = NULL;
             uint32_t vTableOffset = 0;
             TR_ResolvedJ9JITServerMethodInfo methodInfo;
-            bool unresolvedInCP = false;
+            bool unresolvedInCP = true;
             switch (type)
                {
                case TR_ResolvedMethodType::VirtualFromCP:
@@ -1803,8 +1893,9 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
             ramMethods[i] = ramMethod;
             vTableOffsets[i] = vTableOffset;
             methodInfos[i] = methodInfo;
+            unresolvedInCPs[i] = unresolvedInCP;
             }
-         client->write(response, ramMethods, vTableOffsets, methodInfos);
+         client->write(response, ramMethods, vTableOffsets, methodInfos, unresolvedInCPs);
          }
          break;
       case MessageType::ResolvedMethod_getConstantDynamicTypeFromCP:
@@ -1850,12 +1941,12 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          TR_ResolvedJ9Method *callerMethod = std::get<3>(recv);
          TR_YesNoMaybe useGetResolvedInterfaceMethod = std::get<4>(recv);
 
-         TR_ResolvedMethod *implArray[maxCount];
+         std::vector<TR_ResolvedMethod *> implArray(maxCount, NULL);
          TR_PersistentClassInfo *classInfo = comp->getPersistentInfo()->getPersistentCHTable()->findClassInfoAfterLocking(clazz, comp, true);
          int32_t implCount =
             TR_ClassQueries::collectImplementorsCapped(
                classInfo,
-               implArray,
+               implArray.data(),
                maxCount,
                slotOrIndex,
                callerMethod,
@@ -1897,6 +1988,18 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          int32_t cpIndex = std::get<1>(recv);
          bool isStatic = std::get<2>(recv);
          client->write(response, mirror->isFieldFlattened(comp, cpIndex, isStatic));
+         }
+         break;
+      case MessageType::ResolvedMethod_getTargetMethodFromMemberName:
+         {
+         auto recv = client->getRecvData<TR_ResolvedJ9Method *, uintptr_t *>();
+         TR_ResolvedJ9Method *owningMethod = std::get<0>(recv);
+         uintptr_t * invokeCacheArray = std::get<1>(recv);
+
+         bool isInvokeCacheAppendixNull = false;
+         TR_OpaqueMethodBlock *targetMethod = owningMethod->getTargetMethodFromMemberName(invokeCacheArray, &isInvokeCacheAppendixNull);
+
+         client->write(response, targetMethod, isInvokeCacheAppendixNull);
          }
          break;
       case MessageType::ResolvedRelocatableMethod_createResolvedRelocatableJ9Method:
@@ -2280,7 +2383,7 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
             "next",             "Ljava/lang/invoke/MethodHandle;"),
             "type",             "Ljava/lang/invoke/MethodType;"),
             "methodDescriptor", "Ljava/lang/String;");
-         size_t methodDescriptorLength = fe->getStringUTF8Length(methodDescriptorRef);
+         intptr_t methodDescriptorLength = fe->getStringUTF8Length(methodDescriptorRef);
          char *methodDescriptor = (char*)alloca(methodDescriptorLength+1);
          fe->getStringUTF8(methodDescriptorRef, methodDescriptor, methodDescriptorLength+1);
          client->write(response, std::string(methodDescriptor, methodDescriptorLength));
@@ -2433,7 +2536,7 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          int32_t numArgsPassToFinallyTarget = (int32_t)fe->getArrayLengthInElements(arguments);
 
          uintptr_t methodDescriptorRef = fe->getReferenceField(finallyType, "methodDescriptor", "Ljava/lang/String;");
-         int methodDescriptorLength = fe->getStringUTF8Length(methodDescriptorRef);
+         intptr_t methodDescriptorLength = fe->getStringUTF8Length(methodDescriptorRef);
          char *methodDescriptor = (char*)alloca(methodDescriptorLength+1);
          fe->getStringUTF8(methodDescriptorRef, methodDescriptor, methodDescriptorLength+1);
          client->write(response, numArgsPassToFinallyTarget, std::string(methodDescriptor, methodDescriptorLength));
@@ -2629,30 +2732,12 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          auto recv = client->getRecvData<TR_OpaqueMethodBlock*>();
          auto method = std::get<0>(recv);
          JITClientIProfiler *iProfiler = (JITClientIProfiler *) fe->getIProfiler();
-         client->write(response, iProfiler->serializeIProfilerMethodEntry(method));
+         client->write(response, iProfiler->serializeFaninMethodEntry(method));
          }
          break;
       case MessageType::IProfiler_profilingSample:
          {
          handler_IProfiler_profilingSample(client, fe, comp);
-         }
-         break;
-      case MessageType::IProfiler_getMaxCallCount:
-         {
-         TR_IProfiler *iProfiler = fe->getIProfiler();
-         client->write(response, iProfiler->getMaxCallCount());
-         }
-         break;
-      case MessageType::IProfiler_setCallCount:
-         {
-         auto recv = client->getRecvData<TR_OpaqueMethodBlock*, int32_t, int32_t>();
-         auto method = std::get<0>(recv);
-         auto bcIndex = std::get<1>(recv);
-         auto count = std::get<2>(recv);
-         TR_IProfiler * iProfiler = fe->getIProfiler();
-         iProfiler->setCallCount(method, bcIndex, count, comp);
-
-         client->write(response, TR::CompilationInfo::isCompiled((J9Method *)method));
          }
          break;
       case MessageType::Recompilation_getJittedBodyInfoFromPC:
@@ -2705,31 +2790,6 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          {
          uintptr_t *objectPointerReference = std::get<0>(client->getRecvData<uintptr_t*>());
          client->write(response, knot->getExistingIndexAt(objectPointerReference));
-         }
-         break;
-      case MessageType::KnownObjectTable_mutableCallSiteEpoch:
-         {
-         auto recv = client->getRecvData<uintptr_t*, bool>();
-         uintptr_t* mcsReferenceLocation = std::get<0>(recv);
-         bool knotEnabled = std::get<1>(recv);
-
-         uintptr_t mcsObject = 0;
-         TR::KnownObjectTable::Index knotIndex = TR::KnownObjectTable::UNKNOWN;
-         uintptr_t *objectPointerReference = NULL;
-
-            {
-            TR::VMAccessCriticalSection mutableCallSiteEpoch(fe);
-            mcsObject = fe->getStaticReferenceFieldAtAddress((uintptr_t)mcsReferenceLocation);
-            if (mcsObject && knotEnabled && knot)
-               {
-               TR_J9VMBase *fej9 = (TR_J9VMBase *)(fe);
-               knotIndex = fej9->mutableCallSiteEpoch(comp, mcsObject);
-               if (knotIndex != TR::KnownObjectTable::UNKNOWN)
-                  objectPointerReference = knot->getPointerLocation(knotIndex);
-               }
-            }
-
-         client->write(response, mcsObject, knotIndex, objectPointerReference);
          }
          break;
       case MessageType::KnownObjectTable_dereferenceKnownObjectField:
@@ -2814,33 +2874,6 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          client->write(response, resultIndex, objectPointerReference);
          }
          break;
-      case MessageType::KnownObjectTable_getReferenceField:
-         {
-         auto recv = (client->getRecvData<bool, uintptr_t*, int32_t, bool>());
-         bool isStatic = std::get<0>(recv);
-         uintptr_t *baseObjectRefLocation = std::get<1>(recv);
-         int32_t fieldOffset = std::get<2>(recv);
-         bool knotEnabled = std::get<3>(recv);
-
-         TR::KnownObjectTable::Index resultIndex = TR::KnownObjectTable::UNKNOWN;
-         uintptr_t *objectPointerReference = NULL;
-         uintptr_t targetObjectReference = 0;
-
-            {
-            TR::VMAccessCriticalSection getReferenceField(fe);
-            uintptr_t baseObjectRef = isStatic ? fe->getStaticReferenceFieldAtAddress((uintptr_t)baseObjectRefLocation) : *baseObjectRefLocation;
-            targetObjectReference = fe->getReferenceFieldAt(baseObjectRef, fieldOffset);
-
-            if (knotEnabled && knot)
-               {
-               resultIndex = knot->getOrCreateIndexAt(&targetObjectReference);
-               objectPointerReference = knot->getPointerLocation(resultIndex);
-               }
-            }
-
-         client->write(response, resultIndex, objectPointerReference, targetObjectReference);
-         }
-         break;
       case MessageType::KnownObjectTable_getKnownObjectTableDumpInfo:
          {
          client->getRecvData<JITServer::Void>();
@@ -2852,22 +2885,181 @@ handleServerMessage(JITServer::ClientStream *client, TR_J9VM *fe, JITServer::Mes
          client->write(response, knownObjectTableDumpInfoList);
          }
          break;
+      case MessageType::KnownObjectTable_getOpaqueClass:
+         {
+         TR::KnownObjectTable::Index knotIndex =
+            std::get<0>(client->getRecvData<TR::KnownObjectTable::Index>());
+
+         uintptr_t clazz = 0;
+            {
+            TR::VMAccessCriticalSection getJ9ClassFromKnownObjectIndex(fe);
+
+            uintptr_t javaLangClass = knot->getPointer(knotIndex);
+            clazz = (uintptr_t)fe->getInt64Field(javaLangClass, "vmRef");
+            }
+
+         client->write(response, clazz);
+         }
+         break;
+      case MessageType::KnownObjectTable_getVectorBitSize:
+         {
+         TR::KnownObjectTable::Index knotIndex =
+            std::get<0>(client->getRecvData<TR::KnownObjectTable::Index>());
+
+         int32_t vectorBitSize = 0;
+            {
+            TR::VMAccessCriticalSection getVBSFromKnownObjectIndex(fe);
+
+            uintptr_t vectorSpeciesLocation = knot->getPointer(knotIndex);
+            uintptr_t vectorShapeLocation = fe->getReferenceField(vectorSpeciesLocation,
+                                                            "vectorShape",
+                                                            "Ljdk/incubator/vector/VectorShape;");
+            vectorBitSize = fe->getInt32Field(vectorShapeLocation, "vectorBitSize");
+            }
+
+         client->write(response, vectorBitSize);
+         }
+         break;
+      case MessageType::KnownObjectTable_addFieldAddressFromBaseIndex:
+         {
+         auto recv = client->getRecvData<TR::KnownObjectTable::Index, intptr_t, bool>();
+         TR::KnownObjectTable::Index baseObjectIndex = std::get<0>(recv);
+         intptr_t fieldOffset = std::get<1>(recv);
+         bool isArrayWithConstantElements = std::get<2>(recv);
+
+         TR::KnownObjectTable::Index resultIndex = TR::KnownObjectTable::UNKNOWN;
+
+            {
+            TR::VMAccessCriticalSection addFieldAddressFromBaseIndex(fe);
+            uintptr_t baseObjectAddress = knot->getPointer(baseObjectIndex);
+            uintptr_t fieldAddress = baseObjectAddress + fieldOffset;
+
+            uintptr_t objectPointer = fe->getReferenceFieldAtAddress(fieldAddress);
+
+            if (objectPointer)
+               resultIndex = knot->getOrCreateIndexAt(&objectPointer, isArrayWithConstantElements);
+            }
+
+         uintptr_t *resultPointer = (resultIndex == TR::KnownObjectTable::UNKNOWN) ?
+               NULL : knot->getPointerLocation(resultIndex);
+
+         client->write(response, resultIndex, resultPointer);
+         }
+         break;
+      case MessageType::KnownObjectTable_getFieldAddressData:
+         {
+         auto recv = client->getRecvData<TR::KnownObjectTable::Index, intptr_t>();
+         TR::KnownObjectTable::Index baseObjectIndex = std::get<0>(recv);
+         intptr_t fieldOffset = std::get<1>(recv);
+
+         J9::TransformUtil::value data;
+
+            {
+            TR::VMAccessCriticalSection addFieldAddressFromBaseIndex(fe);
+            uintptr_t baseObjectAddress = knot->getPointer(baseObjectIndex);
+
+            uintptr_t fieldAddress = baseObjectAddress + fieldOffset;
+
+            data = *(J9::TransformUtil::value *) fieldAddress;
+            }
+
+         client->write(response, data);
+         }
+         break;
       case MessageType::AOTCache_getROMClassBatch:
          {
+         // The server has asked about N classes but we may send ClassInfos for N+M classes with
+         // M being the number of base component classes that the server does not yet have.
+         // The classes for those extra elements are passed back in extraClasses.
+         std::vector<J9Class *> extraClasses;
          auto recv = client->getRecvData<std::vector<J9Class *>>();
-         auto &ramClasses = std::get<0>(recv);
-         std::vector<JITServerHelpers::ClassInfoTuple> classInfos;
+         auto &ramClasses = std::get<0>(recv); // The classses for which the server requests information
+
+         std::vector<JITServerHelpers::ClassInfoTuple> classInfos; // This will be filled and returned to server
          classInfos.reserve(ramClasses.size());
 
-         for (J9Class *ramClass : ramClasses)
-            classInfos.push_back(JITServerHelpers::packRemoteROMClassInfo(ramClass, fe->vmThread(), trMemory, true));
+         TR::StackMemoryRegion region(*trMemory);
+         Vector<J9Class *> baseComponentClasses(region); // Temporary storage for base classes of arrays
+         baseComponentClasses.reserve(ramClasses.size());
+         Vector<J9Class *> uncachedBaseComponentClasses(region); // Filtered set of base component classes
 
+         for (J9Class *ramClass : ramClasses)
+            {
+            classInfos.push_back(JITServerHelpers::packRemoteROMClassInfo(ramClass, vmThread, trMemory, true/*serializeClass*/));
+
+            // If this is an array class, remember its base component class for later
+            int32_t numDimensions = 0;
+            J9Class *baseComponent = (J9Class *)TR_J9VMBase::staticGetBaseComponentClass((TR_OpaqueClassBlock *)ramClass, numDimensions);
+            if (numDimensions)
+               baseComponentClasses.push_back(baseComponent);
+            }
+
+         // Determine which baseComponent classes the server does not yet have
+         uncachedBaseComponentClasses.reserve(baseComponentClasses.size());
+         if (!baseComponentClasses.empty())
+            {
+            OMR::CriticalSection cs(compInfo->getclassesCachedAtServerMonitor());
+            const auto &classesCachedAtServer = compInfo->getclassesCachedAtServer();
+            for (J9Class *baseComponent : baseComponentClasses)
+               {
+               if (classesCachedAtServer.find(baseComponent) == classesCachedAtServer.end()) // server doesn't have it
+                  {
+                  uncachedBaseComponentClasses.push_back(baseComponent);
+                  }
+               }
+            }
+
+         // Add the uncached baseComponent classes to the classInfos vector
+         extraClasses.reserve(uncachedBaseComponentClasses.size());
+         for (J9Class *baseComponent : uncachedBaseComponentClasses)
+            {
+            classInfos.push_back(JITServerHelpers::packRemoteROMClassInfo(baseComponent, vmThread, trMemory, true/*serializeClass*/));
+            extraClasses.push_back(baseComponent);
+            }
+
+         // Send the information to the server.
+         client->write(response, classInfos, extraClasses);
+
+         // Finally, update client's view of classes cached by the server.
             {
             OMR::CriticalSection cs(compInfo->getclassesCachedAtServerMonitor());
             compInfo->getclassesCachedAtServer().insert(ramClasses.begin(), ramClasses.end());
-            }
+            compInfo->getclassesCachedAtServer().insert(uncachedBaseComponentClasses.begin(), uncachedBaseComponentClasses.end());
+            } // end critical section
+         }
+         break;
 
-         client->write(response, classInfos);
+      case MessageType::AOTCache_getRAMClassFromClassRecordBatch:
+         {
+         // Convert several AOT cache class IDs to this client's RAMClasses
+         auto recv = client->getRecvData<std::vector<uintptr_t>, std::string>();
+         auto &classIds = std::get<0>(recv); // vector of classIDs that need to be converted into j9classes
+         auto &recordsStr = std::get<1>(recv); // packed serialization records that the client is missing
+
+         std::vector<J9Class *> ramClasses;
+         ramClasses.reserve(classIds.size());
+
+         if (auto deserializer = compInfo->getJITServerAOTDeserializer())
+            {
+            bool wasReset = false;
+            auto context = DeserializerContext(comp);
+            deserializer->cacheRecords((const uint8_t *)recordsStr.data(), recordsStr.size(), context,
+                                       /*ignoreFailures=*/true, wasReset);
+            if (!wasReset)
+               {
+               for (uintptr_t id : classIds)
+                  {
+                  J9Class *ramClass = deserializer->getRAMClass(id, context, wasReset);
+                  if (wasReset)
+                     {
+                     ramClasses.clear();
+                     break;
+                     }
+                  ramClasses.push_back(ramClass); // possibly NULL
+                  }
+               }
+            }
+         client->write(response, ramClasses);
          }
          break;
       default:
@@ -3244,6 +3436,15 @@ remoteCompile(J9VMThread *vmThread, TR::Compilation *compiler, TR_ResolvedMethod
       }
    compiler->setIgnoringLocalSCC(aotCacheStore && compiler->getPersistentInfo()->getJITServerAOTCacheIgnoreLocalSCC());
 
+   // TODO: To support dependency tracking with the JITServer AOT cache while
+   // ignoring the local SCC, we would have to store the dependencies at the
+   // server and detect (with the help of the server's serialization records)
+   // when they were satisfied. More limited support also makes sense when not
+   // ignoring the local SCC - the dependencies would just have to be saved at
+   // the server so they could be sent to and stored by the client.
+   if (aotCacheLoad || aotCacheStore)
+      compiler->setOption(TR_DisableDependencyTracking);
+
    // This thread may have been notified at some point in the past that the deserializer was reset.
    // Since this is the start of a new compilation, we must clear the reset flag in order to detect
    // a concurrent deserializer reset during the course of this compilation. This clearing must
@@ -3256,31 +3457,74 @@ remoteCompile(J9VMThread *vmThread, TR::Compilation *compiler, TR_ResolvedMethod
    // 1. Requests an AOT cache store or load from the server, or
    // 2. Accesses the JITServer AOT deserializer in any way.
    // That moment is currently right here, when we get the new known IDs that are cached in the deserializer.
-   ((TR::CompilationInfoPerThread *)compInfoPT)->clearDeserializerWasReset();
-   std::vector<uintptr_t> newKnownIds = deserializer ? deserializer->getNewKnownIds(compiler) : std::vector<uintptr_t>();
+   compInfoPT->getJ9VM()->clearDeserializerWasReset();
+   auto context = DeserializerContext(compiler);
+   std::vector<uintptr_t> newKnownIds = deserializer ? deserializer->getNewKnownIds(context) : std::vector<uintptr_t>();
 
-   // TODO: make this a synchronized region to avoid bad_alloc exceptions
-   compInfo->getSequencingMonitor()->enter();
-   // Collect the list of unloaded classes
-   std::vector<TR_OpaqueClassBlock *> unloadedClasses(compInfo->getUnloadedClassesTempList()->begin(),
-                                                      compInfo->getUnloadedClassesTempList()->end());
-   compInfo->getUnloadedClassesTempList()->clear();
-   std::vector<TR_OpaqueClassBlock *> illegalModificationList(compInfo->getIllegalFinalFieldModificationList()->begin(),
-                                                              compInfo->getIllegalFinalFieldModificationList()->end());
-   compInfo->getIllegalFinalFieldModificationList()->clear();
-   // Collect and encode the CHTable updates; this will acquire CHTable mutex
    auto chTable = (JITClientPersistentCHTable *)persistentInfo->getPersistentCHTable();
-   std::pair<std::string, std::string> chtableUpdates = chTable->serializeUpdates();
-   // Update the sequence number for these updates
-   uint32_t seqNo = compInfo->incCompReqSeqNo();
-   uint32_t lastCriticalSeqNo = !details.isJitDumpMethod() ? compInfo->getLastCriticalSeqNo() : 0;
-   // If needed, update the seqNo of the last request that carried information that needed to be processed in order
-   if (!chtableUpdates.first.empty() || !chtableUpdates.second.empty() ||
-       !illegalModificationList.empty() || !unloadedClasses.empty() || details.isJitDumpMethod())
+   auto permanentLoaders = compiler->permanentLoaders();
+   std::vector<TR_OpaqueClassBlock *> unloadedClasses;
+   std::vector<TR_OpaqueClassBlock *> illegalModificationList;
+   std::pair<std::string, std::string> chtableUpdates("", "");
+   std::vector<J9ClassLoader *> newPermanentLoaders; // doesn't affect critical seq. no.
+   uint32_t seqNo = 0;
+   uint32_t lastCriticalSeqNo = 0;
+
+   // sequencing monitor critical section scope
       {
-      compInfo->setLastCriticalSeqNo(seqNo);
+      OMR::CriticalSection sequencingLock(compInfo->getSequencingMonitor());
+
+      // Collect the list of unloaded classes
+         {
+         auto src = compInfo->getUnloadedClassesTempList();
+         unloadedClasses.reserve(src->size());
+         unloadedClasses.insert(unloadedClasses.end(), src->begin(), src->end());
+         src->clear();
+         }
+
+      // Collect the illegal final field modifications
+         {
+         auto src = compInfo->getIllegalFinalFieldModificationList();
+         illegalModificationList.reserve(src->size());
+         illegalModificationList.insert(illegalModificationList.end(), src->begin(), src->end());
+         src->clear();
+         }
+
+      // Collect and encode the CHTable updates; this will acquire CHTable mutex
+      chtableUpdates = chTable->serializeUpdates();
+
+      // Update the sequence number for these updates
+      seqNo = compInfo->incCompReqSeqNo();
+      lastCriticalSeqNo = !details.isJitDumpMethod() ? compInfo->getLastCriticalSeqNo() : 0;
+
+      // If needed, update the seqNo of the last request that carried information that needed to be processed in order
+      if (!chtableUpdates.first.empty() || !chtableUpdates.second.empty() ||
+          !illegalModificationList.empty() || !unloadedClasses.empty() || details.isJitDumpMethod())
+         {
+         compInfo->setLastCriticalSeqNo(seqNo);
+         }
+
+      // Determine which permanent loaders (if any) to send to the server.
+      auto loaderTable = persistentInfo->getPersistentClassLoaderTable();
+      size_t numPermanentLoadersSent =
+         loaderTable->numPermanentLoadersSentToServer(compInfo);
+
+      // It's possible to have numPermanentLoadersSent > permanentLoaders.size()
+      // in some interleavings. Only send loaders if our permanentLoaders contains
+      // entries that haven't been sent yet. This also prevents the subtraction
+      // from overflowing.
+      if (numPermanentLoadersSent < permanentLoaders.size())
+         {
+         size_t n = permanentLoaders.size() - numPermanentLoadersSent;
+         newPermanentLoaders.reserve(n);
+         newPermanentLoaders.insert(
+            newPermanentLoaders.end(),
+            permanentLoaders.begin() + numPermanentLoadersSent,
+            permanentLoaders.end());
+
+         loaderTable->addPermanentLoadersSentToServer(n, compInfo);
+         }
       }
-   compInfo->getSequencingMonitor()->exit();
 
    uint32_t statusCode = compilationFailure;
    std::string codeCacheStr;
@@ -3313,7 +3557,7 @@ remoteCompile(J9VMThread *vmThread, TR::Compilation *compiler, TR_ResolvedMethod
          detailsStr, details.getType(), unloadedClasses, illegalModificationList, classInfoTuple, optionsStr,
          recompMethodInfoStr, chtableUpdates.first, chtableUpdates.second, useAotCompilation,
          TR::Compiler->vm.isVMInStartupPhase(compInfoPT->getJitConfig()), aotCacheStore, aotCacheLoad, methodIndex,
-         classChainOffset, ramClassChain, uncachedRAMClasses, uncachedClassInfos, newKnownIds
+         classChainOffset, ramClassChain, uncachedRAMClasses, uncachedClassInfos, newKnownIds, newPermanentLoaders
       );
 
       JITServer::MessageType response;
@@ -3375,7 +3619,8 @@ remoteCompile(J9VMThread *vmThread, TR::Compilation *compiler, TR_ResolvedMethod
 
          auto method = SerializedAOTMethod::get(methodStr);
          bool usesSVM = false;
-         if (deserializer->deserialize(method, records, compiler, usesSVM))
+         auto context = DeserializerContext(compiler);
+         if (deserializer->deserialize(method, records, context, usesSVM))
             {
             compiler->setDeserializedAOTMethodStore(true);
             compiler->setDeserializedAOTMethod(true);
@@ -3409,7 +3654,8 @@ remoteCompile(J9VMThread *vmThread, TR::Compilation *compiler, TR_ResolvedMethod
 
          auto method = SerializedAOTMethod::get(methodStr);
          bool usesSVM = false;
-         if (deserializer->deserialize(method, records, compiler, usesSVM))
+         auto context = DeserializerContext(compiler);
+         if (deserializer->deserialize(method, records, context, usesSVM))
             {
             compiler->setDeserializedAOTMethod(true);
             compiler->setDeserializedAOTMethodUsingSVM(usesSVM);
@@ -3747,6 +3993,10 @@ remoteCompile(J9VMThread *vmThread, TR::Compilation *compiler, TR_ResolvedMethod
          if (compiler->getOption(TR_JITServerFollowRemoteCompileWithLocalCompile) && compilationSequenceNumber)
             {
             compiler->getOptions()->setLogFileForClientOptions(compilationSequenceNumber);
+            auto logFile = compiler->getOptions()->getLogFile();
+            auto debug = compiler->getDebug();
+            if (logFile && debug)
+               debug->setFile(logFile);
             bool compileWithoutVMAccess = !compiler->getOption(TR_DisableNoVMAccess);
             if (compileWithoutVMAccess)
                {

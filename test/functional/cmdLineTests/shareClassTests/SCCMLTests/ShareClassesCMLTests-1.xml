@@ -80,7 +80,7 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 
 	The string 'corrupt' is checked because it can appear several messages like below.
 		JVMSHRC443E Cache CRC is incorrect indicating a corrupt cache. Incorrect cache CRC: 0x0.
-		JVMDUMP013I Processed dump event "corruptcache", detail "".
+		JVMDUMP056I Processed dump event "corruptcache", detail "" at yyyy/mm/dd HH:MM:SS.
 		JVMSHRC442E Shared cache "jim" is corrupt. Corruption code is -1. Corrupt value is 0x0. No new JVMs will be allowed to connect to the cache.
 	-->
 
@@ -187,7 +187,7 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 	</test>
 
 	<test id="Test 4 - d: Build a new cache with -Xnolinenumbers and mprotect=all" timeout="600" runPath=".">
-		<command>$JAVA_EXE$ -Xnolinenumbers $currentMode$,reset,mprotect=all -version</command>
+		<command>$JAVA_EXE$ -Xnolinenumbers $currentMode$,reset,mprotect=all,verbose -version</command>
 		<output type="success" caseSensitive="no" regex="yes" javaUtilPattern="yes">(java|openjdk|semeru) version</output>
 		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
 		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>
@@ -1696,6 +1696,124 @@ SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0-only WITH Classpath-ex
 
 	<test id="Test 70-h: clean up" timeout="600" runPath=".">
 		<command>$JAVA_EXE$ -Xshareclasses:destroy</command>
+		<output type="success" caseSensitive="yes" regex="no">Cache does not exist</output>
+		<output type="success" caseSensitive="yes" regex="no">has been destroyed</output>
+		<output type="success" caseSensitive="yes" regex="no">is destroyed</output>
+
+		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
+		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>
+		<output type="failure" caseSensitive="no" regex="no">corrupt</output>
+		<output type="failure" caseSensitive="yes" regex="no">Processing dump event</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Java dump</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Snap dump</output>
+	</test>
+
+	<test id="Test 71-a: create a shared cache that has doubele-page aligned boundaries" timeout="600" runPath=".">
+		<command>$JAVA_EXE$ $currentMode$,testDoublePageSize $CP_HANOI$ $PROGRAM_HANOI$</command>
+		<output type="success" caseSensitive="yes" regex="no">Puzzle solved!</output>
+
+		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
+		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>
+		<output type="failure" caseSensitive="no" regex="no">corrupt</output>
+		<output type="failure" caseSensitive="yes" regex="no">Processing dump event</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Java dump</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Snap dump</output>
+	</test>
+
+	<test id="Test 71-b: Re-use the shared cache in readonly mode, which should detect the page difference" timeout="600" runPath=".">
+		<command>$JAVA_EXE$ $currentMode$,verbose,readonly -Xtrace:print={j9shr.2345} $CP_HANOI$ $PROGRAM_HANOI$</command>
+		<output type="success" caseSensitive="yes" regex="no">Puzzle solved!</output>
+		<output type="required" caseSensitive="yes" regex="yes" javaUtilPattern="yes">j9shr.2345\s+ - Mismatch in layer 0 composite cache osPageSize value</output>
+		<output type="required" caseSensitive="yes" regex="yes" javaUtilPattern="yes">JVMSHRC858I The page size .* of the operating system is different from the page size .* of the system on which layer 0 cache is created</output>
+		<!-- memory protection should be disabled because of readonly -->
+		<output type="required" caseSensitive="yes" regex="no">JVMSHRC274I Memory page protection disabled for cache</output>
+
+		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
+		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>
+		<output type="failure" caseSensitive="no" regex="no">corrupt</output>
+		<output type="failure" caseSensitive="yes" regex="no">Processing dump event</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Java dump</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Snap dump</output>
+	</test>
+
+	<test id="Test 71-c: Re-use the shared cache, which should detect the page difference" timeout="600" runPath=".">
+		<command>$JAVA_EXE$ $currentMode$,verbose -Xtrace:print={j9shr.2345} $CP_HANOI$ $PROGRAM_HANOI$</command>
+		<!-- memory protection should be enabled as the cache boundaries are still page aligned -->
+		<output type="success" caseSensitive="yes" regex="no">JVMSHRC765I Memory page protection on runtime data, string read-write data and partially filled pages is successfully enabled</output>
+		<output type="success" caseSensitive="yes" regex="no">JVMSHRC768I Memory page protection on runtime data is successfully enabled</output>
+		<output type="required" caseSensitive="yes" regex="no">Puzzle solved!</output>
+		<output type="required" caseSensitive="yes" regex="yes" javaUtilPattern="yes">j9shr.2345\s+ - Mismatch in layer 0 composite cache osPageSize value</output>
+		<output type="required" caseSensitive="yes" regex="yes" javaUtilPattern="yes">JVMSHRC858I The page size .* of the operating system is different from the page size .* of the system on which layer 0 cache is created</output>
+
+		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
+		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>
+		<output type="failure" caseSensitive="no" regex="no">corrupt</output>
+		<output type="failure" caseSensitive="yes" regex="no">Processing dump event</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Java dump</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Snap dump</output>
+	</test>
+
+	<test id="Test 71-d: destroy cache for cleanup" timeout="600" runPath=".">
+		<command>$JAVA_EXE$ $currentMode$,destroy</command>
+		<output type="success" caseSensitive="yes" regex="no">Cache does not exist</output>
+		<output type="success" caseSensitive="yes" regex="no">has been destroyed</output>
+		<output type="success" caseSensitive="yes" regex="no">is destroyed</output>
+
+		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
+		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>
+		<output type="failure" caseSensitive="no" regex="no">corrupt</output>
+		<output type="failure" caseSensitive="yes" regex="no">Processing dump event</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Java dump</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Snap dump</output>
+	</test>
+
+	<test id="Test 72-a: create a shared cache that has half-page aligned boundaries" timeout="600" runPath=".">
+		<!-- mprotect=none must be specified when creating this cache because OS cannot memory protect half page, which leads to assertion failure -->
+		<command>$JAVA_EXE$ $currentMode$,testHalfPageSize,mprotect=none $CP_HANOI$ $PROGRAM_HANOI$</command>
+		<output type="success" caseSensitive="yes" regex="no">Puzzle solved!</output>
+
+		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
+		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>
+		<output type="failure" caseSensitive="no" regex="no">corrupt</output>
+		<output type="failure" caseSensitive="yes" regex="no">Processing dump event</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Java dump</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Snap dump</output>
+	</test>
+
+	<test id="Test 72-b: Re-use the shared cache in readonly mode, which should detect the page difference" timeout="600" runPath=".">
+		<command>$JAVA_EXE$ $currentMode$,verbose,readonly -Xtrace:print={j9shr.2345} $CP_HANOI$ $PROGRAM_HANOI$</command>
+		<output type="success" caseSensitive="yes" regex="no">Puzzle solved!</output>
+		<output type="required" caseSensitive="yes" regex="yes" javaUtilPattern="yes">j9shr.2345\s+ - Mismatch in layer 0 composite cache osPageSize value</output>
+		<output type="required" caseSensitive="yes" regex="yes" javaUtilPattern="yes">JVMSHRC858I The page size .* of the operating system is different from the page size .* of the system on which layer 0 cache is created</output>
+		<!-- memory protection should be disabled because of readonly -->
+		<output type="required" caseSensitive="yes" regex="no">JVMSHRC274I Memory page protection disabled for cache</output>
+
+		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
+		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>
+		<output type="failure" caseSensitive="no" regex="no">corrupt</output>
+		<output type="failure" caseSensitive="yes" regex="no">Processing dump event</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Java dump</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Snap dump</output>
+	</test>
+
+	<test id="Test 72-c: Re-use the shared cache, which should detect the page difference. mprotect should be enabled" timeout="600" runPath=".">
+		<command>$JAVA_EXE$ $currentMode$,verbose -Xtrace:print={j9shr.2345} $CP_HANOI$ $PROGRAM_HANOI$</command>
+		<output type="success" caseSensitive="yes" regex="no">Puzzle solved!</output>
+		<output type="required" caseSensitive="yes" regex="yes" javaUtilPattern="yes">j9shr.2345\s+ - Mismatch in layer 0 composite cache osPageSize value</output>
+		<output type="required" caseSensitive="yes" regex="yes" javaUtilPattern="yes">JVMSHRC858I The page size .* of the operating system is different from the page size .* of the system on which layer 0 cache is created</output>
+		<!-- memory protection should be disabled because of cache boundaries are not page aligned -->
+		<output type="required" caseSensitive="yes" regex="no">JVMSHRC274I Memory page protection disabled for cache</output>
+
+		<output type="failure" caseSensitive="no" regex="no">Unhandled Exception</output>
+		<output type="failure" caseSensitive="yes" regex="no">Exception:</output>
+		<output type="failure" caseSensitive="no" regex="no">corrupt</output>
+		<output type="failure" caseSensitive="yes" regex="no">Processing dump event</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Java dump</output>
+		<output type="failure" caseSensitive="yes" regex="no">JVM requested Snap dump</output>
+	</test>
+
+	<test id="Test 72-d: destroy cache for cleanup" timeout="600" runPath=".">
+		<command>$JAVA_EXE$ $currentMode$,destroy</command>
 		<output type="success" caseSensitive="yes" regex="no">Cache does not exist</output>
 		<output type="success" caseSensitive="yes" regex="no">has been destroyed</output>
 		<output type="success" caseSensitive="yes" regex="no">is destroyed</output>

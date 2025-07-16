@@ -121,6 +121,7 @@ typedef enum gc_policy{
 #endif /* defined(AIXPPC) */
 
 #if defined(J9ZOS390)
+#include <dlfcn.h>
 #include <dll.h>
 #include "atoe.h"
 #include <stdlib.h>
@@ -380,8 +381,7 @@ scan_u64(char **scan_start, U_64* result)
 	UDATA rc = 1;
 	char *c = *scan_start;
 
-	/* isdigit isn't properly supported everywhere */
-	while ( *c >= '0' && *c <= '9' ) {
+	while (OMR_ISDIGIT(*c)) {
 		UDATA digitValue = *c - '0';
 
 		if (total > ((U_64)-1) / 10 ) {
@@ -938,6 +938,9 @@ JNI_GetDefaultJavaVMInitArgs(void *vm_args)
 #if JAVA_SPEC_VERSION >= 21
 		case JNI_VERSION_21:
 #endif /* JAVA_SPEC_VERSION >= 21 */
+#if JAVA_SPEC_VERSION >= 24
+		case JNI_VERSION_24:
+#endif /* JAVA_SPEC_VERSION >= 24 */
 			return JNI_OK;
 		default:
 			break;

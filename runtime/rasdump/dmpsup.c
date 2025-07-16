@@ -60,6 +60,7 @@ char* dumpDirectoryPrefix = NULL;
 #if defined(J9ZOS390)
 #if defined(J9VM_ENV_DATA64)
 #include <__le_api.h>
+#include <ctest.h>
 #else
 #include <leawi.h>
 #include <ceeedcct.h>
@@ -143,7 +144,7 @@ loadOMRSIG(J9JavaVM *vm)
 	omrsigLoadInfo.loadFlags |= XRUN_LIBRARY;
 	strcpy((char *) &omrsigLoadInfo.dllName, "omrsig");
 	if (vm->internalVMFunctions->loadJ9DLL(vm, &omrsigLoadInfo) != TRUE) {
-		j9tty_err_printf(PORTLIB, "Can't open OMRSIG library\n");
+		j9tty_err_printf("Can't open OMRSIG library\n");
 		return FALSE;
 	}
 	omrsigHandle = omrsigLoadInfo.descriptor;
@@ -366,15 +367,15 @@ showDumpAgents(J9JavaVM *vm)
 	PORT_ACCESS_FROM_JAVAVM(vm);
 	J9RASdumpAgent *agent = NULL;
 
-	j9tty_err_printf(PORTLIB, "\nRegistered dump agents\n----------------------\n");
+	j9tty_err_printf("\nRegistered dump agents\n----------------------\n");
 
 	while (seekDumpAgent(vm, &agent, NULL) == OMR_ERROR_NONE)
 	{
 		printDumpAgent(vm, agent);
-		j9tty_err_printf(PORTLIB, "----------------------\n");
+		j9tty_err_printf("----------------------\n");
 	}
 
-	j9tty_err_printf(PORTLIB, "\n");
+	j9tty_err_printf("\n");
 
 	return OMR_ERROR_NONE;
 }
@@ -468,7 +469,7 @@ configureDumpAgents(J9JavaVM *vm, J9VMInitArgs *j9vm_args, BOOLEAN isBootup)
 	/* -Xdump:events */
 	if ( FIND_AND_CONSUME_ARG(j9vm_args, EXACT_MATCH, VMOPT_XDUMP ":events", NULL) >= 0 )
 	{
-		j9tty_err_printf(PORTLIB, "\nTrigger events:\n\n");
+		j9tty_err_printf("\nTrigger events:\n\n");
 		printDumpEvents( vm, J9RAS_DUMP_ON_ANY, 1 );
 		return J9VMDLLMAIN_SILENT_EXIT_VM;
 	}
@@ -476,7 +477,7 @@ configureDumpAgents(J9JavaVM *vm, J9VMInitArgs *j9vm_args, BOOLEAN isBootup)
 	/* -Xdump:request */
 	if ( FIND_AND_CONSUME_ARG(j9vm_args, EXACT_MATCH, VMOPT_XDUMP ":request", NULL) >= 0 )
 	{
-		j9tty_err_printf(PORTLIB, "\nAdditional VM requests:\n\n");
+		j9tty_err_printf("\nAdditional VM requests:\n\n");
 		printDumpRequests( vm, (UDATA)-1, 1 );
 		return J9VMDLLMAIN_SILENT_EXIT_VM;
 	}
@@ -484,7 +485,7 @@ configureDumpAgents(J9JavaVM *vm, J9VMInitArgs *j9vm_args, BOOLEAN isBootup)
 	/* -Xdump:tokens */
 	if ( FIND_AND_CONSUME_ARG(j9vm_args, EXACT_MATCH, VMOPT_XDUMP ":tokens", NULL) >= 0 )
 	{
-		j9tty_err_printf(PORTLIB, "\nLabel tokens:\n\n");
+		j9tty_err_printf("\nLabel tokens:\n\n");
 		printLabelSpec( vm );
 		return J9VMDLLMAIN_SILENT_EXIT_VM;
 	}
@@ -572,7 +573,7 @@ configureDumpAgents(J9JavaVM *vm, J9VMInitArgs *j9vm_args, BOOLEAN isBootup)
 
 	agentOpts = j9mem_allocate_memory(sizeof(J9RASdumpOption)*MAX_DUMP_OPTS, OMRMEM_CATEGORY_VM);
 	if( NULL == agentOpts ) {
-		j9tty_err_printf(PORTLIB, "Storage for dump options not available, unable to process dump options\n");
+		j9tty_err_printf("Storage for dump options not available, unable to process dump options\n");
 		return J9VMDLLMAIN_FAILED;
 	}
 	memset(agentOpts,0,sizeof(J9RASdumpOption)*MAX_DUMP_OPTS);
@@ -664,7 +665,7 @@ configureDumpAgents(J9JavaVM *vm, J9VMInitArgs *j9vm_args, BOOLEAN isBootup)
 							isMappedToolDump = TRUE;
 						} else {
 							char *mappingMapName = MAPPING_MAPNAME(j9vm_args, xdumpIndex);
-							j9tty_err_printf(PORTLIB, "Unable to map %s to J9 %s - Could not allocate the requested size of memory %zu for optionString\n", mappingMapName, mappingJ9Name, optionStringMemAlloc);
+							j9tty_err_printf("Unable to map %s to J9 %s - Could not allocate the requested size of memory %zu for optionString\n", mappingMapName, mappingJ9Name, optionStringMemAlloc);
 							return J9VMDLLMAIN_FAILED;
 						}
 					}
@@ -739,7 +740,7 @@ configureDumpAgents(J9JavaVM *vm, J9VMInitArgs *j9vm_args, BOOLEAN isBootup)
 		if (agentOpts[i].kind == J9RAS_DUMP_OPT_DISABLED) continue;
 		if (agentOpts[i].pass != J9RAS_DUMP_OPTS_PASS_ONE) continue;
 
-		/*j9tty_err_printf(PORTLIB, "configureDumpAgents() loading agent for %d %s\n",agentOpts[i].kind, agentOpts[i].args); */
+		/* j9tty_err_printf("configureDumpAgents() loading agent for %d %s\n",agentOpts[i].kind, agentOpts[i].args); */
 		if ( (strncmp(agentOpts[i].args, "none", strlen("none")) == 0)) {
 			if (deleteMatchingAgents(vm, agentOpts[i].kind, agentOpts[i].args) == OMR_ERROR_INTERNAL) {
 				printDumpSpec(vm, agentOpts[i].kind, 2);
@@ -765,7 +766,7 @@ configureDumpAgents(J9JavaVM *vm, J9VMInitArgs *j9vm_args, BOOLEAN isBootup)
 		if (agentOpts[i].kind == J9RAS_DUMP_OPT_DISABLED) continue;
 		if (agentOpts[i].pass == J9RAS_DUMP_OPTS_PASS_ONE) continue;
 
-		/*j9tty_err_printf(PORTLIB, "configureDumpAgents() loading agent for %d %s\n",agentOpts[i].kind, agentOpts[i].args); */
+		/* j9tty_err_printf("configureDumpAgents() loading agent for %d %s\n",agentOpts[i].kind, agentOpts[i].args); */
 		if ( (strncmp(agentOpts[i].args, "none", strlen("none")) == 0)) {
 			if (deleteMatchingAgents(vm, agentOpts[i].kind, agentOpts[i].args) == OMR_ERROR_INTERNAL) {
 				printDumpSpec(vm, agentOpts[i].kind, 2);
@@ -785,7 +786,7 @@ configureDumpAgents(J9JavaVM *vm, J9VMInitArgs *j9vm_args, BOOLEAN isBootup)
 		if (agentOpts[i].kind == J9RAS_DUMP_OPT_DISABLED) continue;
 		if (agentOpts[i].pass != J9RAS_DUMP_OPTS_PASS_ONE) continue;
 
-		/*j9tty_err_printf(PORTLIB, "configureDumpAgents() loading agent for %d %s\n",agentOpts[i].kind, agentOpts[i].args); */
+		/* j9tty_err_printf("configureDumpAgents() loading agent for %d %s\n",agentOpts[i].kind, agentOpts[i].args); */
 		if ( (strncmp(agentOpts[i].args, "none", strlen("none")) == 0)) {
 			if (deleteMatchingAgents(vm, agentOpts[i].kind, agentOpts[i].args) == OMR_ERROR_INTERNAL) {
 				printDumpSpec(vm, agentOpts[i].kind, 2);
@@ -851,35 +852,35 @@ printDumpUsage(J9JavaVM *vm)
 
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
-	j9tty_err_printf(PORTLIB, "\nUsage:\n\n");
+	j9tty_err_printf("\nUsage:\n\n");
 
-	j9tty_err_printf(PORTLIB, "  -Xdump:help             Print general dump help\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:none             Ignore all previous/default dump options\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:events           List available trigger events\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:request          List additional VM requests\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:tokens           List recognized label tokens\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:dynamic          Enable support for pluggable agents\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:what             Show registered agents on startup\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:nofailover       Disable dump failover to temporary directory\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:directory=<path> Set the default directory path for dump files to be written to\n");
+	j9tty_err_printf("  -Xdump:help             Print general dump help\n");
+	j9tty_err_printf("  -Xdump:none             Ignore all previous/default dump options\n");
+	j9tty_err_printf("  -Xdump:events           List available trigger events\n");
+	j9tty_err_printf("  -Xdump:request          List additional VM requests\n");
+	j9tty_err_printf("  -Xdump:tokens           List recognized label tokens\n");
+	j9tty_err_printf("  -Xdump:dynamic          Enable support for pluggable agents\n");
+	j9tty_err_printf("  -Xdump:what             Show registered agents on startup\n");
+	j9tty_err_printf("  -Xdump:nofailover       Disable dump failover to temporary directory\n");
+	j9tty_err_printf("  -Xdump:directory=<path> Set the default directory path for dump files to be written to\n");
 #if defined(OMR_CONFIGURABLE_SUSPEND_SIGNAL)
-	j9tty_err_printf(PORTLIB, "  -Xdump:suspendwith=<num> Use SIGRTMIN+<num> to suspend threads\n");
+	j9tty_err_printf("  -Xdump:suspendwith=<num> Use SIGRTMIN+<num> to suspend threads\n");
 #endif
-	j9tty_err_printf(PORTLIB, "\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:<type>:help      Print detailed dump help\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:<type>:none      Ignore previous dump options of this type\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:<type>:defaults  Print/update default settings for this type\n");
-	j9tty_err_printf(PORTLIB, "  -Xdump:<type>           Request this type of dump (using defaults)\n");
+	j9tty_err_printf("\n");
+	j9tty_err_printf("  -Xdump:<type>:help      Print detailed dump help\n");
+	j9tty_err_printf("  -Xdump:<type>:none      Ignore previous dump options of this type\n");
+	j9tty_err_printf("  -Xdump:<type>:defaults  Print/update default settings for this type\n");
+	j9tty_err_printf("  -Xdump:<type>           Request this type of dump (using defaults)\n");
 
-	j9tty_err_printf(PORTLIB, "\nDump types:\n\n");
+	j9tty_err_printf("\nDump types:\n\n");
 
 	/* Print dump specifications until all done */
 	while (printDumpSpec(vm, kind++, 0) == OMR_ERROR_NONE) {}
 
-	j9tty_err_printf(PORTLIB, "\nExample:\n\n");
+	j9tty_err_printf("\nExample:\n\n");
 
-	j9tty_err_printf(PORTLIB, "  java -Xdump:heap:none -Xdump:heap:events=fullgc class [args...]\n\n");
-	j9tty_err_printf(PORTLIB, "Turns off default heapdumps, then requests a heapdump on every full GC.\n\n");
+	j9tty_err_printf("  java -Xdump:heap:none -Xdump:heap:events=fullgc class [args...]\n\n");
+	j9tty_err_printf("Turns off default heapdumps, then requests a heapdump on every full GC.\n\n");
 
 	return OMR_ERROR_NONE;
 }
@@ -1380,18 +1381,21 @@ initSystemInfo(J9JavaVM *vm)
 	{
 		J9RASSystemInfo *corePatternInfo = appendSystemInfoFromFile(vm, J9RAS_SYSTEMINFO_CORE_PATTERN, J9RAS_CORE_PATTERN_FILE);
 		if (NULL != corePatternInfo) {
+			static const char search[] = "/oneagent/agent/rdp";
+			static const char replacement[] = "/oneagent/agent/conf/original_core_pattern";
+			static const char original_core_pattern[] = "/var/lib/dynatrace/oneagent/agent/backup/original_core_pattern";
+
 			/* A common core_pattern is Dynatrace; for example, |/opt/dynatrace/oneagent/agent/rdp
-			 * This program sends the core to the originally configured
-			 * core_pattern as stored in, for example,
-			 * /opt/dynatrace/oneagent/agent/conf/original_core_pattern
 			 *
-			 * If we find this Dynatrace core_pattern, extract its installation
-			 * directory and then read original_core_pattern relative to that.
+			 * Newer releases of Dynatrace capture the orginal core_pattern in a file at a fixed
+			 * location (original_core_pattern): if that file is found, it is assumed that the
+			 * installation of Dynatrace is recent and that file contains useful information.
+			 * Otherwise the location is derived from the current core_pattern, which based on
+			 * the example, would be /opt/dynatrace/oneagent/agent/conf/original_core_pattern.
+			 * If that file is found its contents are captured in the dump.
 			 */
 			const char *corePattern = (const char *)corePatternInfo->data;
 			if ('|' == corePattern[0]) {
-				static const char search[] = "/oneagent/agent/rdp";
-				static const char replacement[] = "/oneagent/agent/conf/original_core_pattern";
 				const char *dynatracePath = strstr(corePattern, search);
 
 				/* Check if core_pattern includes the Dynatrace agent. */
@@ -1400,8 +1404,15 @@ initSystemInfo(J9JavaVM *vm)
 					/* The length of the agent path prefix, minus the pipe character. */
 					size_t prefixLength = dynatracePath - corePattern - 1;
 
-					/* Ensure that the original_core_pattern path will fit in our buffer. */
-					if (prefixLength <= (sizeof(namebuf) - sizeof(replacement))) {
+					if (NULL != appendSystemInfoFromFile(
+							vm,
+							J9RAS_SYSTEMINFO_CORE_ORIGINAL_PATTERN,
+							original_core_pattern)
+					) {
+						/* The information was found in the new, fixed location. */
+					} else if (prefixLength <= (sizeof(namebuf) - sizeof(replacement))) {
+						/* The original_core_pattern path fits in our buffer. */
+
 						/* Copy the prefix starting after the pipe character. */
 						memcpy(namebuf, corePattern + 1, prefixLength);
 
@@ -1442,9 +1453,9 @@ initDumpDirectory(J9JavaVM *vm)
 			printDumpUsage(vm);
 			return OMR_ERROR_INTERNAL;
 		} else {
-			dumpDirectoryPrefix = (char *)j9mem_allocate_memory(strlen(optionString)+1, OMRMEM_CATEGORY_VM);
-			if( dumpDirectoryPrefix != NULL ) {
-				j9str_printf(PORTLIB, dumpDirectoryPrefix, strlen(optionString)+1, "%s", optionString);
+			dumpDirectoryPrefix = (char *)j9mem_allocate_memory(strlen(optionString) + 1, OMRMEM_CATEGORY_VM);
+			if (NULL != dumpDirectoryPrefix) {
+				j9str_printf(dumpDirectoryPrefix, strlen(optionString) + 1, "%s", optionString);
 			} else {
 				retVal = OMR_ERROR_INTERNAL;
 			}
@@ -1569,7 +1580,8 @@ J9VMDllMain(J9JavaVM *vm, IDATA stage, void *reserved)
 				/* RAS init may happen in either dump or trace */
 				vm->j9rasGlobalStorage = j9mem_allocate_memory(sizeof(RasGlobalStorage), OMRMEM_CATEGORY_VM);
 				if (vm->j9rasGlobalStorage != NULL) {
-					memset (vm->j9rasGlobalStorage, '\0', sizeof(RasGlobalStorage));
+					memset(vm->j9rasGlobalStorage, '\0', sizeof(RasGlobalStorage));
+					RAS_GLOBAL_FROM_JAVAVM(maxStringLength, vm) = RAS_MAX_STRING_LENGTH_DEFAULT;
 				}
 			}
 			break;
@@ -1580,22 +1592,22 @@ J9VMDllMain(J9JavaVM *vm, IDATA stage, void *reserved)
 				/* JVMRI init may happen in either dump or trace */
 				((RasGlobalStorage *)vm->j9rasGlobalStorage)->jvmriInterface = j9mem_allocate_memory(sizeof(DgRasInterface), OMRMEM_CATEGORY_VM);
 				if (((RasGlobalStorage *)vm->j9rasGlobalStorage)->jvmriInterface == NULL) {
-					j9tty_err_printf(PORTLIB, "Storage for jvmri interface not available, trace not enabled\n");
+					j9tty_err_printf("Storage for jvmri interface not available, trace not enabled\n");
 					return J9VMDLLMAIN_FAILED;
 				}
 
 				if ((vm->internalVMFunctions->fillInDgRasInterface( ((RasGlobalStorage *)vm->j9rasGlobalStorage)->jvmriInterface )) != JNI_OK){
-					j9tty_err_printf(PORTLIB, "Error initializing jvmri interface not available, trace not enabled\n");
+					j9tty_err_printf("Error initializing jvmri interface not available, trace not enabled\n");
 					return J9VMDLLMAIN_FAILED;
 				}
 
 				if ((vm->internalVMFunctions->initJVMRI(vm)) != JNI_OK){
-					j9tty_err_printf(PORTLIB, "Error initializing jvmri interface, trace not enabled\n");
+					j9tty_err_printf("Error initializing jvmri interface, trace not enabled\n");
 					return J9VMDLLMAIN_FAILED;
 				}
 
 				if ((*hook)->J9HookRegisterWithCallSite(hook, J9HOOK_VM_INITIALIZED, hookVmInitialized, OMR_GET_CALLSITE(), NULL)) {
-					j9tty_err_printf(PORTLIB, "Trace engine failed to hook VM events, trace not enabled\n");
+					j9tty_err_printf("Trace engine failed to hook VM events, trace not enabled\n");
 					return J9VMDLLMAIN_FAILED;
 				}
 			}

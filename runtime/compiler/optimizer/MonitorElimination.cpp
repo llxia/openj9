@@ -35,7 +35,6 @@
 #include "control/Options.hpp"
 #include "control/Options_inlines.hpp"
 #include "cs2/arrayof.h"
-#include "cs2/bitvectr.h"
 #include "env/StackMemoryRegion.hpp"
 #include "env/TRMemory.hpp"
 #include "env/VMJ9.h"
@@ -2609,7 +2608,7 @@ void TR::MonitorElimination::coarsenMonitorRanges()
       if (node->getOpCode().hasSymbolReference())
          symRef = node->getSymbolReference();
       if (node->getOpCode().isStore() ||
-          node->mightHaveVolatileSymbolReference())
+          node->mightHaveNonTransparentSymbolReference())
          {
          if (symRef->sharesSymbol())
             {
@@ -2662,10 +2661,10 @@ void TR::MonitorElimination::coarsenMonitorRanges()
             }
          }
 
-      bool performsVolatileAccess=node->performsVolatileAccess(volatileVisitCount);
+      bool performsNonTransparentAccess=node->performsNonTransparentAccess(volatileVisitCount);
       if (virtCall)
          _guardedVirtualCallBlocks->set(blockNum);
-      else if (performsVolatileAccess || exceptionInThisTree)
+      else if (performsNonTransparentAccess || exceptionInThisTree)
          {
            //dumpOptDetails(comp(), "Contains calls set for block_%d because of node %p\n", blockNum, treetopNode);
          _containsCalls->set(blockNum);
@@ -5208,7 +5207,7 @@ bool TR::MonitorElimination::symbolsAreNotWrittenInTrees(TR::TreeTop *startTree,
          cursorNode = cursorNode->getFirstChild();
 
       if (cursorNode->getOpCode().isStore() ||
-          cursorNode->mightHaveVolatileSymbolReference())
+          cursorNode->mightHaveNonTransparentSymbolReference())
          {
          TR::SymbolReference *symReference = cursorNode->getSymbolReference();
          if (_symRefsInSimpleLockedRegion->get(symReference->getReferenceNumber()))

@@ -35,9 +35,6 @@ import openj9.internal.criu.InternalCRIUSupport;
  * This API enables the use of CRIU capabilities provided by the OS as well as JVM support for facilitating a successful checkpoint
  * and restore in varying environments.
  */
-/*[IF JAVA_SPEC_VERSION >= 17]*/
-@SuppressWarnings({ "deprecation", "removal" })
-/*[ENDIF] JAVA_SPEC_VERSION >= 17 */
 public final class CRIUSupport {
 
 	/**
@@ -57,15 +54,12 @@ public final class CRIUSupport {
 		CONCURRENT_MODE
 	}
 
-	private InternalCRIUSupport internalCRIUSupport;
-
 	/**
-	 * Constructs a new {@code CRIUSupport}.
+	 * A singleton {@code CRIUSupport} instance.
 	 *
 	 * The default CRIU dump options are:
 	 * <p>
-	 * {@code imageDir} = imageDir, the directory where the images are to be
-	 * created.
+	 * {@code imageDir} = CWD, current Java process working directory.
 	 * <p>
 	 * {@code leaveRunning} = false
 	 * <p>
@@ -82,16 +76,44 @@ public final class CRIUSupport {
 	 * {@code ghostFileLimit} = 1 MB
 	 * <p>
 	 * {@code workDir} = imageDir, the directory where the images are to be created.
+	 */
+	private static final CRIUSupport singletonCRIUSupport = new CRIUSupport();
+
+	private static final InternalCRIUSupport singletonInternalCRIUSupport = InternalCRIUSupport
+			.getInternalCRIUSupport();
+
+	// no public construtors
+	private CRIUSupport() {
+	}
+
+	/**
+	 * Returns the singleton CRIUSupport object.
+	 *
+	 * Most methods of class {@code CRIUSupport} are instance methods and must be
+	 * invoked via this object.
+	 *
+	 * @return the singleton {@code CRIUSupport} object
+	 */
+	public static CRIUSupport getCRIUSupport() {
+		return singletonCRIUSupport;
+	}
+
+	/**
+	 * Constructs a new {@code CRIUSupport}.
 	 *
 	 * @param imageDir the directory that will hold the dump files as a
 	 *                 java.nio.file.Path
 	 * @throws NullPointerException     if imageDir is null
+	/*[IF JAVA_SPEC_VERSION < 24]
 	 * @throws SecurityException        if no permission to access imageDir or no
 	 *                                  CRIU_DUMP_PERMISSION
+	/*[ENDIF] JAVA_SPEC_VERSION < 24
 	 * @throws IllegalArgumentException if imageDir is not a valid directory
 	 */
+	@Deprecated(forRemoval=true)
 	public CRIUSupport(Path imageDir) {
-		internalCRIUSupport = new InternalCRIUSupport(imageDir);
+		System.err.println("WARNING: CRIUSupport(imageDir) constructor is deprecated, please use CRIUSupport.getCRIUSupport() and setImageDir(imageDir)"); //$NON-NLS-1$
+		singletonInternalCRIUSupport.setImageDir(imageDir);
 	}
 
 	/**
@@ -101,6 +123,15 @@ public final class CRIUSupport {
 	 */
 	public static boolean isCRIUSupportEnabled() {
 		return InternalCRIUSupport.isCRIUSupportEnabledAndNativeLoaded();
+	}
+
+	/**
+	 * Queries if the time compensation is enabled.
+	 *
+	 * @return true if the time compensation is enabled, false otherwise
+	 */
+	public static boolean isTimeCompensationEnabled() {
+		return InternalCRIUSupport.isTimeCompensationEnabled();
 	}
 
 	/**
@@ -141,11 +172,13 @@ public final class CRIUSupport {
 	 * @param imageDir the directory as a java.nio.file.Path
 	 * @return this
 	 * @throws NullPointerException     if imageDir is null
+	/*[IF JAVA_SPEC_VERSION < 24]
 	 * @throws SecurityException        if no permission to access imageDir
+	/*[ENDIF] JAVA_SPEC_VERSION < 24
 	 * @throws IllegalArgumentException if imageDir is not a valid directory
 	 */
 	public CRIUSupport setImageDir(Path imageDir) {
-		internalCRIUSupport = internalCRIUSupport.setImageDir(imageDir);
+		singletonInternalCRIUSupport.setImageDir(imageDir);
 		return this;
 	}
 
@@ -158,7 +191,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport setLeaveRunning(boolean leaveRunning) {
-		internalCRIUSupport = internalCRIUSupport.setLeaveRunning(leaveRunning);
+		singletonInternalCRIUSupport.setLeaveRunning(leaveRunning);
 		return this;
 	}
 
@@ -171,7 +204,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport setShellJob(boolean shellJob) {
-		internalCRIUSupport = internalCRIUSupport.setShellJob(shellJob);
+		singletonInternalCRIUSupport.setShellJob(shellJob);
 		return this;
 	}
 
@@ -184,7 +217,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport setExtUnixSupport(boolean extUnixSupport) {
-		internalCRIUSupport = internalCRIUSupport.setExtUnixSupport(extUnixSupport);
+		singletonInternalCRIUSupport.setExtUnixSupport(extUnixSupport);
 		return this;
 	}
 
@@ -204,7 +237,7 @@ public final class CRIUSupport {
 	 * @throws IllegalArgumentException if logLevel is not valid
 	 */
 	public CRIUSupport setLogLevel(int logLevel) {
-		internalCRIUSupport = internalCRIUSupport.setLogLevel(logLevel);
+		singletonInternalCRIUSupport.setLogLevel(logLevel);
 		return this;
 	}
 
@@ -219,7 +252,7 @@ public final class CRIUSupport {
 	 * @throws IllegalArgumentException if logFile is null or a path
 	 */
 	public CRIUSupport setLogFile(String logFile) {
-		internalCRIUSupport = internalCRIUSupport.setLogFile(logFile);
+		singletonInternalCRIUSupport.setLogFile(logFile);
 		return this;
 	}
 
@@ -232,7 +265,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport setFileLocks(boolean fileLocks) {
-		internalCRIUSupport = internalCRIUSupport.setFileLocks(fileLocks);
+		singletonInternalCRIUSupport.setFileLocks(fileLocks);
 		return this;
 	}
 
@@ -245,7 +278,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport setTCPEstablished(boolean tcpEstablished) {
-		internalCRIUSupport = internalCRIUSupport.setTCPEstablished(tcpEstablished);
+		singletonInternalCRIUSupport.setTCPEstablished(tcpEstablished);
 		return this;
 	}
 
@@ -258,7 +291,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport setAutoDedup(boolean autoDedup) {
-		internalCRIUSupport = internalCRIUSupport.setAutoDedup(autoDedup);
+		singletonInternalCRIUSupport.setAutoDedup(autoDedup);
 		return this;
 	}
 
@@ -271,7 +304,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport setTrackMemory(boolean trackMemory) {
-		internalCRIUSupport = internalCRIUSupport.setTrackMemory(trackMemory);
+		singletonInternalCRIUSupport.setTrackMemory(trackMemory);
 		return this;
 	}
 
@@ -283,11 +316,13 @@ public final class CRIUSupport {
 	 * @param workDir the directory as a java.nio.file.Path
 	 * @return this
 	 * @throws NullPointerException     if workDir is null
+	/*[IF JAVA_SPEC_VERSION < 24]
 	 * @throws SecurityException        if no permission to access workDir
+	/*[ENDIF] JAVA_SPEC_VERSION < 24
 	 * @throws IllegalArgumentException if workDir is not a valid directory
 	 */
 	public CRIUSupport setWorkDir(Path workDir) {
-		internalCRIUSupport = internalCRIUSupport.setWorkDir(workDir);
+		singletonInternalCRIUSupport.setWorkDir(workDir);
 		return this;
 	}
 
@@ -300,7 +335,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport setUnprivileged(boolean unprivileged) {
-		internalCRIUSupport = internalCRIUSupport.setUnprivileged(unprivileged);
+		singletonInternalCRIUSupport.setUnprivileged(unprivileged);
 		return this;
 	}
 
@@ -315,7 +350,33 @@ public final class CRIUSupport {
 	 * @throws UnsupportedOperationException if file limit is greater than 2^32 - 1 or negative.
 	 */
 	public CRIUSupport setGhostFileLimit(long limit) {
-		internalCRIUSupport = internalCRIUSupport.setGhostFileLimit(limit);
+		singletonInternalCRIUSupport.setGhostFileLimit(limit);
+		return this;
+	}
+
+	/**
+	 * Controls whether to restore TCP sockets in closed state.
+	 * <p>
+	 * Default: false
+	 *
+	 * @param tcpClose
+	 * @return this
+	 */
+	public CRIUSupport setTCPClose(boolean tcpClose) {
+		singletonInternalCRIUSupport.setTCPClose(tcpClose);
+		return this;
+	}
+
+	/**
+	 * Controls whether to skip in-flight TCP connections.
+	 * <p>
+	 * Default: false
+	 *
+	 * @param tcpSkipInFlight
+	 * @return this
+	 */
+	public CRIUSupport setTCPSkipInFlight(boolean tcpSkipInFlight) {
+		singletonInternalCRIUSupport.setTCPSkipInFlight(tcpSkipInFlight);
 		return this;
 	}
 
@@ -336,7 +397,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport registerRestoreEnvFile(Path envFile) {
-		internalCRIUSupport = internalCRIUSupport.registerRestoreEnvFile(envFile);
+		singletonInternalCRIUSupport.registerRestoreEnvFile(envFile);
 		return this;
 	}
 
@@ -352,7 +413,7 @@ public final class CRIUSupport {
 	 * @return this
 	 */
 	public CRIUSupport registerRestoreOptionsFile(Path optionsFile) {
-		internalCRIUSupport = internalCRIUSupport.registerRestoreOptionsFile(optionsFile);
+		singletonInternalCRIUSupport.registerRestoreOptionsFile(optionsFile);
 		return this;
 	}
 
@@ -373,7 +434,7 @@ public final class CRIUSupport {
 	 */
 	public CRIUSupport registerPostRestoreHook(Runnable hook) {
 		try {
-			internalCRIUSupport = internalCRIUSupport.registerPostRestoreHook(hook);
+			singletonInternalCRIUSupport.registerPostRestoreHook(hook);
 		} catch (openj9.internal.criu.JVMCheckpointException jce) {
 			throw new JVMCheckpointException(jce.getMessage(), 0, jce);
 		} catch (openj9.internal.criu.JVMRestoreException jre) {
@@ -426,7 +487,7 @@ public final class CRIUSupport {
 			internalMode = InternalCRIUSupport.HookMode.CONCURRENT_MODE;
 		}
 		try {
-			internalCRIUSupport = internalCRIUSupport.registerPostRestoreHook(hook, internalMode, priority);
+			singletonInternalCRIUSupport.registerPostRestoreHook(hook, internalMode, priority);
 		} catch (openj9.internal.criu.JVMCheckpointException jce) {
 			throw new JVMCheckpointException(jce.getMessage(), 0, jce);
 		} catch (openj9.internal.criu.JVMRestoreException jre) {
@@ -453,7 +514,7 @@ public final class CRIUSupport {
 	 */
 	public CRIUSupport registerPreCheckpointHook(Runnable hook) {
 		try {
-			internalCRIUSupport = internalCRIUSupport.registerPreCheckpointHook(hook);
+			singletonInternalCRIUSupport.registerPreCheckpointHook(hook);
 		} catch (openj9.internal.criu.JVMCheckpointException jce) {
 			throw new JVMCheckpointException(jce.getMessage(), 0, jce);
 		} catch (openj9.internal.criu.JVMRestoreException jre) {
@@ -506,7 +567,7 @@ public final class CRIUSupport {
 			internalMode = InternalCRIUSupport.HookMode.CONCURRENT_MODE;
 		}
 		try {
-			internalCRIUSupport = internalCRIUSupport.registerPreCheckpointHook(hook, internalMode, priority);
+			singletonInternalCRIUSupport.registerPreCheckpointHook(hook, internalMode, priority);
 		} catch (openj9.internal.criu.JVMCheckpointException jce) {
 			throw new JVMCheckpointException(jce.getMessage(), 0, jce);
 		} catch (openj9.internal.criu.JVMRestoreException jre) {
@@ -530,7 +591,7 @@ public final class CRIUSupport {
 	public synchronized void checkpointJVM() {
 		if (isCRIUSupportEnabled()) {
 			try {
-				internalCRIUSupport.checkpointJVM();
+				singletonInternalCRIUSupport.checkpointJVM();
 			} catch (openj9.internal.criu.JVMCheckpointException jce) {
 				throw new JVMCheckpointException(jce.getMessage(), 0, jce);
 			} catch (openj9.internal.criu.JVMRestoreException jre) {

@@ -93,9 +93,9 @@ public:
    bool isInterfaceClass(TR::Compilation *comp, TR_OpaqueClassBlock *clazzPointer);
    bool isConcreteClass(TR::Compilation *comp, TR_OpaqueClassBlock * clazzPointer);
    bool isValueTypeClass(TR_OpaqueClassBlock *);
-   bool isPrimitiveValueTypeClass(TR_OpaqueClassBlock *);
    bool isValueTypeClassFlattened(TR_OpaqueClassBlock *clazz);
    bool isValueBasedOrValueTypeClass(TR_OpaqueClassBlock *);
+   bool isArrayNullRestricted(TR::Compilation *comp, TR_OpaqueClassBlock *arrayClass);
 
    /** \brief
     *    Returns the size of the flattened array element
@@ -144,7 +144,7 @@ public:
     * \brief
     *    Checks whether instances of the specified class can be trivially initialized by
     *    "zeroing" their fields.
-    *    In the case of OpenJ9, this tests whether any field is of a primitive value type that
+    *    In the case of OpenJ9, this tests whether any field is of null-restricted type that
     *    has not been "flattened" (that is, had the value type's fields inlined into this class).
     *    Such a value type field must be initialized with the default value of the type.
     *

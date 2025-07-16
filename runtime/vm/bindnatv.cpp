@@ -28,6 +28,11 @@
 #include "vm_internal.h"
 #include "j9cp.h"
 #include "j9consts.h"
+
+#if JAVA_SPEC_VERSION >= 24
+#include "objhelp.h"
+#endif /* JAVA_SPEC_VERSION >= 24 */
+
 #include "OutOfLineINL.hpp"
 #include "VMHelpers.hpp"
 #include "AtomicSupport.hpp"
@@ -296,13 +301,16 @@ static inlMapping mappings[] = {
 	{ "Java_sun_reflect_Reflection_getClassAccessFlags__Ljava_lang_Class_2", J9_BCLOOP_SEND_TARGET_INL_REFLECTION_GETCLASSACCESSFLAGS },
 #endif /* JAVA_SPEC_VERSION >= 11 */
 
-#if JAVA_SPEC_VERSION >= 22
+#if JAVA_SPEC_VERSION >= 24
+	{ "Java_openj9_internal_foreign_abi_InternalDowncallHandler_invokeNative__Ljava_lang_Object_2_3Ljava_lang_Object_2_3JZJJJJ_3J", J9_BCLOOP_SEND_TARGET_INL_INTERNALDOWNCALLHANDLER_INVOKENATIVE },
+#elif JAVA_SPEC_VERSION >= 22 /* JAVA_SPEC_VERSION >= 24 */
 	{ "Java_openj9_internal_foreign_abi_InternalDowncallHandler_invokeNative___3Ljava_lang_Object_2_3JZJJJJ_3J", J9_BCLOOP_SEND_TARGET_INL_INTERNALDOWNCALLHANDLER_INVOKENATIVE },
-#elif JAVA_SPEC_VERSION == 21
+#elif JAVA_SPEC_VERSION == 21 /* JAVA_SPEC_VERSION >= 22 */
 	{ "Java_openj9_internal_foreign_abi_InternalDowncallHandler_invokeNative__ZJJJJ_3J", J9_BCLOOP_SEND_TARGET_INL_INTERNALDOWNCALLHANDLER_INVOKENATIVE },
-#elif JAVA_SPEC_VERSION >= 16
+#elif JAVA_SPEC_VERSION >= 16 /* JAVA_SPEC_VERSION == 21 */
 	{ "Java_openj9_internal_foreign_abi_InternalDowncallHandler_invokeNative__JJJ_3J", J9_BCLOOP_SEND_TARGET_INL_INTERNALDOWNCALLHANDLER_INVOKENATIVE },
-#endif /* JAVA_SPEC_VERSION >= 22 */
+#endif /* JAVA_SPEC_VERSION >= 24 */
+
 #if JAVA_SPEC_VERSION >= 19
 	{ "Java_jdk_internal_vm_Continuation_enterImpl__", J9_BCLOOP_SEND_TARGET_ENTER_CONTINUATION },
 	{ "Java_jdk_internal_vm_Continuation_yieldImpl__Z", J9_BCLOOP_SEND_TARGET_YIELD_CONTINUATION },
@@ -1105,17 +1113,34 @@ lookupJNINative(J9VMThread *currentThread, J9NativeLibrary *nativeLibrary, J9Met
 #if JAVA_SPEC_VERSION >= 17
 	if (NULL == nativeLibrary) {
 		internalAcquireVMAccess(currentThread);
-		j9object_t entryName = vm->memoryManagerFunctions->j9gc_createJavaLangString(currentThread, (U_8*)symbolName, strlen(symbolName), 0);
+		J9MemoryManagerFunctions *mmFuncs = vm->memoryManagerFunctions;
+		j9object_t entryName = mmFuncs->j9gc_createJavaLangString(currentThread, (U_8*)symbolName, strlen(symbolName), 0);
 		if (NULL != entryName) {
-			j9object_t classLoaderObject = J9_CLASS_FROM_METHOD(nativeMethod)->classLoader->classLoaderObject;
-			J9Method *findNativeMethod = J9VMJAVALANGCLASSLOADER_FINDNATIVE_METHOD(vm);
-			UDATA args[] = {(UDATA)classLoaderObject, (UDATA)entryName};
-			internalRunStaticMethod(currentThread, findNativeMethod, TRUE, (sizeof(args) / sizeof(UDATA)), args);
-			functionAddress = (UDATA*)(*(U_64*)&(currentThread->returnValue));
+#if JAVA_SPEC_VERSION >= 24
+			J9ROMMethod *nativeROMMethod = J9_ROM_METHOD_FROM_RAM_METHOD(nativeMethod);
+			PUSH_OBJECT_IN_SPECIAL_FRAME(currentThread, entryName);
+			j9object_t javaName = mmFuncs->j9gc_createJavaLangStringWithUTFCache(currentThread, J9ROMMETHOD_NAME(nativeROMMethod));
+			entryName = POP_OBJECT_IN_SPECIAL_FRAME(currentThread);
+			if (NULL != javaName)
+#endif /* JAVA_SPEC_VERSION >= 24 */
+			{
+				J9Class *nativeMethodCls = J9_CLASS_FROM_METHOD(nativeMethod);
+				j9object_t classLoaderObject = nativeMethodCls->classLoader->classLoaderObject;
+#if JAVA_SPEC_VERSION >= 24
+				j9object_t classObject = nativeMethodCls->classObject;
+				J9Method *findNativeMethod = J9VMJAVALANGCLASSLOADER_FINDNATIVE1_METHOD(vm);
+				UDATA args[] = {(UDATA)classLoaderObject, (UDATA)entryName, (UDATA)classObject, (UDATA)javaName};
+#else /* JAVA_SPEC_VERSION >= 24 */
+				J9Method *findNativeMethod = J9VMJAVALANGCLASSLOADER_FINDNATIVE0_METHOD(vm);
+				UDATA args[] = {(UDATA)classLoaderObject, (UDATA)entryName};
+#endif /* JAVA_SPEC_VERSION >= 24 */
+				internalRunStaticMethod(currentThread, findNativeMethod, TRUE, (sizeof(args) / sizeof(UDATA)), args);
+				functionAddress = (UDATA*)(*(U_64*)&(currentThread->returnValue));
 #if defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT)
-			doSwitching = ((UDATA)functionAddress) & J9_NATIVE_LIBRARY_SWITCH_MASK;
-			functionAddress = (UDATA *)(((UDATA)functionAddress) & ~(UDATA)J9_NATIVE_LIBRARY_SWITCH_MASK);
+				doSwitching = ((UDATA)functionAddress) & J9_NATIVE_LIBRARY_SWITCH_MASK;
+				functionAddress = (UDATA *)(((UDATA)functionAddress) & ~(UDATA)J9_NATIVE_LIBRARY_SWITCH_MASK);
 #endif /* defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT) */
+			}
 		}
 		/* always clear pending exception, might retry later */
 		VM_VMHelpers::clearException(currentThread);

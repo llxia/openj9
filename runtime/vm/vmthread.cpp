@@ -196,7 +196,7 @@ allocateVMThread(J9JavaVM *vm, omrthread_t osThread, UDATA privateFlags, void *m
 	newThread->discontiguousIndexableHeaderSize = vm->discontiguousIndexableHeaderSize;
 	newThread->unsafeIndexableHeaderSize = vm->unsafeIndexableHeaderSize;
 #if defined(J9VM_ENV_DATA64)
-	newThread->isIndexableDataAddrPresent = vm->isIndexableDataAddrPresent;
+	newThread->indexableObjectLayout = vm->indexableObjectLayout;
 #endif /* defined(J9VM_ENV_DATA64) */
 
 	newThread->privateFlags = privateFlags;
@@ -297,6 +297,10 @@ allocateVMThread(J9JavaVM *vm, omrthread_t osThread, UDATA privateFlags, void *m
 	newThread->scopedValueCache = NULL;
 #endif /* JAVA_SPEC_VERSION >= 19 */
 
+#if defined(J9VM_OPT_JFR)
+	newThread->threadJfrState.prevTimestamp = -1;
+#endif /* defined(J9VM_OPT_JFR) */
+
 	/* If an exclusive access request is in progress, mark this thread */
 
 	omrthread_monitor_enter(vm->exclusiveAccessMutex);
@@ -343,6 +347,11 @@ allocateVMThread(J9JavaVM *vm, omrthread_t osThread, UDATA privateFlags, void *m
 	/* Update counters for total # of threads and daemon threads and notify anyone waiting */
 
 	++(vm->totalThreadCount);
+	++(vm->accumulatedThreadCount);
+	if (vm->totalThreadCount > vm->peakThreadCount) {
+		vm->peakThreadCount = vm->totalThreadCount;
+	}
+
 	if (privateFlags & J9_PRIVATE_FLAGS_DAEMON_THREAD) {
 		++(vm->daemonThreadCount);
 	}
@@ -565,7 +574,23 @@ threadParseArguments(J9JavaVM *vm, char *optArg)
 	vm->thrMaxTryEnterYieldsBeforeBlocking = 45;
 	vm->thrNestedSpinning = 1;
 	vm->thrTryEnterNestedSpinning = 1;
-	vm->thrDeflationPolicy = J9VM_DEFLATION_POLICY_ASAP;
+
+#if JAVA_SPEC_VERSION >= 24
+	/* Currently, there are timing holes between JVM_TakeVirtualThreadListToUnblock and monitor deflation.
+	 * A monitor can be deflated while it is being accessed in JVM_TakeVirtualThreadListToUnblock. This
+	 * leads to a NULL dereference causing a segfault. Adding more synchronization will cause a significant
+	 * overhead in the object monitor exit path. Until an efficient solution is developed, the policy to never
+	 * deflate will be employed in order to support Synchronize Virtual Threads without Pinning (JEP491).
+	 * Since the current JEP491 implementation always inflates monitors before usage, deflating will be
+	 * counter-productive.
+	 */
+	if (J9_ARE_ANY_BITS_SET(vm->extendedRuntimeFlags3, J9_EXTENDED_RUNTIME3_YIELD_PINNED_CONTINUATION)) {
+		vm->thrDeflationPolicy = J9VM_DEFLATION_POLICY_NEVER;
+	} else
+#endif /* JAVA_SPEC_VERSION >= 24 */
+	{
+		vm->thrDeflationPolicy = J9VM_DEFLATION_POLICY_ASAP;
+	}
 
 	if (cpus > 1) {
 #if (defined(LINUXPPC)) && !defined(J9VM_ENV_LITTLE_ENDIAN)
@@ -685,6 +710,10 @@ threadParseArguments(J9JavaVM *vm, char *optArg)
 #endif /* OMR_THR_ADAPTIVE_SPIN */
 
 #if defined(OMR_THR_THREE_TIER_LOCKING)
+	/* There is no advantage from spinning when running on a single processor. */
+	if (cpus <= 1) {
+		**(UDATA**)omrthread_global((char*)"defaultMonitorSpinCount1") = 1;
+	}
 	omrthread_lib_clear_flags(J9THREAD_LIB_FLAG_SECONDARY_SPIN_OBJECT_MONITORS_ENABLED | J9THREAD_LIB_FLAG_FAST_NOTIFY);
 #if defined(OMR_THR_SPIN_WAKE_CONTROL)
 	{
@@ -1536,11 +1565,11 @@ static UDATA printMethodInfo(J9VMThread *currentThread , J9StackWalkState *state
 	char *end = buf + sizeof(buf);
 	PORT_ACCESS_FROM_VMC(currentThread);
 
-	cursor += j9str_printf(PORTLIB, cursor, end - cursor, "\tat %.*s.%.*s%.*s", J9UTF8_LENGTH(className), J9UTF8_DATA(className), J9UTF8_LENGTH(methodName), J9UTF8_DATA(methodName), J9UTF8_LENGTH(sig), J9UTF8_DATA(sig));
+	cursor += j9str_printf(cursor, end - cursor, "\tat %.*s.%.*s%.*s", J9UTF8_LENGTH(className), J9UTF8_DATA(className), J9UTF8_LENGTH(methodName), J9UTF8_DATA(methodName), J9UTF8_LENGTH(sig), J9UTF8_DATA(sig));
 
 	if (romMethod->modifiers & J9AccNative) {
 	/*increment cursor here by the return of j9str_printf if it needs to be used further*/
-		j9str_printf(PORTLIB, cursor, end - cursor, " (Native Method)");
+		j9str_printf(cursor, end - cursor, " (Native Method)");
 	} else {
 		UDATA offsetPC = state->bytecodePCOffset;
 #ifdef J9VM_OPT_DEBUG_INFO_SERVER
@@ -1549,21 +1578,21 @@ static UDATA printMethodInfo(J9VMThread *currentThread , J9StackWalkState *state
 		if (sourceFile) {
 			IDATA lineNumber = getLineNumberForROMClass(vm, method, offsetPC);
 
-			cursor += j9str_printf(PORTLIB, cursor, end - cursor, " (%.*s", J9UTF8_LENGTH(sourceFile), J9UTF8_DATA(sourceFile));
+			cursor += j9str_printf(cursor, end - cursor, " (%.*s", J9UTF8_LENGTH(sourceFile), J9UTF8_DATA(sourceFile));
 			if (lineNumber != -1) {
-				cursor += j9str_printf(PORTLIB, cursor, end - cursor, ":%zu", lineNumber);
+				cursor += j9str_printf(cursor, end - cursor, ":%zu", lineNumber);
 			}
-			cursor += j9str_printf(PORTLIB, cursor, end - cursor, ")");
+			cursor += j9str_printf(cursor, end - cursor, ")");
 		} else
 #endif
 		{
-			cursor += j9str_printf(PORTLIB, cursor, end - cursor, " (Bytecode PC: %zu)", offsetPC);
+			cursor += j9str_printf(cursor, end - cursor, " (Bytecode PC: %zu)", offsetPC);
 		}
 
 #ifdef J9VM_INTERP_NATIVE_SUPPORT
 		if (state->jitInfo != NULL) {
 		/*increment cursor here by the return of j9str_printf if it needs to be used further*/
-			j9str_printf(PORTLIB, cursor, end - cursor, " (Compiled Code)");
+			j9str_printf(cursor, end - cursor, " (Compiled Code)");
 		}
 #endif
 	}
@@ -1587,7 +1616,7 @@ void printThreadInfo(J9JavaVM *vm, J9VMThread *self, char *toFile, BOOLEAN allTh
 
 	if ( !vm->mainThread ) {
 		/* No main thread, so not much we can do here */
-		j9tty_err_printf(PORTLIB, "Thread info not available\n");
+		j9tty_err_printf("Thread info not available\n");
 		return;
 	}
 
@@ -1615,13 +1644,13 @@ void printThreadInfo(J9JavaVM *vm, J9VMThread *self, char *toFile, BOOLEAN allTh
 	if (toFile != NULL) {
 		strcpy(fileName, toFile);
 		if ((tracefd = j9file_open(fileName, EsOpenWrite | EsOpenCreate | EsOpenTruncate, 0666))==-1) {
-			j9tty_err_printf(PORTLIB, "Error: Failed to open dump file %s.\nWill output to stderr instead:\n", fileName);
+			j9tty_err_printf("Error: Failed to open dump file %s.\nWill output to stderr instead:\n", fileName);
 		}
 	} else if (vm->sigquitToFileDir != NULL) {
-		j9str_printf(PORTLIB, fileName, EsMaxPath, "%s%s%s%d%s",
-							vm->sigquitToFileDir, DIR_SEPARATOR_STR, SIGQUIT_FILE_NAME, j9time_usec_clock(), SIGQUIT_FILE_EXT);
+		j9str_printf(fileName, EsMaxPath, "%s%s%s%d%s",
+				vm->sigquitToFileDir, DIR_SEPARATOR_STR, SIGQUIT_FILE_NAME, j9time_usec_clock(), SIGQUIT_FILE_EXT);
 		if ((tracefd = j9file_open(fileName, EsOpenWrite | EsOpenCreate | EsOpenTruncate, 0666))==-1) {
-			j9tty_err_printf(PORTLIB, "Error: Failed to open trace file %s.\nWill output to stderr instead:\n", fileName);
+			j9tty_err_printf("Error: Failed to open trace file %s.\nWill output to stderr instead:\n", fileName);
 		}
 	}
 
@@ -1659,7 +1688,7 @@ void printThreadInfo(J9JavaVM *vm, J9VMThread *self, char *toFile, BOOLEAN allTh
 
 	if (tracefd != -1) {
 		j9file_close(tracefd);
-		j9tty_err_printf(PORTLIB, "Thread info written to: %s\n", fileName);
+		j9tty_err_printf("Thread info written to: %s\n", fileName);
 	}
 
 	if(exclusiveRequestedLocally) {
@@ -1778,7 +1807,7 @@ static void trace_printf(struct J9PortLibrary *portLib, IDATA tracefd, char * fo
 	if (tracefd != -1)
 		wroteToFile = (j9file_write_text(tracefd, buffer, strlen(buffer)) != -1);
 	if (!wroteToFile)
-		j9tty_err_printf(PORTLIB, buffer);
+		j9tty_err_printf(buffer);
 }
 
 j9object_t
@@ -2042,12 +2071,12 @@ setFailedToForkThreadException(J9VMThread *currentThread, IDATA retVal, omrthrea
 			J9NLS_VM_THREAD_CREATE_FAILED_WITH_32BIT_ERRNO2, NULL);
 
 	if (errorMessage) {
-		bufLen = j9str_printf(PORTLIB, NULL, 0, errorMessage, retVal, os_errno, os_errno, (U_32)(UDATA)os_errno2);
+		bufLen = j9str_printf(NULL, 0, errorMessage, retVal, os_errno, os_errno, (U_32)(UDATA)os_errno2);
 		if (bufLen > 0) {
 			buf = (char*)j9mem_allocate_memory(bufLen, OMRMEM_CATEGORY_VM);
 			if (buf) {
 				/* j9str_printf return value doesn't include the NUL terminator */
-				if ((bufLen - 1) == j9str_printf(PORTLIB, buf, bufLen, errorMessage, retVal, os_errno, os_errno, os_errno2, os_errno2)) {
+				if ((bufLen - 1) == j9str_printf(buf, bufLen, errorMessage, retVal, os_errno, os_errno, os_errno2, os_errno2)) {
 					setCurrentExceptionUTF(currentThread, J9_EX_OOM_THREAD | J9VMCONSTANTPOOL_JAVALANGOUTOFMEMORYERROR, buf);
 					rc = 0;
 				}
@@ -2081,12 +2110,12 @@ setFailedToForkThreadException(J9VMThread *currentThread, IDATA retVal, omrthrea
 		J9NLS_VM_THREAD_CREATE_FAILED_WITH_ERRNO, NULL);
 
 	if (errorMessage) {
-		bufLen = j9str_printf(PORTLIB, NULL, 0, errorMessage, retVal, os_errno);
+		bufLen = j9str_printf(NULL, 0, errorMessage, retVal, os_errno);
 		if (bufLen > 0) {
 			buf = (char*)j9mem_allocate_memory(bufLen, OMRMEM_CATEGORY_VM);
 			if (buf) {
 				/* j9str_printf return value doesn't include the NUL terminator */
-				if ((bufLen - 1) == j9str_printf(PORTLIB, buf, bufLen, errorMessage, retVal, os_errno)) {
+				if ((bufLen - 1) == j9str_printf(buf, bufLen, errorMessage, retVal, os_errno)) {
 					setCurrentExceptionUTF(currentThread, J9_EX_OOM_THREAD | J9VMCONSTANTPOOL_JAVALANGOUTOFMEMORYERROR, buf);
 					rc = 0;
 				}
